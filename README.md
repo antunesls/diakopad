@@ -5,8 +5,6 @@ App de gerenciamento de pads para o Zynthian OS + M-Vave SMC-PAD: mostra os
 subir novos sons por qualquer navegador na rede. Os sons tocam através da
 engine **Sfizz** nativa do Zynthian (mixer/efeitos preservados).
 
-Veja o plano completo de arquitetura em
-`C:\Users\antunesls\.claude\plans\eu-estou-usando-o-joyful-mountain.md`.
 
 ## Rodando localmente (sem hardware, para desenvolver a UI)
 

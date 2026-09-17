@@ -6,7 +6,7 @@ After=network.target sound.target
 Type=simple
 User=zynthian
 WorkingDirectory=/home/zynthian/diakopad/backend
-Environment=DIAKOPAD_SFZ_BANK_DIR=/zynthian/zynthian-my-data/presets/sfizz/DiakoPad
+Environment=DIAKOPAD_SFZ_BANK_DIR=/zynthian/zynthian-my-data/soundfonts/sfz/DiakoPad
 Environment=DIAKOPAD_MIDI_CHANNEL=10
 ExecStart=/home/zynthian/diakopad/backend/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8080
 Restart=on-failure

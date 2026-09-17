@@ -6,7 +6,7 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_DIR="/home/zynthian/diakopad"
-SFZ_BANK_DIR="/zynthian/zynthian-my-data/presets/sfizz/DiakoPad"
+SFZ_BANK_DIR="/zynthian/zynthian-my-data/soundfonts/sfz/DiakoPad"
 
 echo "==> Copying app to $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
@@ -43,11 +43,12 @@ Passos manuais restantes (ver README.md):
   1. Na UI nativa do Zynthian, crie uma chain com a engine Sfizz, MIDI
      input = SMC-PAD, canal MIDI 10 (ou o valor de DIAKOPAD_MIDI_CHANNEL
      em diakopad.service).
-  2. Em Library > Presets & Soundfonts, aponte o banco de presets do Sfizz
-     dessa chain para:
-         /zynthian/zynthian-my-data/presets/sfizz/DiakoPad
-     Os arquivos diakopad_a.sfz / diakopad_b.sfz vão aparecer aí assim que
-     o primeiro pad for atribuído pelo DiakoPad.
+  2. Em Library > Presets & Soundfonts, selecione a engine "Sfizz: SFZ" e
+     abra "SD> User" — o banco "DiakoPad" (com os presets diakopad_a /
+     diakopad_b) aparece automaticamente ali, pois é escaneado direto de:
+         /zynthian/zynthian-my-data/soundfonts/sfz/DiakoPad
+     Selecione um desses presets uma vez na chain para a engine carregá-lo;
+     as trocas seguintes (A/B) são feitas via Program Change pelo DiakoPad.
   3. O roteamento MIDI deste Zynthian é feito via JACK (cliente
      "ZynMidiRouter", portas dev0_in..dev23_in), com uma ponte ALSA->JACK
      (a2j) ativa. A porta virtual ALSA "DiakoPad" criada pelo backend

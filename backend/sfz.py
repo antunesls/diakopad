@@ -12,9 +12,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-# Overridable via environment/config for the real deployment; defaults match
-# a fresh install of the Sfizz "DiakoPad" bank under the Zynthian user's
-# presets directory (see deploy/install.sh).
+# Overridable via environment/config for the real deployment. Zynthian's
+# Sfizz engine (zynthian_engine_sfizz.py) only scans banks under
+# "<my_data_dir>/soundfonts/sfz/<bank>" (NOT "presets/sfizz/..." - that path
+# looked plausible but the engine's root_bank_dirs don't include it), so the
+# DiakoPad bank must live there to show up as a preset bank in Zynthian.
 SFZ_BANK_DIR = Path(
     __import__("os").environ.get(
         "DIAKOPAD_SFZ_BANK_DIR",

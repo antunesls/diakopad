@@ -15,6 +15,13 @@ Type=simple
 # So the kiosk gets its own X server on VT3 instead. VT3 stays inactive (and
 # Chromium idle) until vt-toggle switches to it with `chvt 3`.
 ExecStart=/usr/bin/xinit /home/zynthian/diakopad/deploy/kiosk-xinitrc -- :1 vt3 -nocursor
+# Starting an X server on a VT makes the kernel switch to (activate) that VT
+# immediately as part of the server claiming it — this is normal Xorg
+# behaviour, not something suppressible via flags, and it briefly stole the
+# screen away from zynthian-ui (VT2) during setup. So we switch back to VT2
+# right after, while Chromium keeps initializing on VT3 in the background;
+# only the vt-toggle daemon's deliberate `chvt 3` should make VT3 visible.
+ExecStartPost=/bin/sh -c 'sleep 2; chvt 2'
 Restart=on-failure
 RestartSec=3
 

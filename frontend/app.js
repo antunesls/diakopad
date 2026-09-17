@@ -36,9 +36,24 @@
   el.tabPads.addEventListener("click", () => switchView("pads"));
   el.tabSounds.addEventListener("click", () => switchView("sounds"));
 
+  // The physical SMC-PAD numbers pads bottom-left (1) to top-right (16), in
+  // rows of 4 from the bottom: [1-4] bottom, [5-8], [9-12], [13-16] top. The
+  // on-screen grid renders top-to-bottom, so row order is reversed to match
+  // what the user sees when looking at the controller.
+  function displayOrder(pads) {
+    const byNumber = new Map(pads.map((p) => [p.pad_number, p]));
+    const order = [];
+    for (let row = 3; row >= 0; row--) {
+      for (let col = 0; col < 4; col++) {
+        order.push(byNumber.get(row * 4 + col + 1));
+      }
+    }
+    return order;
+  }
+
   function renderPads() {
     el.padGrid.innerHTML = "";
-    const pads = [...state.pads].sort((a, b) => a.pad_number - b.pad_number);
+    const pads = displayOrder(state.pads);
     for (const pad of pads) {
       const div = document.createElement("div");
       div.className = "pad" + (pad.has_sample ? " filled" : "");

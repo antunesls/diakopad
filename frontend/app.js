@@ -29,9 +29,11 @@
     settingVelocity: document.getElementById("setting-velocity"),
     knobsCountLabel: document.getElementById("knobs-count-label"),
     clearKnobsBtn: document.getElementById("clear-knobs-btn"),
+    sequencerChannel: document.getElementById("sequencer-channel"),
+    sequencerRefBody: document.getElementById("sequencer-ref-body"),
   };
 
-  const VIEWS = ["pads", "sounds", "volumes", "effects", "config"];
+  const VIEWS = ["pads", "sounds", "volumes", "effects", "config", "sequencer"];
   for (const name of VIEWS) {
     document.getElementById(`tab-${name}`).addEventListener("click", () => switchView(name));
   }
@@ -245,6 +247,20 @@
 
   el.clearKnobsBtn.addEventListener("click", () => fetch("/api/knobs", { method: "DELETE" }));
 
+  function renderSequencerRef() {
+    if (state.settings.midi_channel) el.sequencerChannel.textContent = state.settings.midi_channel;
+    el.sequencerRefBody.innerHTML = "";
+    for (const pad of displayOrder(state.pads)) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>PAD ${pad.pad_number}</td>
+        <td>${pad.midi_note}</td>
+        <td>${pad.has_sample ? escapeHtml(pad.display_name) : "vazio"}</td>
+      `;
+      el.sequencerRefBody.appendChild(tr);
+    }
+  }
+
   el.settingSustain.addEventListener("change", () => {
     fetch("/api/settings", {
       method: "POST",
@@ -402,6 +418,7 @@
         renderSoundList();
         renderVolumes();
         renderEffects();
+        renderSequencerRef();
       } else if (msg.type === "sounds") {
         state.sounds = msg.sounds;
         renderSoundList();
@@ -414,6 +431,7 @@
       } else if (msg.type === "settings") {
         state.settings = msg.settings;
         renderSettings();
+        renderSequencerRef();
       }
     });
   }
@@ -436,6 +454,7 @@
     renderVolumes();
     renderSettings();
     renderEffects();
+    renderSequencerRef();
     connectWebSocket();
   }
 

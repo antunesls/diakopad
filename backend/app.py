@@ -186,8 +186,15 @@ async def _broadcast_knobs() -> None:
     )
 
 
+def _settings_payload() -> dict:
+    # midi_channel is read-only here (set via DIAKOPAD_MIDI_CHANNEL at
+    # deploy time, see backend/midi.py) - shown so the frontend's Sequencer
+    # reference tab doesn't need to hardcode it.
+    return {**storage.get_settings(), "midi_channel": midi.MIDI_CHANNEL + 1}
+
+
 async def _broadcast_settings() -> None:
-    await manager.broadcast({"type": "settings", "settings": storage.get_settings()})
+    await manager.broadcast({"type": "settings", "settings": _settings_payload()})
 
 
 def _regen_kit(pads: list[dict]) -> tuple[str, bool]:
@@ -288,7 +295,7 @@ async def clear_knob_mappings():
 
 @app.get("/api/settings")
 def get_settings():
-    return storage.get_settings()
+    return _settings_payload()
 
 
 @app.post("/api/settings")
@@ -361,7 +368,7 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.send_json(
             {"type": "knobs", "knobs": storage.list_knob_mappings(), "pending_learn": _pending_learn}
         )
-        await ws.send_json({"type": "settings", "settings": storage.get_settings()})
+        await ws.send_json({"type": "settings", "settings": _settings_payload()})
         while True:
             await ws.receive_text()  # client doesn't send anything meaningful; just keep alive
     except WebSocketDisconnect:

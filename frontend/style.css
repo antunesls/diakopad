@@ -383,6 +383,40 @@ html, body {
   background: #1a1a1a;
 }
 
+/* Sequencer reference table */
+.ref-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.ref-table th,
+.ref-table td {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+.ref-table th {
+  background: var(--panel-alt);
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ref-table tbody tr:nth-child(even) {
+  background: var(--panel-alt);
+}
+
+.ref-table td:nth-child(2) {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
 /* Modal */
 .modal {
   position: fixed;

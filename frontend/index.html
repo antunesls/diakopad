@@ -15,6 +15,7 @@
       <button id="tab-volumes" class="tab" type="button">Volumes</button>
       <button id="tab-effects" class="tab" type="button">Efeitos</button>
       <button id="tab-config" class="tab" type="button">Config</button>
+      <button id="tab-sequencer" class="tab" type="button">Sequencer</button>
     </nav>
     <span id="conn-status" class="conn-status" title="Conexão">●</span>
   </header>
@@ -78,6 +79,21 @@
       </div>
       <button id="clear-knobs-btn" class="danger-btn" type="button">Limpar todos</button>
     </div>
+  </main>
+
+  <main id="view-sequencer" class="view hidden">
+    <p class="tab-note">
+      Programe ritmos no <strong>Step Sequencer nativo do Zynthian</strong>
+      usando os mesmos sons do DiakoPad: crie ou selecione uma track, ajuste
+      o canal MIDI dela para <strong id="sequencer-channel">10</strong> (o
+      mesmo canal do DiakoPad) e use as notas abaixo nos passos.
+    </p>
+    <table class="ref-table">
+      <thead>
+        <tr><th>Pad</th><th>Nota MIDI</th><th>Som</th></tr>
+      </thead>
+      <tbody id="sequencer-ref-body"></tbody>
+    </table>
   </main>
 
   <div id="assign-modal" class="modal hidden">

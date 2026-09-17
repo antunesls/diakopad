@@ -13,14 +13,17 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Callable, Optional
 
 logger = logging.getLogger("diakopad.midi")
 
 PORT_NAME = os.environ.get("DIAKOPAD_MIDI_PORT_NAME", "DiakoPad")
+INPUT_PORT_NAME = os.environ.get("DIAKOPAD_MIDI_INPUT_PORT_NAME", "DiakoPad-in")
 MIDI_CHANNEL = int(os.environ.get("DIAKOPAD_MIDI_CHANNEL", "10")) - 1  # 0-indexed
 
 _port = None
 _unavailable_logged = False
+_input_port = None
 
 
 def _get_port():
@@ -57,3 +60,30 @@ def send_program_change(preset_index: int) -> bool:
     port.send(mido.Message("program_change", program=preset_index, channel=MIDI_CHANNEL))
     logger.info("Sent Program Change %d on channel %d", preset_index, MIDI_CHANNEL + 1)
     return True
+
+
+def open_input(on_cc: Callable[[int, int], None]) -> bool:
+    """Opens a virtual MIDI input port and calls on_cc(control_number, value)
+    for every Control Change received, on any channel. The callback fires on
+    mido/rtmidi's own thread, not the asyncio loop - callers that touch
+    asyncio state must hop back with loop.call_soon_threadsafe.
+
+    Connect the SMC-PAD's knobs to this port once, on the real device, via
+    `jack_connect` from its raw hardware capture port (see
+    deploy/diakopad-midi-connect.service) - it's separate from the ZynMidi
+    Router-bound output port above.
+    """
+    global _input_port
+    try:
+        import mido
+
+        def _callback(msg) -> None:
+            if msg.type == "control_change":
+                on_cc(msg.control, msg.value)
+
+        _input_port = mido.open_input(INPUT_PORT_NAME, virtual=True, callback=_callback)
+        logger.info("Opened virtual MIDI input port %r", INPUT_PORT_NAME)
+        return True
+    except Exception as exc:  # pragma: no cover - environment dependent
+        logger.warning("MIDI input unavailable (%s); knob learning will not work", exc)
+        return False

@@ -12,6 +12,8 @@
     <nav>
       <button id="tab-pads" class="tab active" type="button">Pads</button>
       <button id="tab-sounds" class="tab" type="button">Sons</button>
+      <button id="tab-volumes" class="tab" type="button">Volumes</button>
+      <button id="tab-effects" class="tab" type="button">Efeitos</button>
     </nav>
     <span id="conn-status" class="conn-status" title="Conexão">●</span>
   </header>
@@ -30,6 +32,18 @@
       <p class="hint">wav, mp3, ogg, flac, aiff</p>
     </section>
     <ul id="sound-list" class="sound-list"></ul>
+  </main>
+
+  <main id="view-volumes" class="view hidden">
+    <ul id="volume-list" class="mix-list"></ul>
+  </main>
+
+  <main id="view-effects" class="view hidden">
+    <p class="tab-note">
+      Reverb/delay não é suportado pela versão do Sfizz deste Zynthian — o tom
+      aqui é um filtro grave/agudo por pad.
+    </p>
+    <ul id="effects-list" class="mix-list"></ul>
   </main>
 
   <div id="assign-modal" class="modal hidden">

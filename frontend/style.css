@@ -207,6 +207,103 @@ html, body {
   cursor: not-allowed;
 }
 
+/* Volumes / Efeitos tabs */
+.tab-note {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 0 0 12px;
+  line-height: 1.4;
+}
+
+.mix-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mix-row {
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.mix-row-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+
+.mix-row-header .pad-label {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.mix-row-header .pad-sound {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.mix-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mix-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mix-control .mix-control-label {
+  width: 60px;
+  font-size: 13px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.mix-control input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+  height: 32px;
+}
+
+.mix-control .mix-value {
+  width: 56px;
+  text-align: right;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.learn-btn {
+  background: var(--panel-alt);
+  border: none;
+  color: var(--text-dim);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.learn-btn.bound {
+  color: var(--ok);
+}
+.learn-btn.waiting {
+  color: var(--accent);
+  animation: pulse 1s infinite ease-in-out;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 /* Modal */
 .modal {
   position: fixed;

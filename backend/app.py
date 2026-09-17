@@ -3,6 +3,7 @@ to any browser on the LAN. Talks to Zynthian's Sfizz engine indirectly, by
 regenerating an .sfz kit (sfz.py) and sending a Program Change (midi.py)."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import uuid
@@ -40,6 +41,17 @@ class NoteRequest(BaseModel):
     midi_note: int
 
 
+class MixRequest(BaseModel):
+    volume_db: Optional[float] = None
+    pan: Optional[float] = None
+    tone: Optional[float] = None  # 0-100; 100 = filter bypassed. None = leave unchanged.
+
+
+class LearnRequest(BaseModel):
+    pad_number: int
+    param: str  # "volume" | "pan" | "cutoff"
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self.active: list[WebSocket] = []
@@ -65,11 +77,89 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# --- Knob MIDI-learn state -------------------------------------------------
+# The MIDI input callback fires on mido/rtmidi's own thread; everything here
+# only ever runs on the main asyncio loop, reached via call_soon_threadsafe.
+_main_loop: Optional[asyncio.AbstractEventLoop] = None
+_pending_learn: Optional[dict] = None  # {"pad_number": int, "param": str}
+_pending_cc_values: dict[tuple[int, str], int] = {}
+_debounce_handles: dict[tuple[int, str], asyncio.TimerHandle] = {}
+KNOB_DEBOUNCE_SECONDS = 0.3
+
+
+def _frac_to_cutoff(frac: float) -> Optional[float]:
+    """0..1 -> 200Hz..20kHz log scale. >=0.99 means "fully open" (no filter)."""
+    if frac >= 0.99:
+        return None
+    return round(200 * (20000 / 200) ** frac)
+
+
+def _cc_to_volume_db(v: int) -> float:
+    return round(-24 + (v / 127) * 36, 1)  # -24..+12 dB
+
+
+def _cc_to_pan(v: int) -> float:
+    return round(-100 + (v / 127) * 200)  # -100..100
+
+
+def _cc_to_cutoff(v: int) -> Optional[float]:
+    return _frac_to_cutoff(v / 127)
+
+
+def _on_midi_cc(control: int, value: int) -> None:
+    if _main_loop is not None:
+        _main_loop.call_soon_threadsafe(_handle_cc, control, value)
+
+
+def _handle_cc(control: int, value: int) -> None:
+    global _pending_learn
+    if _pending_learn is not None:
+        storage.set_knob_mapping(control, _pending_learn["pad_number"], _pending_learn["param"])
+        _pending_learn = None
+        asyncio.create_task(_broadcast_knobs())
+        return
+
+    target = storage.get_knob_target(control)
+    if target is None:
+        return
+    key = (target["pad_number"], target["param"])
+    _pending_cc_values[key] = value
+    old_handle = _debounce_handles.get(key)
+    if old_handle is not None:
+        old_handle.cancel()
+    _debounce_handles[key] = _main_loop.call_later(
+        KNOB_DEBOUNCE_SECONDS, lambda: asyncio.create_task(_apply_knob_target(key))
+    )
+
+
+async def _apply_knob_target(key: tuple[int, str]) -> None:
+    _debounce_handles.pop(key, None)
+    value = _pending_cc_values.pop(key, None)
+    if value is None:
+        return
+    pad_number, param = key
+    if param == "volume":
+        storage.set_pad_mix(pad_number, volume_db=_cc_to_volume_db(value))
+    elif param == "pan":
+        storage.set_pad_mix(pad_number, pan=_cc_to_pan(value))
+    elif param == "cutoff":
+        storage.set_pad_mix(pad_number, cutoff_hz=_cc_to_cutoff(value))
+    pads = storage.list_pads()
+    filename, preset_index = sfz.write_next_kit(pads)
+    midi.send_program_change(preset_index)
+    await _broadcast_pads()
+
+
+# --- Startup -----------------------------------------------------------
+
 
 @app.on_event("startup")
 def on_startup() -> None:
+    global _main_loop
     storage.init_db()
     midi.ensure_open()
+    _main_loop = asyncio.get_event_loop()
+    midi.open_input(_on_midi_cc)
 
 
 def _pads_payload() -> list[dict]:
@@ -85,6 +175,12 @@ async def _broadcast_pads() -> None:
 
 async def _broadcast_sounds() -> None:
     await manager.broadcast({"type": "sounds", "sounds": storage.list_samples()})
+
+
+async def _broadcast_knobs() -> None:
+    await manager.broadcast(
+        {"type": "knobs", "knobs": storage.list_knob_mappings(), "pending_learn": _pending_learn}
+    )
 
 
 @app.get("/api/pads")
@@ -121,6 +217,56 @@ async def set_pad_note(pad_number: int, body: NoteRequest):
     filename, preset_index = sfz.write_next_kit(pads)
     midi.send_program_change(preset_index)
     await _broadcast_pads()
+    return {"ok": True}
+
+
+@app.post("/api/pads/{pad_number}/mix")
+async def set_pad_mix(pad_number: int, body: MixRequest):
+    if not 1 <= pad_number <= 16:
+        raise HTTPException(400, "pad_number must be between 1 and 16")
+    cutoff_hz = "__unset__"
+    if body.tone is not None:
+        if not 0 <= body.tone <= 100:
+            raise HTTPException(400, "tone must be between 0 and 100")
+        cutoff_hz = _frac_to_cutoff(body.tone / 100)
+
+    storage.set_pad_mix(pad_number, volume_db=body.volume_db, pan=body.pan, cutoff_hz=cutoff_hz)
+    pads = storage.list_pads()
+    filename, preset_index = sfz.write_next_kit(pads)
+    midi.send_program_change(preset_index)
+    await _broadcast_pads()
+    return {"ok": True}
+
+
+@app.get("/api/knobs")
+def get_knobs():
+    return {"knobs": storage.list_knob_mappings(), "pending_learn": _pending_learn}
+
+
+@app.post("/api/knobs/learn")
+async def start_knob_learn(body: LearnRequest):
+    global _pending_learn
+    if not 1 <= body.pad_number <= 16:
+        raise HTTPException(400, "pad_number must be between 1 and 16")
+    if body.param not in ("volume", "pan", "cutoff"):
+        raise HTTPException(400, "param must be volume, pan or cutoff")
+    _pending_learn = {"pad_number": body.pad_number, "param": body.param}
+    await _broadcast_knobs()
+    return {"ok": True}
+
+
+@app.post("/api/knobs/learn/cancel")
+async def cancel_knob_learn():
+    global _pending_learn
+    _pending_learn = None
+    await _broadcast_knobs()
+    return {"ok": True}
+
+
+@app.delete("/api/knobs/{cc_number}")
+async def remove_knob_mapping(cc_number: int):
+    storage.delete_knob_mapping(cc_number)
+    await _broadcast_knobs()
     return {"ok": True}
 
 
@@ -180,6 +326,9 @@ async def websocket_endpoint(ws: WebSocket):
     try:
         await ws.send_json({"type": "pads", "pads": _pads_payload()})
         await ws.send_json({"type": "sounds", "sounds": storage.list_samples()})
+        await ws.send_json(
+            {"type": "knobs", "knobs": storage.list_knob_mappings(), "pending_learn": _pending_learn}
+        )
         while True:
             await ws.receive_text()  # client doesn't send anything meaningful; just keep alive
     except WebSocketDisconnect:

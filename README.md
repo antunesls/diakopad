@@ -39,6 +39,20 @@ manual do fabricante não documenta uma tabela fixa). Ajuste as notas de cada
 pad no DiakoPad via `POST /api/pads/{n}/note` (ou uma futura tela de
 configuração) para bater com o que o SMC-PAD realmente envia.
 
+## Volumes, Efeitos e knobs
+
+Abas **Volumes** (volume + pan por pad) e **Efeitos** (tom/filtro grave-agudo
+por pad, via SFZ) — cada slider aplica ~300ms depois de soltar (regrava o
+`.sfz` e troca A/B, igual à atribuição de som). Reverb/delay **não** está
+disponível: a versão do Sfizz deste Zynthian (1.2.3) não suporta o efeito
+interno (`Unsupported effect type: reverb`, testado com `sfizz_render`).
+
+Cada slider tem um botão **atribuir knob**: clique, gire um knob físico do
+SMC-PAD, o app captura o CC automaticamente (MIDI learn) e a partir daí esse
+knob controla aquele slider (com o mesmo delay de ~300ms). Isso exige a porta
+de entrada MIDI do DiakoPad conectada aos knobs — já feito pelo
+`diakopad-midi-connect.service` (ver `deploy/`).
+
 ## Estrutura
 
 ```

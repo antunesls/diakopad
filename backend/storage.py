@@ -20,7 +20,17 @@ CREATE TABLE IF NOT EXISTS pads (
     pad_number INTEGER PRIMARY KEY,
     midi_note INTEGER NOT NULL,
     sample_id INTEGER,
+    volume_db REAL NOT NULL DEFAULT 6,
+    pan REAL NOT NULL DEFAULT 0,
+    cutoff_hz REAL,
     FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS knob_mappings (
+    cc_number INTEGER PRIMARY KEY,
+    pad_number INTEGER NOT NULL,
+    param TEXT NOT NULL CHECK (param IN ('volume', 'pan', 'cutoff')),
+    UNIQUE (pad_number, param)
 );
 """
 
@@ -28,6 +38,23 @@ CREATE TABLE IF NOT EXISTS pads (
 # performance preset. Overridden per pad via the API once real notes are
 # captured from the SMC-PAD (see README).
 DEFAULT_BASE_NOTE = 36
+
+# volume_db/pan/cutoff_hz were added after the first release; ALTER TABLE ADD
+# COLUMN is a no-op-safe migration for the SQLite file that's already
+# deployed and has live data (pad assignments) on it.
+_MIGRATIONS = [
+    "ALTER TABLE pads ADD COLUMN volume_db REAL NOT NULL DEFAULT 6",
+    "ALTER TABLE pads ADD COLUMN pan REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE pads ADD COLUMN cutoff_hz REAL",
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(pads)")}
+    for stmt in _MIGRATIONS:
+        col = stmt.split("ADD COLUMN")[1].split()[0]
+        if col not in existing_cols:
+            conn.execute(stmt)
 
 
 def get_connection() -> sqlite3.Connection:
@@ -41,6 +68,7 @@ def init_db() -> None:
     conn = get_connection()
     try:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         existing = conn.execute("SELECT COUNT(*) AS c FROM pads").fetchone()["c"]
         if existing == 0:
             conn.executemany(
@@ -57,7 +85,7 @@ def list_pads() -> list[dict]:
     try:
         rows = conn.execute(
             """
-            SELECT p.pad_number, p.midi_note, p.sample_id,
+            SELECT p.pad_number, p.midi_note, p.sample_id, p.volume_db, p.pan, p.cutoff_hz,
                    s.display_name, s.filename
             FROM pads p
             LEFT JOIN samples s ON s.id = p.sample_id
@@ -65,6 +93,36 @@ def list_pads() -> list[dict]:
             """
         ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def set_pad_mix(
+    pad_number: int,
+    volume_db: Optional[float] = None,
+    pan: Optional[float] = None,
+    cutoff_hz: Optional[float] = "__unset__",  # type: ignore[assignment]
+) -> None:
+    """Partial update. volume_db/pan: None means "leave unchanged". cutoff_hz
+    is tri-state (unset sentinel vs None vs a float), since None is itself a
+    valid value here (no filter / bypass)."""
+    fields, values = [], []
+    if volume_db is not None:
+        fields.append("volume_db = ?")
+        values.append(volume_db)
+    if pan is not None:
+        fields.append("pan = ?")
+        values.append(pan)
+    if cutoff_hz != "__unset__":
+        fields.append("cutoff_hz = ?")
+        values.append(cutoff_hz)
+    if not fields:
+        return
+    conn = get_connection()
+    try:
+        values.append(pad_number)
+        conn.execute(f"UPDATE pads SET {', '.join(fields)} WHERE pad_number = ?", values)
+        conn.commit()
     finally:
         conn.close()
 
@@ -134,5 +192,56 @@ def delete_sample(sample_id: int) -> Optional[str]:
         conn.execute("DELETE FROM samples WHERE id = ?", (sample_id,))
         conn.commit()
         return row["filename"]
+    finally:
+        conn.close()
+
+
+def list_knob_mappings() -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT cc_number, pad_number, param FROM knob_mappings ORDER BY cc_number"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def set_knob_mapping(cc_number: int, pad_number: int, param: str) -> None:
+    """Binds a CC number to a (pad, param) target, replacing any previous
+    mapping that used either the same CC or the same target."""
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM knob_mappings WHERE cc_number = ?", (cc_number,))
+        conn.execute(
+            "DELETE FROM knob_mappings WHERE pad_number = ? AND param = ?",
+            (pad_number, param),
+        )
+        conn.execute(
+            "INSERT INTO knob_mappings (cc_number, pad_number, param) VALUES (?, ?, ?)",
+            (cc_number, pad_number, param),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_knob_mapping(cc_number: int) -> None:
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM knob_mappings WHERE cc_number = ?", (cc_number,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_knob_target(cc_number: int) -> Optional[dict]:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT pad_number, param FROM knob_mappings WHERE cc_number = ?",
+            (cc_number,),
+        ).fetchone()
+        return dict(row) if row else None
     finally:
         conn.close()

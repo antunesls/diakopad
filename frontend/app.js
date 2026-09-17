@@ -4,16 +4,16 @@
   const state = {
     pads: [],
     sounds: [],
+    knobs: [],
+    pendingLearn: null,
     selectedPad: null,
   };
 
   const el = {
-    tabPads: document.getElementById("tab-pads"),
-    tabSounds: document.getElementById("tab-sounds"),
-    viewPads: document.getElementById("view-pads"),
-    viewSounds: document.getElementById("view-sounds"),
     padGrid: document.getElementById("pad-grid"),
     soundList: document.getElementById("sound-list"),
+    volumeList: document.getElementById("volume-list"),
+    effectsList: document.getElementById("effects-list"),
     uploadZone: document.getElementById("upload-zone"),
     fileInput: document.getElementById("file-input"),
     modal: document.getElementById("assign-modal"),
@@ -26,15 +26,16 @@
     previewAudio: document.getElementById("preview-audio"),
   };
 
-  function switchView(view) {
-    const isPads = view === "pads";
-    el.viewPads.classList.toggle("hidden", !isPads);
-    el.viewSounds.classList.toggle("hidden", isPads);
-    el.tabPads.classList.toggle("active", isPads);
-    el.tabSounds.classList.toggle("active", !isPads);
+  const VIEWS = ["pads", "sounds", "volumes", "effects"];
+  for (const name of VIEWS) {
+    document.getElementById(`tab-${name}`).addEventListener("click", () => switchView(name));
   }
-  el.tabPads.addEventListener("click", () => switchView("pads"));
-  el.tabSounds.addEventListener("click", () => switchView("sounds"));
+  function switchView(view) {
+    for (const name of VIEWS) {
+      document.getElementById(`tab-${name}`).classList.toggle("active", name === view);
+      document.getElementById(`view-${name}`).classList.toggle("hidden", name !== view);
+    }
+  }
 
   // The physical SMC-PAD numbers pads bottom-left (1) to top-right (16), in
   // rows of 4 from the bottom: [1-4] bottom, [5-8], [9-12], [13-16] top. The
@@ -87,6 +88,144 @@
       li.querySelector(".delete-btn").addEventListener("click", () => deleteSound(sound.id));
       el.soundList.appendChild(li);
     }
+  }
+
+  // --- Volumes / Efeitos --------------------------------------------------
+
+  function findKnobCc(padNumber, param) {
+    const m = state.knobs.find((k) => k.pad_number === padNumber && k.param === param);
+    return m ? m.cc_number : null;
+  }
+
+  function isLearning(padNumber, param) {
+    return (
+      state.pendingLearn &&
+      state.pendingLearn.pad_number === padNumber &&
+      state.pendingLearn.param === param
+    );
+  }
+
+  async function toggleLearn(padNumber, param) {
+    if (isLearning(padNumber, param)) {
+      await fetch("/api/knobs/learn/cancel", { method: "POST" });
+    } else {
+      await fetch("/api/knobs/learn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pad_number: padNumber, param }),
+      });
+    }
+  }
+
+  function learnButtonHtml(padNumber, param) {
+    const cc = findKnobCc(padNumber, param);
+    if (isLearning(padNumber, param)) return `<button class="learn-btn waiting" data-param="${param}">gire o knob...</button>`;
+    if (cc !== null) return `<button class="learn-btn bound" data-param="${param}">CC${cc} ✕</button>`;
+    return `<button class="learn-btn" data-param="${param}">atribuir knob</button>`;
+  }
+
+  function wireLearnButton(row, padNumber, param) {
+    const btn = row.querySelector(`.learn-btn[data-param="${param}"]`);
+    btn.addEventListener("click", async () => {
+      const cc = findKnobCc(padNumber, param);
+      if (cc !== null && !isLearning(padNumber, param)) {
+        await fetch(`/api/knobs/${cc}`, { method: "DELETE" });
+        return;
+      }
+      toggleLearn(padNumber, param);
+    });
+  }
+
+  function renderVolumes() {
+    el.volumeList.innerHTML = "";
+    for (const pad of displayOrder(state.pads)) {
+      const li = document.createElement("li");
+      li.className = "mix-row";
+      li.innerHTML = `
+        <div class="mix-row-header">
+          <span class="pad-label">PAD ${pad.pad_number}</span>
+          <span class="pad-sound">${pad.has_sample ? escapeHtml(pad.display_name) : "vazio"}</span>
+        </div>
+        <div class="mix-controls">
+          <div class="mix-control">
+            <span class="mix-control-label">Volume</span>
+            <input type="range" min="-24" max="12" step="0.5" value="${pad.volume_db}" data-role="volume">
+            <span class="mix-value" data-role="volume-value">${pad.volume_db} dB</span>
+            ${learnButtonHtml(pad.pad_number, "volume")}
+          </div>
+          <div class="mix-control">
+            <span class="mix-control-label">Pan</span>
+            <input type="range" min="-100" max="100" step="1" value="${pad.pan}" data-role="pan">
+            <span class="mix-value" data-role="pan-value">${panLabel(pad.pan)}</span>
+            ${learnButtonHtml(pad.pad_number, "pan")}
+          </div>
+        </div>
+      `;
+      const volumeInput = li.querySelector('[data-role="volume"]');
+      const volumeValue = li.querySelector('[data-role="volume-value"]');
+      volumeInput.addEventListener("input", () => (volumeValue.textContent = `${volumeInput.value} dB`));
+      volumeInput.addEventListener("change", () => setPadMix(pad.pad_number, { volume_db: Number(volumeInput.value) }));
+
+      const panInput = li.querySelector('[data-role="pan"]');
+      const panValue = li.querySelector('[data-role="pan-value"]');
+      panInput.addEventListener("input", () => (panValue.textContent = panLabel(Number(panInput.value))));
+      panInput.addEventListener("change", () => setPadMix(pad.pad_number, { pan: Number(panInput.value) }));
+
+      wireLearnButton(li, pad.pad_number, "volume");
+      wireLearnButton(li, pad.pad_number, "pan");
+      el.volumeList.appendChild(li);
+    }
+  }
+
+  function panLabel(pan) {
+    if (pan === 0) return "centro";
+    return pan < 0 ? `E ${Math.abs(pan)}` : `D ${pan}`;
+  }
+
+  function toneFromCutoff(cutoffHz) {
+    if (!cutoffHz) return 100;
+    const frac = Math.log(cutoffHz / 200) / Math.log(20000 / 200);
+    return Math.round(frac * 100);
+  }
+
+  function renderEffects() {
+    el.effectsList.innerHTML = "";
+    for (const pad of displayOrder(state.pads)) {
+      const tone = toneFromCutoff(pad.cutoff_hz);
+      const li = document.createElement("li");
+      li.className = "mix-row";
+      li.innerHTML = `
+        <div class="mix-row-header">
+          <span class="pad-label">PAD ${pad.pad_number}</span>
+          <span class="pad-sound">${pad.has_sample ? escapeHtml(pad.display_name) : "vazio"}</span>
+        </div>
+        <div class="mix-controls">
+          <div class="mix-control">
+            <span class="mix-control-label">Tom</span>
+            <input type="range" min="0" max="100" step="1" value="${tone}" data-role="tone">
+            <span class="mix-value" data-role="tone-value">${tone >= 100 ? "aberto" : tone + "%"}</span>
+            ${learnButtonHtml(pad.pad_number, "cutoff")}
+          </div>
+        </div>
+      `;
+      const toneInput = li.querySelector('[data-role="tone"]');
+      const toneValue = li.querySelector('[data-role="tone-value"]');
+      toneInput.addEventListener("input", () => {
+        const v = Number(toneInput.value);
+        toneValue.textContent = v >= 100 ? "aberto" : v + "%";
+      });
+      toneInput.addEventListener("change", () => setPadMix(pad.pad_number, { tone: Number(toneInput.value) }));
+      wireLearnButton(li, pad.pad_number, "cutoff");
+      el.effectsList.appendChild(li);
+    }
+  }
+
+  async function setPadMix(padNumber, body) {
+    await fetch(`/api/pads/${padNumber}/mix`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
   }
 
   function playPreview(soundId) {
@@ -225,22 +364,35 @@
         state.pads = msg.pads;
         renderPads();
         renderSoundList();
+        renderVolumes();
+        renderEffects();
       } else if (msg.type === "sounds") {
         state.sounds = msg.sounds;
         renderSoundList();
+      } else if (msg.type === "knobs") {
+        state.knobs = msg.knobs;
+        state.pendingLearn = msg.pending_learn;
+        renderVolumes();
+        renderEffects();
       }
     });
   }
 
   async function init() {
-    const [padsRes, soundsRes] = await Promise.all([
+    const [padsRes, soundsRes, knobsRes] = await Promise.all([
       fetch("/api/pads"),
       fetch("/api/sounds"),
+      fetch("/api/knobs"),
     ]);
     state.pads = await padsRes.json();
     state.sounds = await soundsRes.json();
+    const knobsData = await knobsRes.json();
+    state.knobs = knobsData.knobs;
+    state.pendingLearn = knobsData.pending_learn;
     renderPads();
     renderSoundList();
+    renderVolumes();
+    renderEffects();
     connectWebSocket();
   }
 

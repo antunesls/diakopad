@@ -5,7 +5,10 @@ Requires=diakopad.service a2jmidid.service jack2.service
 
 [Service]
 Type=oneshot
-User=zynthian
+# Runs as root: `jack_lsp`/`jack_connect` as the `zynthian` user could not
+# reach the JACK server in testing (missing session env var, most likely
+# XDG_RUNTIME_DIR), while root reliably could. This unit only runs a short
+# connect command, not a persistent process.
 # DiakoPad opens its virtual MIDI port lazily (on first pad assignment), so
 # wait for it to show up in `jack_lsp` before connecting it into
 # ZynMidiRouter's dev4_in slot (confirmed free on this device: dev0-dev3

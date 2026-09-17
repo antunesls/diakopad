@@ -2,7 +2,7 @@
 # xinit client script for the DiakoPad kiosk X session (VT2).
 xset -dpms
 xset s off
-exec chromium-browser \
+exec chromium \
   --kiosk \
   --noerrdialogs \
   --disable-infobars \

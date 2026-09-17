@@ -69,6 +69,7 @@ manager = ConnectionManager()
 @app.on_event("startup")
 def on_startup() -> None:
     storage.init_db()
+    midi.ensure_open()
 
 
 def _pads_payload() -> list[dict]:

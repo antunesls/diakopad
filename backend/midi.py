@@ -40,6 +40,13 @@ def _get_port():
     return _port
 
 
+def ensure_open() -> bool:
+    """Opens the virtual MIDI port eagerly (called on app startup) so it's
+    already visible to `jack_lsp`/`aconnect` for a boot-time auto-connect
+    script, instead of only appearing after the first pad assignment."""
+    return bool(_get_port())
+
+
 def send_program_change(preset_index: int) -> bool:
     """Sends a Program Change on MIDI_CHANNEL. Returns True if actually sent."""
     port = _get_port()

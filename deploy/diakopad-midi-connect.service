@@ -1,0 +1,18 @@
+[Unit]
+Description=Connect DiakoPad's virtual MIDI port to ZynMidiRouter (JACK connections do not persist across reboots)
+After=diakopad.service a2jmidid.service jack2.service
+Requires=diakopad.service a2jmidid.service jack2.service
+
+[Service]
+Type=oneshot
+User=zynthian
+# DiakoPad opens its virtual MIDI port lazily (on first pad assignment), so
+# wait for it to show up in `jack_lsp` before connecting it into
+# ZynMidiRouter's dev4_in slot (confirmed free on this device: dev0-dev3
+# were already used by the SMC-PAD/other devices when this was set up).
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do jack_lsp 2>/dev/null | grep -q DiakoPad && exit 0; sleep 1; done; echo "DiakoPad MIDI port never appeared" >&2; exit 1'
+ExecStart=/bin/sh -c 'jack_connect "$(jack_lsp | grep DiakoPad)" ZynMidiRouter:dev4_in'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

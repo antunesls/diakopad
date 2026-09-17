@@ -24,11 +24,19 @@ import evdev
 from evdev import ecodes
 
 TOUCH_DEVICE_HINT = "touch"  # case-insensitive substring match on device name
+# On the confirmed device the touch panel enumerates as
+# "wch.cn USB2IIC_CTP_CONTROL" (no "touch" in the name), so we also match on
+# "ctp" (capacitive touch panel) before falling back to the generic
+# ABS_X/ABS_Y capability scan below.
+TOUCH_DEVICE_HINTS = ("touch", "ctp")
 CORNER_FRACTION = 0.12  # top-right 12% x 12% of the panel counts as the "hot corner"
 TAP_WINDOW = 0.6  # seconds between two taps to count as a toggle gesture
 
-VT_ZYNTHIAN = 1
-VT_KIOSK = 2
+# Confirmed on the real device: zynthian-ui's Xorg session runs on VT2 (VT1
+# is just a text getty), so the kiosk uses VT3 instead of the originally
+# assumed VT1/VT2 pair.
+VT_ZYNTHIAN = 2
+VT_KIOSK = 3
 
 
 def find_touch_device() -> evdev.InputDevice:
@@ -36,7 +44,8 @@ def find_touch_device() -> evdev.InputDevice:
         dev = evdev.InputDevice(path)
         caps = dev.capabilities()
         has_abs = ecodes.EV_ABS in caps
-        if has_abs and TOUCH_DEVICE_HINT in dev.name.lower():
+        name = dev.name.lower()
+        if has_abs and any(hint in name for hint in TOUCH_DEVICE_HINTS):
             return dev
     # Fall back to the first device that reports absolute X/Y (some touch
     # controllers don't have "touch" in their reported name).
@@ -55,8 +64,9 @@ def get_axis_range(dev: evdev.InputDevice, code: int) -> tuple[int, int]:
 
 def current_vt() -> int:
     try:
-        out = subprocess.check_output(["fgconsole"]).decode().strip()
-        return int(out)
+        with open("/sys/class/tty/tty0/active") as f:
+            # e.g. "tty2" -> 2
+            return int(f.read().strip().replace("tty", ""))
     except Exception:
         return VT_ZYNTHIAN
 

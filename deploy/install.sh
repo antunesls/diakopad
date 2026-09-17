@@ -48,15 +48,23 @@ Passos manuais restantes (ver README.md):
          /zynthian/zynthian-my-data/presets/sfizz/DiakoPad
      Os arquivos diakopad_a.sfz / diakopad_b.sfz vão aparecer aí assim que
      o primeiro pad for atribuído pelo DiakoPad.
-  3. Conecte a porta MIDI virtual "DiakoPad" (criada pelo backend) na
-     entrada do roteador MIDI do Zynthian, por exemplo:
-         aconnect -l                     # confira os nomes/portas exatos
-         aconnect 'DiakoPad' 'ZynMidiRouter'
-     Considere adicionar esse aconnect a um script de boot para persistir
-     entre reinícios.
-  4. Só depois de validar o passo 1-3, habilite o kiosk e o daemon de
-     alternância de tela (opcional, requer xinit/chromium-browser/python3-evdev
-     instalados e o stack gráfico do zynthian-ui confirmado — ver README.md):
+  3. O roteamento MIDI deste Zynthian é feito via JACK (cliente
+     "ZynMidiRouter", portas dev0_in..dev23_in), com uma ponte ALSA->JACK
+     (a2j) ativa. A porta virtual ALSA "DiakoPad" criada pelo backend
+     aparece do lado JACK como "a2j:DiakoPad [...] (playback)". Conecte-a a
+     um slot devN_in livre do ZynMidiRouter, por exemplo:
+         jack_lsp -A | grep -A2 DiakoPad      # confira o nome exato da porta
+         jack_lsp -c ZynMidiRouter:dev1_in    # cheque se dev1 já está em uso
+         jack_connect 'a2j:DiakoPad [128] (playback): DiakoPad' 'ZynMidiRouter:dev1_in'
+     Depois, na UI nativa do Zynthian (Hardware/MIDI devices), confirme que
+     esse device está com canal "All" ou canal 10, para o Program Change
+     (que já carrega o canal na própria mensagem) passar sem ser filtrado.
+     Isso precisa ser refeito a cada boot (JACK não persiste conexões) —
+     considere um script de systemd rodando após o jackd subir.
+  4. Só depois de validar o passo 1-3, instale o Chromium e habilite o
+     kiosk + o daemon de alternância de tela (a UI nativa do zynthian roda
+     na VT2 neste device, então o kiosk usa a VT3 — já ajustado nos units):
+         sudo apt-get install -y chromium
          sudo systemctl enable --now diakopad-kiosk.service
          sudo systemctl enable --now diakopad-vt-toggle.service
 EOF

@@ -5,7 +5,11 @@ Requires=diakopad.service
 
 [Service]
 Type=simple
-User=zynthian
+# Runs as root, matching how zynthian-ui's own Xorg process runs on this
+# device (confirmed via `ps aux`) — the zynthian user lacks permission to
+# open a virtual console directly ("Cannot open virtual console 3
+# (Permission denied)" when tried as User=zynthian), since there's no
+# systemd-logind graphical session granting it VT ownership here.
 # On this Zynthian install, zynthian-ui's Xorg session owns VT2 (confirmed
 # via `cat /sys/class/tty/tty0/active`), not VT1 (that's just a text getty).
 # So the kiosk gets its own X server on VT3 instead. VT3 stays inactive (and

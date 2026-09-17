@@ -1,9 +1,12 @@
 #!/bin/sh
-# xinit client script for the DiakoPad kiosk X session (VT2).
+# xinit client script for the DiakoPad kiosk X session (VT3).
 xset -dpms
 xset s off
+# --no-sandbox is required because this runs as root (see diakopad-kiosk.service).
 exec chromium \
   --kiosk \
+  --no-sandbox \
+  --user-data-dir=/root/.config/diakopad-chromium \
   --noerrdialogs \
   --disable-infobars \
   --disable-session-crashed-bubble \

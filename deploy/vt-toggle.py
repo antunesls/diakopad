@@ -17,6 +17,7 @@ adjusting to the actual panel.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 
@@ -79,6 +80,16 @@ def current_vt() -> int:
 
 def switch_vt(target: int) -> None:
     subprocess.run(["sudo", "chvt", str(target)], check=False)
+    if target == VT_KIOSK:
+        # The kiosk's Chromium sits on VT3 in the background the whole time
+        # and can end up showing a stale/blank frame by the time someone
+        # switches to it (observed on the real device: its network service
+        # silently restarted itself while backgrounded, and the page never
+        # repainted). Forcing a reload right after the switch is a cheap,
+        # reliable fix regardless of the exact cause.
+        time.sleep(0.3)
+        env = {**os.environ, "DISPLAY": ":1"}
+        subprocess.run(["xdotool", "key", "F5"], env=env, check=False)
 
 
 def main() -> None:

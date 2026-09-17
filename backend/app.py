@@ -52,6 +52,11 @@ class LearnRequest(BaseModel):
     param: str  # "volume" | "pan" | "cutoff"
 
 
+class SettingsRequest(BaseModel):
+    sustain_mode: Optional[bool] = None
+    velocity_sensitive: Optional[bool] = None
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self.active: list[WebSocket] = []
@@ -144,9 +149,7 @@ async def _apply_knob_target(key: tuple[int, str]) -> None:
         storage.set_pad_mix(pad_number, pan=_cc_to_pan(value))
     elif param == "cutoff":
         storage.set_pad_mix(pad_number, cutoff_hz=_cc_to_cutoff(value))
-    pads = storage.list_pads()
-    filename, preset_index = sfz.write_next_kit(pads)
-    midi.send_program_change(preset_index)
+    _regen_kit(storage.list_pads())
     await _broadcast_pads()
 
 
@@ -183,6 +186,16 @@ async def _broadcast_knobs() -> None:
     )
 
 
+async def _broadcast_settings() -> None:
+    await manager.broadcast({"type": "settings", "settings": storage.get_settings()})
+
+
+def _regen_kit(pads: list[dict]) -> tuple[str, bool]:
+    filename, preset_index = sfz.write_next_kit(pads, storage.get_settings())
+    sent = midi.send_program_change(preset_index)
+    return filename, sent
+
+
 @app.get("/api/pads")
 def get_pads():
     return _pads_payload()
@@ -198,9 +211,7 @@ async def assign_pad(pad_number: int, body: AssignRequest):
             raise HTTPException(404, "sample not found")
 
     storage.assign_sample(pad_number, body.sample_id)
-    pads = storage.list_pads()
-    filename, preset_index = sfz.write_next_kit(pads)
-    sent = midi.send_program_change(preset_index)
+    filename, sent = _regen_kit(storage.list_pads())
 
     await _broadcast_pads()
     return {"ok": True, "kit_file": filename, "midi_sent": sent}
@@ -213,9 +224,7 @@ async def set_pad_note(pad_number: int, body: NoteRequest):
     if not 0 <= body.midi_note <= 127:
         raise HTTPException(400, "midi_note must be between 0 and 127")
     storage.set_pad_note(pad_number, body.midi_note)
-    pads = storage.list_pads()
-    filename, preset_index = sfz.write_next_kit(pads)
-    midi.send_program_change(preset_index)
+    _regen_kit(storage.list_pads())
     await _broadcast_pads()
     return {"ok": True}
 
@@ -231,9 +240,7 @@ async def set_pad_mix(pad_number: int, body: MixRequest):
         cutoff_hz = _frac_to_cutoff(body.tone / 100)
 
     storage.set_pad_mix(pad_number, volume_db=body.volume_db, pan=body.pan, cutoff_hz=cutoff_hz)
-    pads = storage.list_pads()
-    filename, preset_index = sfz.write_next_kit(pads)
-    midi.send_program_change(preset_index)
+    _regen_kit(storage.list_pads())
     await _broadcast_pads()
     return {"ok": True}
 
@@ -267,6 +274,22 @@ async def cancel_knob_learn():
 async def remove_knob_mapping(cc_number: int):
     storage.delete_knob_mapping(cc_number)
     await _broadcast_knobs()
+    return {"ok": True}
+
+
+@app.get("/api/settings")
+def get_settings():
+    return storage.get_settings()
+
+
+@app.post("/api/settings")
+async def update_settings(body: SettingsRequest):
+    if body.sustain_mode is not None:
+        storage.set_setting("sustain_mode", "1" if body.sustain_mode else "0")
+    if body.velocity_sensitive is not None:
+        storage.set_setting("velocity_sensitive", "1" if body.velocity_sensitive else "0")
+    _regen_kit(storage.list_pads())
+    await _broadcast_settings()
     return {"ok": True}
 
 
@@ -329,6 +352,7 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.send_json(
             {"type": "knobs", "knobs": storage.list_knob_mappings(), "pending_learn": _pending_learn}
         )
+        await ws.send_json({"type": "settings", "settings": storage.get_settings()})
         while True:
             await ws.receive_text()  # client doesn't send anything meaningful; just keep alive
     except WebSocketDisconnect:

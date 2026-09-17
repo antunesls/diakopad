@@ -304,6 +304,81 @@ html, body {
   50% { opacity: 0.4; }
 }
 
+/* Config tab */
+.settings-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-row {
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.settings-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-label {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.settings-desc {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.switch {
+  position: relative;
+  width: 56px;
+  height: 32px;
+  flex-shrink: 0;
+}
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--panel-alt);
+  border-radius: 32px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.switch-slider::before {
+  content: "";
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  left: 4px;
+  top: 4px;
+  background: var(--text);
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+}
+.switch input:checked + .switch-slider {
+  background: var(--accent);
+}
+.switch input:checked + .switch-slider::before {
+  transform: translateX(24px);
+  background: #1a1a1a;
+}
+
 /* Modal */
 .modal {
   position: fixed;

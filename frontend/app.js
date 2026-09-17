@@ -7,6 +7,7 @@
     knobs: [],
     pendingLearn: null,
     selectedPad: null,
+    settings: { sustain_mode: "1", velocity_sensitive: "0" },
   };
 
   const el = {
@@ -24,9 +25,11 @@
     modalSoundList: document.getElementById("modal-sound-list"),
     connStatus: document.getElementById("conn-status"),
     previewAudio: document.getElementById("preview-audio"),
+    settingSustain: document.getElementById("setting-sustain"),
+    settingVelocity: document.getElementById("setting-velocity"),
   };
 
-  const VIEWS = ["pads", "sounds", "volumes", "effects"];
+  const VIEWS = ["pads", "sounds", "volumes", "effects", "config"];
   for (const name of VIEWS) {
     document.getElementById(`tab-${name}`).addEventListener("click", () => switchView(name));
   }
@@ -228,6 +231,28 @@
     });
   }
 
+  // --- Config ---------------------------------------------------------
+
+  function renderSettings() {
+    el.settingSustain.checked = state.settings.sustain_mode === "1";
+    el.settingVelocity.checked = state.settings.velocity_sensitive === "1";
+  }
+
+  el.settingSustain.addEventListener("change", () => {
+    fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sustain_mode: el.settingSustain.checked }),
+    });
+  });
+  el.settingVelocity.addEventListener("change", () => {
+    fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ velocity_sensitive: el.settingVelocity.checked }),
+    });
+  });
+
   function playPreview(soundId) {
     el.previewAudio.src = `/api/sounds/${soundId}/audio`;
     el.previewAudio.play().catch(() => {});
@@ -308,16 +333,20 @@
     closeModal();
   });
 
-  async function uploadFiles(files) {
-    for (const file of files) {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch("/api/sounds/upload", { method: "POST", body: form });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        alert(`Falha ao enviar ${file.name}: ${body.detail || res.status}`);
-      }
+  async function uploadOne(file) {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch("/api/sounds/upload", { method: "POST", body: form });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      alert(`Falha ao enviar ${file.name}: ${body.detail || res.status}`);
     }
+  }
+
+  async function uploadFiles(files) {
+    // Uploaded in parallel (not one-by-one) so selecting/dropping several
+    // files at once feels immediate rather than queued.
+    await Promise.all(Array.from(files).map(uploadOne));
   }
 
   el.fileInput.addEventListener("change", () => {
@@ -374,24 +403,30 @@
         state.pendingLearn = msg.pending_learn;
         renderVolumes();
         renderEffects();
+      } else if (msg.type === "settings") {
+        state.settings = msg.settings;
+        renderSettings();
       }
     });
   }
 
   async function init() {
-    const [padsRes, soundsRes, knobsRes] = await Promise.all([
+    const [padsRes, soundsRes, knobsRes, settingsRes] = await Promise.all([
       fetch("/api/pads"),
       fetch("/api/sounds"),
       fetch("/api/knobs"),
+      fetch("/api/settings"),
     ]);
     state.pads = await padsRes.json();
     state.sounds = await soundsRes.json();
     const knobsData = await knobsRes.json();
     state.knobs = knobsData.knobs;
     state.pendingLearn = knobsData.pending_learn;
+    state.settings = await settingsRes.json();
     renderPads();
     renderSoundList();
     renderVolumes();
+    renderSettings();
     renderEffects();
     connectWebSocket();
   }

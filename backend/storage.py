@@ -32,7 +32,21 @@ CREATE TABLE IF NOT EXISTS knob_mappings (
     param TEXT NOT NULL CHECK (param IN ('volume', 'pan', 'cutoff')),
     UNIQUE (pad_number, param)
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
+
+# sustain_mode=1: samples always play to completion once triggered
+# (loop_mode=one_shot), ignoring how long the pad is held - the usual
+# behaviour for one-shot drum/sample pads. sustain_mode=0: releasing the pad
+# cuts the sound promptly (short ampeg_release) instead.
+# velocity_sensitive=0: every hit plays at the pad's set volume regardless of
+# how hard it's struck (amp_veltrack=0) - this was the fix for hits sounding
+# too quiet. velocity_sensitive=1: harder hits are louder (amp_veltrack=100).
+DEFAULT_SETTINGS = {"sustain_mode": "1", "velocity_sensitive": "0"}
 
 # Default note layout: sequential from 36 (C1), matches a typical MPC-style
 # performance preset. Overridden per pad via the API once real notes are
@@ -75,6 +89,8 @@ def init_db() -> None:
                 "INSERT INTO pads (pad_number, midi_note, sample_id) VALUES (?, ?, NULL)",
                 [(n, DEFAULT_BASE_NOTE + (n - 1)) for n in range(1, 17)],
             )
+        for key, value in DEFAULT_SETTINGS.items():
+            conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
         conn.commit()
     finally:
         conn.close()
@@ -243,5 +259,27 @@ def get_knob_target(cc_number: int) -> Optional[dict]:
             (cc_number,),
         ).fetchone()
         return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_settings() -> dict:
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT key, value FROM settings").fetchall()
+        return {**DEFAULT_SETTINGS, **{r["key"]: r["value"] for r in rows}}
+    finally:
+        conn.close()
+
+
+def set_setting(key: str, value: str) -> None:
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        conn.commit()
     finally:
         conn.close()

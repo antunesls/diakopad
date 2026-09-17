@@ -14,6 +14,7 @@
       <button id="tab-sounds" class="tab" type="button">Sons</button>
       <button id="tab-volumes" class="tab" type="button">Volumes</button>
       <button id="tab-effects" class="tab" type="button">Efeitos</button>
+      <button id="tab-config" class="tab" type="button">Config</button>
     </nav>
     <span id="conn-status" class="conn-status" title="Conexão">●</span>
   </header>
@@ -44,6 +45,31 @@
       aqui é um filtro grave/agudo por pad.
     </p>
     <ul id="effects-list" class="mix-list"></ul>
+  </main>
+
+  <main id="view-config" class="view hidden">
+    <ul class="settings-list">
+      <li class="settings-row">
+        <div class="settings-text">
+          <span class="settings-label">Tocar até o fim</span>
+          <span class="settings-desc">O som sempre toca inteiro, mesmo soltando o pad rápido. Desligado: o som para assim que você solta o pad.</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="setting-sustain">
+          <span class="switch-slider"></span>
+        </label>
+      </li>
+      <li class="settings-row">
+        <div class="settings-text">
+          <span class="settings-label">Considerar força do toque</span>
+          <span class="settings-desc">Toque mais forte = mais volume. Desligado: todo toque toca no volume configurado no pad.</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="setting-velocity">
+          <span class="switch-slider"></span>
+        </label>
+      </li>
+    </ul>
   </main>
 
   <div id="assign-modal" class="modal hidden">

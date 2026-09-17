@@ -1,0 +1,13 @@
+[Unit]
+Description=DiakoPad VT toggle daemon (corner-tap switch between zynthian-ui and kiosk)
+After=multi-user.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /home/zynthian/diakopad/deploy/vt-toggle.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

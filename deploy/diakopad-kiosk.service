@@ -1,0 +1,17 @@
+[Unit]
+Description=DiakoPad Chromium kiosk (second VT, alongside zynthian-ui)
+After=diakopad.service
+Requires=diakopad.service
+
+[Service]
+Type=simple
+User=zynthian
+# Runs a minimal X server on VT2 with Chromium in kiosk mode as its only
+# client. VT2 stays inactive (and Chromium idle) until vt-toggle switches to
+# it with `chvt 2`; zynthian-ui keeps owning VT1 undisturbed.
+ExecStart=/usr/bin/xinit /home/zynthian/diakopad/deploy/kiosk-xinitrc -- :1 vt2 -nocursor
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

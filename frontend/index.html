@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>DiakoPad</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>DiakoPad</h1>
+    <nav>
+      <button id="tab-pads" class="tab active" type="button">Pads</button>
+      <button id="tab-sounds" class="tab" type="button">Sons</button>
+    </nav>
+    <span id="conn-status" class="conn-status" title="Conexão">●</span>
+  </header>
+
+  <main id="view-pads" class="view">
+    <div id="pad-grid" class="pad-grid"></div>
+  </main>
+
+  <main id="view-sounds" class="view hidden">
+    <section class="upload-zone" id="upload-zone">
+      <p>Arraste arquivos de som aqui ou</p>
+      <label class="upload-btn">
+        Escolher arquivos
+        <input type="file" id="file-input" accept=".wav,.mp3,.ogg,.flac,.aiff,.aif" multiple hidden>
+      </label>
+      <p class="hint">wav, mp3, ogg, flac, aiff</p>
+    </section>
+    <ul id="sound-list" class="sound-list"></ul>
+  </main>
+
+  <div id="assign-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-pad-title">Pad</h2>
+        <button id="modal-close" class="icon-btn" type="button">✕</button>
+      </div>
+      <input id="modal-search" type="search" placeholder="Buscar som...">
+      <div class="modal-actions">
+        <button id="modal-clear" class="danger-btn" type="button">Remover som deste pad</button>
+      </div>
+      <ul id="modal-sound-list" class="sound-list modal-sound-list"></ul>
+    </div>
+  </div>
+
+  <audio id="preview-audio" hidden></audio>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+#!/bin/sh
+# xinit client script for the DiakoPad kiosk X session (VT2).
+xset -dpms
+xset s off
+exec chromium-browser \
+  --kiosk \
+  --noerrdialogs \
+  --disable-infobars \
+  --disable-session-crashed-bubble \
+  --check-for-update-interval=31536000 \
+  --window-size=1024,600 \
+  --window-position=0,0 \
+  http://localhost:8080/

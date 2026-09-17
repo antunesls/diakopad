@@ -27,6 +27,8 @@
     previewAudio: document.getElementById("preview-audio"),
     settingSustain: document.getElementById("setting-sustain"),
     settingVelocity: document.getElementById("setting-velocity"),
+    knobsCountLabel: document.getElementById("knobs-count-label"),
+    clearKnobsBtn: document.getElementById("clear-knobs-btn"),
   };
 
   const VIEWS = ["pads", "sounds", "volumes", "effects", "config"];
@@ -236,7 +238,12 @@
   function renderSettings() {
     el.settingSustain.checked = state.settings.sustain_mode === "1";
     el.settingVelocity.checked = state.settings.velocity_sensitive === "1";
+    const n = state.knobs.length;
+    el.knobsCountLabel.textContent = n === 0 ? "nenhum knob atribuído" : `${n} knob${n > 1 ? "s" : ""} atribuído${n > 1 ? "s" : ""}`;
+    el.clearKnobsBtn.disabled = n === 0;
   }
+
+  el.clearKnobsBtn.addEventListener("click", () => fetch("/api/knobs", { method: "DELETE" }));
 
   el.settingSustain.addEventListener("change", () => {
     fetch("/api/settings", {
@@ -403,6 +410,7 @@
         state.pendingLearn = msg.pending_learn;
         renderVolumes();
         renderEffects();
+        renderSettings();
       } else if (msg.type === "settings") {
         state.settings = msg.settings;
         renderSettings();

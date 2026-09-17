@@ -251,6 +251,15 @@ def delete_knob_mapping(cc_number: int) -> None:
         conn.close()
 
 
+def clear_knob_mappings() -> None:
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM knob_mappings")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_knob_target(cc_number: int) -> Optional[dict]:
     conn = get_connection()
     try:

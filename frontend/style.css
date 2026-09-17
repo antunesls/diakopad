@@ -323,6 +323,10 @@ html, body {
   gap: 16px;
 }
 
+.knobs-clear-row {
+  margin-top: 14px;
+}
+
 .settings-text {
   flex: 1;
   display: flex;

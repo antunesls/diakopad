@@ -277,6 +277,15 @@ async def remove_knob_mapping(cc_number: int):
     return {"ok": True}
 
 
+@app.delete("/api/knobs")
+async def clear_knob_mappings():
+    global _pending_learn
+    _pending_learn = None
+    storage.clear_knob_mappings()
+    await _broadcast_knobs()
+    return {"ok": True}
+
+
 @app.get("/api/settings")
 def get_settings():
     return storage.get_settings()

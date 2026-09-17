@@ -3,9 +3,15 @@
 xset -dpms
 xset s off
 # --no-sandbox is required because this runs as root (see diakopad-kiosk.service).
+# --disable-gpu forces software rendering: the rpi-chromium-mods package
+# injects GPU-acceleration flags by default, and GPU-accelerated Chromium
+# left a blank/white window after rapid VT switches during testing. This UI
+# is simple flexbox/grid, so software rendering is plenty fast and avoids
+# that whole class of GL-context-on-VT-switch bugs.
 exec chromium \
   --kiosk \
   --no-sandbox \
+  --disable-gpu \
   --user-data-dir=/root/.config/diakopad-chromium \
   --noerrdialogs \
   --disable-infobars \

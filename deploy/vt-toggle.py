@@ -31,6 +31,12 @@ TOUCH_DEVICE_HINT = "touch"  # case-insensitive substring match on device name
 TOUCH_DEVICE_HINTS = ("touch", "ctp")
 CORNER_FRACTION = 0.12  # top-right 12% x 12% of the panel counts as the "hot corner"
 TAP_WINDOW = 0.6  # seconds between two taps to count as a toggle gesture
+# After a toggle fires, ignore taps for this long. Needed because on the real
+# device the touch controller keeps re-asserting BTN_TOUCH=1 (without an
+# intervening 0) for as long as a finger stays down, which without an edge
+# check + cooldown caused 3 VT switches from a single tap-and-hold and left
+# Chromium's GL context in a blank/white state from the rapid VT churn.
+TOGGLE_COOLDOWN = 1.5
 
 # Confirmed on the real device: zynthian-ui's Xorg session runs on VT2 (VT1
 # is just a text getty), so the kiosk uses VT3 instead of the originally
@@ -86,6 +92,8 @@ def main() -> None:
 
     last_x = last_y = None
     last_tap_time = 0.0
+    last_toggle_time = 0.0
+    touch_is_down = False
 
     for event in dev.read_loop():
         if event.type == ecodes.EV_ABS:
@@ -93,17 +101,27 @@ def main() -> None:
                 last_x = event.value
             elif event.code == ecodes.ABS_Y:
                 last_y = event.value
-        elif event.type == ecodes.EV_KEY and event.code == ecodes.BTN_TOUCH and event.value == 1:
+        elif event.type == ecodes.EV_KEY and event.code == ecodes.BTN_TOUCH:
+            if event.value == 0:
+                touch_is_down = False
+                continue
+            if event.value != 1 or touch_is_down:
+                continue  # not a fresh press (either a release-adjacent value or a repeat while held)
+            touch_is_down = True
+
+            now = time.time()
+            if now - last_toggle_time < TOGGLE_COOLDOWN:
+                continue
             if last_x is None or last_y is None:
                 continue
             in_corner = last_x >= corner_x and last_y <= corner_y
             if not in_corner:
                 continue
-            now = time.time()
             if now - last_tap_time <= TAP_WINDOW:
                 target = VT_KIOSK if current_vt() == VT_ZYNTHIAN else VT_ZYNTHIAN
                 print(f"[vt-toggle] double-tap detected, switching to VT{target}")
                 switch_vt(target)
+                last_toggle_time = now
                 last_tap_time = 0.0
             else:
                 last_tap_time = now

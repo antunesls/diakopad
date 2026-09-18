@@ -1,7 +1,22 @@
 """Client for mod-host's line-based TCP control protocol
 (https://github.com/moddevices/mod-host - `add "<uri>" <n>`, `connect
 "<src>" "<dst>"`, `param_set <n> "<symbol>" <value>`, `remove <n>`, each
-answered with a line `resp <status> [value]`, status >= 0 meaning success).
+answered with a line `resp <status> [value]`, status >= 0 meaning success
+(errors are negative, see mod-host src/effects.h; `add` replies with the
+allocated instance number on success).
+
+Protocol notes validated on-device against the Zynthian OS build
+(see /zynthian/zynthian-sw/mod-host):
+
+* Commands are NUL-terminated (``command\\x00``), NOT newline-terminated.
+  With ``\\n`` the server's frame accounting in socket.c goes negative and
+  its parser starts interpreting heap memory as commands (garbled replies
+  and crashes). Zynthian's own clients (zyngine) use NUL framing.
+* The binary daemonizes: the spawned parent exits with code 0 immediately
+  and a detached child owns the control port. Liveness must therefore be
+  probed over TCP (or via the ``quit`` command), never via the Popen handle.
+* Effects live in their own JACK clients named ``effect_<instance>`` with
+  ports named after the LV2 port symbols.
 
 This is the same LV2 plugin host Zynthian itself uses for effect chains
 (reverb, delay, ...); DiakoPad drives it directly instead of going through
@@ -44,19 +59,34 @@ def _log_unavailable(exc: Exception) -> None:
         _unavailable_logged = True
 
 
+def _port_accepts(timeout: float = 0.5) -> bool:
+    """True if a mod-host daemon is listening on the control port."""
+    try:
+        probe = socket.create_connection((HOST, CONTROL_PORT), timeout=timeout)
+    except OSError:
+        return False
+    probe.close()
+    return True
+
+
 def start() -> bool:
-    """Spawns the mod-host process (once) if the binary is on PATH. Only one
-    process is needed - it hosts every plugin instance (buses + per-pad
+    """Ensures a mod-host daemon is running: adopts an existing one (the
+    daemon outlives app restarts), otherwise spawns it (once). Only one
+    daemon is needed - it hosts every plugin instance (buses + per-pad
     send-gains) over the same control socket."""
     global _proc
-    if _proc is not None and _proc.poll() is None:
+    if _port_accepts():
+        logger.info("adopted existing mod-host on control port %d", CONTROL_PORT)
         return True
     if shutil.which(MODHOST_BIN) is None:
         _log_unavailable(FileNotFoundError(MODHOST_BIN))
         return False
     try:
         _proc = subprocess.Popen(
-            [MODHOST_BIN, "-n", "-p", str(CONTROL_PORT)],
+            # No "-n" flag: the mod-host binary shipped with Zynthian OS
+            # rejects it (usage: -v -i -p -f) and exits before opening the
+            # control socket.
+            [MODHOST_BIN, "-p", str(CONTROL_PORT)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -64,7 +94,14 @@ def start() -> bool:
         _log_unavailable(exc)
         return False
     logger.info("spawned mod-host (pid %d, control port %d)", _proc.pid, CONTROL_PORT)
-    return True
+    # The parent forks a daemon child and exits immediately; give the child
+    # a moment to bind the control port before callers start connecting.
+    for _ in range(25):
+        if _port_accepts(0.2):
+            return True
+        time.sleep(0.2)
+    logger.warning("mod-host daemon did not open control port %d in time", CONTROL_PORT)
+    return False
 
 
 def is_configured() -> bool:
@@ -72,7 +109,11 @@ def is_configured() -> bool:
 
 
 def is_alive() -> bool:
-    return _proc is not None and _proc.poll() is None
+    """The daemon detaches from the Popen handle, so liveness is probed over
+    TCP (or inferred from the persistent control socket being open)."""
+    if _sock is not None:
+        return True
+    return _port_accepts()
 
 
 def restart() -> bool:
@@ -104,9 +145,12 @@ def _send_command_sync(command: str) -> Optional[str]:
     if sock is None:
         return None
     try:
-        sock.sendall((command + "\n").encode("utf-8"))
+        # NUL-terminated framing: a trailing "\n" corrupts the server's
+        # frame accounting and its parser starts reading heap memory.
+        sock.sendall((command + "\x00").encode("utf-8"))
         data = sock.recv(RECV_BUFSIZE)
-        return data.decode("utf-8", errors="replace").strip()
+        reply = data.decode("utf-8", errors="replace")
+        return reply.split("\x00")[0].strip()
     except OSError as exc:
         logger.warning("mod-host socket error on %r: %s", command, exc)
         _sock = None
@@ -135,7 +179,9 @@ def _parse_status(reply: Optional[str]) -> Optional[int]:
 async def add(lv2_uri: str, instance: int) -> bool:
     reply = await send_command(f'add "{lv2_uri}" {instance}')
     status = _parse_status(reply)
-    ok = status is not None and status >= 0
+    # add replies with the allocated instance number on success (>= 0);
+    # errors are negative (ERR_* enums in mod-host's src/effects.h).
+    ok = status == instance
     if not ok:
         logger.warning("mod-host add(%s, %d) failed: %r", lv2_uri, instance, reply)
     return ok
@@ -164,14 +210,21 @@ def stop() -> None:
     global _proc, _sock
     if _sock is not None:
         try:
+            # Graceful shutdown of the detached daemon over the protocol.
+            _sock.sendall(b"quit\x00")
+            _sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
             _sock.close()
         except OSError:
             pass
         _sock = None
     if _proc is not None:
-        _proc.terminate()
-        try:
-            _proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            _proc.kill()
+        if _proc.poll() is None:
+            _proc.terminate()
+            try:
+                _proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                _proc.kill()
         _proc = None

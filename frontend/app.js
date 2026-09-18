@@ -17,8 +17,9 @@
     sequencer: { running: false, current_step: 0, steps: [] },
     looper: { state: "stopped", loop_duration: null, event_count: 0, overdub_event_count: 0, started_at: null },
     tempo: { bpm: 100 },
-    metronome: { running: false, beat_in_bar: 0, beats_per_bar: 4, style: "digital" },
+    metronome: { running: false, beat_in_bar: 0, signature: "4_4", style: "digital" },
     metronomeStyles: [],
+    timeSignatures: [],
     master: { available: false, volume: 100, muted: false },
     engineStatus: { jack: false, modhost: false, pads: {}, metronome: false, last_error: null },
     kits: [],
@@ -91,7 +92,7 @@
     metronomeBeatRow: document.getElementById("metronome-beat-row"),
     metronomePlayBtn: document.getElementById("metronome-play-btn"),
     metronomeStyleSelect: document.getElementById("metronome-style-select"),
-    metronomeBeatsSelect: document.getElementById("metronome-beats-select"),
+    metronomeSignatureSelect: document.getElementById("metronome-signature-select"),
     metronomeEngineWarning: document.getElementById("metronome-engine-warning"),
     knobsList: document.getElementById("knobs-list"),
     knobAddBtn: document.getElementById("knob-add-btn"),
@@ -431,13 +432,18 @@
     el.volumeList.innerHTML = "";
     for (const pad of displayOrder(state.pads)) {
       const li = document.createElement("li");
-      li.className = "mix-row";
+      li.className = "mix-card";
       li.innerHTML = `
-        <div class="mix-row-header">
-          <span class="pad-label">PAD ${pad.pad_number}</span>
-          <span class="pad-sound">${pad.has_sample ? escapeHtml(pad.display_name) : "vazio"}</span>
-        </div>
-        <div class="mix-controls">
+        <button class="mix-card-header" type="button" data-role="mix-card-toggle" aria-expanded="false">
+          <span class="mix-card-identity">
+            <span class="pad-label">PAD ${pad.pad_number}</span>
+            <span class="pad-sound">${pad.has_sample ? escapeHtml(pad.display_name) : "Vazio"}</span>
+          </span>
+          <span class="mix-card-summary" data-role="mix-card-summary">${pad.volume_db} dB · ${panLabel(pad.pan)}</span>
+          <span class="mix-card-chevron" aria-hidden="true">⌄</span>
+        </button>
+        <div class="mix-card-body">
+          <div class="mix-controls">
           <div class="mix-control">
             <span class="mix-control-label">Volume</span>
             <input type="range" min="-24" max="12" step="0.5" value="${pad.volume_db}" data-role="volume">
@@ -448,16 +454,25 @@
             <input type="range" min="-100" max="100" step="1" value="${pad.pan}" data-role="pan">
             <span class="mix-value" data-role="pan-value">${panLabel(pad.pan)}</span>
           </div>
+          </div>
         </div>
       `;
+      bindMixCard(li);
       const volumeInput = li.querySelector('[data-role="volume"]');
       const volumeValue = li.querySelector('[data-role="volume-value"]');
-      volumeInput.addEventListener("input", () => (volumeValue.textContent = `${volumeInput.value} dB`));
+      const summary = li.querySelector('[data-role="mix-card-summary"]');
+      volumeInput.addEventListener("input", () => {
+        volumeValue.textContent = `${volumeInput.value} dB`;
+        summary.textContent = `${volumeInput.value} dB · ${panLabel(Number(panInput.value))}`;
+      });
       volumeInput.addEventListener("change", () => setPadMix(pad.pad_number, { volume_db: Number(volumeInput.value) }));
 
       const panInput = li.querySelector('[data-role="pan"]');
       const panValue = li.querySelector('[data-role="pan-value"]');
-      panInput.addEventListener("input", () => (panValue.textContent = panLabel(Number(panInput.value))));
+      panInput.addEventListener("input", () => {
+        panValue.textContent = panLabel(Number(panInput.value));
+        summary.textContent = `${volumeInput.value} dB · ${panLabel(Number(panInput.value))}`;
+      });
       panInput.addEventListener("change", () => setPadMix(pad.pad_number, { pan: Number(panInput.value) }));
 
       el.volumeList.appendChild(li);
@@ -467,6 +482,14 @@
   function panLabel(pan) {
     if (pan === 0) return "centro";
     return pan < 0 ? `E ${Math.abs(pan)}` : `D ${pan}`;
+  }
+
+  function bindMixCard(card) {
+    const toggle = card.querySelector('[data-role="mix-card-toggle"]');
+    toggle.addEventListener("click", () => {
+      const open = card.classList.toggle("open");
+      toggle.setAttribute("aria-expanded", String(open));
+    });
   }
 
   function toneFromCutoff(cutoffHz) {
@@ -482,21 +505,29 @@
     for (const pad of displayOrder(state.pads)) {
       const tone = toneFromCutoff(pad.cutoff_hz);
       const li = document.createElement("li");
-      li.className = "mix-row";
+      li.className = "mix-card";
       li.innerHTML = `
-        <div class="mix-row-header">
-          <span class="pad-label">PAD ${pad.pad_number}</span>
-          <span class="pad-sound">${pad.has_sample ? escapeHtml(pad.display_name) : "vazio"}</span>
-        </div>
-        <div class="mix-controls">
+        <button class="mix-card-header" type="button" data-role="mix-card-toggle" aria-expanded="false">
+          <span class="mix-card-identity">
+            <span class="pad-label">PAD ${pad.pad_number}</span>
+            <span class="pad-sound">${pad.has_sample ? escapeHtml(pad.display_name) : "Vazio"}</span>
+          </span>
+          <span class="mix-card-summary effect-summary">${escapeHtml(effectSummary(pad.pad_number))}</span>
+          <span class="mix-card-chevron" aria-hidden="true">⌄</span>
+        </button>
+        <div class="mix-card-body">
+          <div class="mix-controls">
           <div class="mix-control">
             <span class="mix-control-label">Tom</span>
             <input type="range" min="0" max="100" step="1" value="${tone}" data-role="tone">
             <span class="mix-value" data-role="tone-value">${tone >= 100 ? "aberto" : tone + "%"}</span>
           </div>
+          </div>
+          <p class="effect-card-title">Cadeia de efeitos</p>
+          <div class="effect-slots"></div>
         </div>
-        <div class="effect-slots"></div>
       `;
+      bindMixCard(li);
       const toneInput = li.querySelector('[data-role="tone"]');
       const toneValue = li.querySelector('[data-role="tone-value"]');
       toneInput.addEventListener("input", () => {
@@ -508,6 +539,15 @@
       renderEffectSlots(li.querySelector(".effect-slots"), pad.pad_number);
       el.effectsList.appendChild(li);
     }
+  }
+
+  function effectSummary(padNumber) {
+    const labels = state.padEffects
+      .filter((effect) => effect.pad_number === padNumber && effect.plugin_id)
+      .sort((a, b) => a.slot_index - b.slot_index)
+      .map((effect) => state.effectsCatalog.find((plugin) => plugin.plugin_id === effect.plugin_id)?.label)
+      .filter(Boolean);
+    return labels.length ? labels.join(" · ") : "Sem efeitos";
   }
 
   function renderEffectSlots(container, padNumber) {
@@ -525,7 +565,7 @@
       );
       div.innerHTML = `
         <div class="effect-slot-header">
-          <span class="effect-slot-label">Slot ${slot.slot_index}</span>
+          <span class="effect-slot-label">FX ${slot.slot_index}</span>
           <select class="effect-slot-select">${options.join("")}</select>
         </div>
         <div class="effect-slot-params"></div>
@@ -758,7 +798,7 @@
     el.metronomePlayBtn.textContent = s.running ? "■ Parar" : "▶ Tocar";
     el.metronomePlayBtn.classList.toggle("active", s.running);
     el.metronomeStyleSelect.value = s.style;
-    el.metronomeBeatsSelect.value = String(s.beats_per_bar);
+    el.metronomeSignatureSelect.value = s.signature;
     renderMetronomeBeat(s.beat_in_bar);
   }
 
@@ -768,12 +808,28 @@
       .join("");
   }
 
+  function renderMetronomeSignatures() {
+    el.metronomeSignatureSelect.innerHTML = state.timeSignatures
+      .map((sig) => `<option value="${sig.signature}">${escapeHtml(sig.label)}</option>`)
+      .join("");
+  }
+
+  function currentTimeSignature() {
+    return (
+      state.timeSignatures.find((sig) => sig.signature === state.metronome.signature) || {
+        pulses: 4,
+        accents: [0],
+      }
+    );
+  }
+
   function renderMetronomeBeat(activeBeat) {
+    const meta = currentTimeSignature();
     el.metronomeBeatRow.innerHTML = "";
-    for (let beat = 0; beat < state.metronome.beats_per_bar; beat++) {
+    for (let beat = 0; beat < meta.pulses; beat++) {
       const dot = document.createElement("span");
       dot.className = "metronome-beat" +
-        (beat === 0 ? " accent" : "") +
+        (meta.accents.includes(beat) ? " accent" : "") +
         (state.metronome.running && beat === activeBeat ? " active" : "");
       dot.setAttribute("aria-label", `Tempo ${beat + 1}`);
       el.metronomeBeatRow.appendChild(dot);

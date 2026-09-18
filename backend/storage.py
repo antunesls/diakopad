@@ -138,14 +138,17 @@ SEQUENCER_STEPS = 16
 # how hard it's struck (amp_veltrack=0) - this was the fix for hits sounding
 # too quiet. velocity_sensitive=1: harder hits are louder (amp_veltrack=100).
 # sequencer_bpm: the app's single global tempo, shared by the sequencer and
-# the metronome (see engine/tempo.py). metronome_style/_beats_per_bar: the
-# metronome's click sound and time signature (see engine/metronome*.py).
+# the metronome (see engine/tempo.py). metronome_style/_signature: the
+# metronome's click sound (engine/metronome_sounds.py) and time signature
+# (engine/time_signatures.py). metronome_beats_per_bar predates the
+# time-signature catalog and is no longer read - left as a harmless orphan
+# on any already-deployed DB, same as reverb_send/delay_send above.
 DEFAULT_SETTINGS = {
     "sustain_mode": "1",
     "velocity_sensitive": "0",
     "sequencer_bpm": "100",
     "metronome_style": "digital",
-    "metronome_beats_per_bar": "4",
+    "metronome_signature": "4_4",
     "master_volume": "100",
     "master_muted": "0",
 }

@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 import midi
 import storage
-from engine import effects_catalog, knob_registry, looper, metronome, metronome_sounds, orchestrator, sequencer, tempo, trigger
+from engine import effects_catalog, knob_registry, looper, metronome, metronome_sounds, orchestrator, sequencer, tempo, time_signatures, trigger
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("diakopad")
@@ -88,8 +88,8 @@ class MetronomeStyleRequest(BaseModel):
     style: str
 
 
-class MetronomeBeatsPerBarRequest(BaseModel):
-    beats_per_bar: int
+class MetronomeSignatureRequest(BaseModel):
+    signature: str
 
 
 class MasterRequest(BaseModel):
@@ -282,7 +282,7 @@ async def on_startup() -> None:
     await orchestrator.apply_all_pads(storage.list_pads(), settings, storage.list_pad_effects())
     sequencer.load_pattern(storage.list_sequencer_steps())
     tempo.load()
-    metronome.set_beats_per_bar(int(settings.get("metronome_beats_per_bar", 4)))
+    metronome.set_signature(settings.get("metronome_signature", time_signatures.DEFAULT_SIGNATURE))
     await orchestrator.apply_metronome_style(settings.get("metronome_style", metronome_sounds.DEFAULT_STYLE))
     global _engine_status_task
     _engine_status_task = asyncio.create_task(_broadcast_engine_status_loop())
@@ -925,6 +925,11 @@ def get_metronome_styles():
     return metronome_sounds.list_styles()
 
 
+@app.get("/api/metronome/time-signatures")
+def get_metronome_time_signatures():
+    return time_signatures.list_signatures()
+
+
 @app.get("/api/metronome")
 def get_metronome():
     return {
@@ -954,12 +959,12 @@ async def set_metronome_style(body: MetronomeStyleRequest):
     return {"ok": True, "engine_applied": engine_applied}
 
 
-@app.post("/api/metronome/beats-per-bar")
-async def set_metronome_beats_per_bar(body: MetronomeBeatsPerBarRequest):
-    if not 1 <= body.beats_per_bar <= 12:
-        raise HTTPException(400, "beats_per_bar must be between 1 and 12")
-    storage.set_setting("metronome_beats_per_bar", str(body.beats_per_bar))
-    metronome.set_beats_per_bar(body.beats_per_bar)
+@app.post("/api/metronome/signature")
+async def set_metronome_signature(body: MetronomeSignatureRequest):
+    if body.signature not in time_signatures.SIGNATURES:
+        raise HTTPException(400, "unknown time signature")
+    storage.set_setting("metronome_signature", body.signature)
+    metronome.set_signature(body.signature)
     await _broadcast_metronome()
     return {"ok": True}
 

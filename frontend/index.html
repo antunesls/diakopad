@@ -75,7 +75,7 @@
   </main>
 
   <main id="view-volumes" class="view hidden">
-    <ul id="volume-list" class="mix-list"></ul>
+    <ul id="volume-list" class="mix-list mix-card-grid"></ul>
   </main>
 
   <main id="view-effects" class="view hidden">
@@ -83,7 +83,7 @@
       Tom é um filtro grave/agudo do próprio pad. Reverb, delay e outros
       efeitos são plugins que você escolhe por slot, abaixo.
     </p>
-    <ul id="effects-list" class="mix-list"></ul>
+    <ul id="effects-list" class="mix-list mix-card-grid"></ul>
   </main>
 
   <main id="view-sequencer" class="view hidden">
@@ -135,13 +135,7 @@
         </label>
         <label class="metronome-select-control">
           <span>Compasso</span>
-          <select id="metronome-beats-select">
-            <option value="2">2/4</option>
-            <option value="3">3/4</option>
-            <option value="4" selected>4/4</option>
-            <option value="5">5/4</option>
-            <option value="6">6/4</option>
-          </select>
+          <select id="metronome-signature-select"></select>
         </label>
       </div>
       <p id="metronome-engine-warning" class="metronome-engine-warning hidden">

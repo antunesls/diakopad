@@ -72,7 +72,7 @@ class MetronomeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(beat, 0)
             beat_received.set()
 
-        metronome.set_beats_per_bar(4)
+        metronome.set_signature("4_4")
         with patch("engine.metronome.midi.metronome_note_on", return_value=True) as note_on:
             try:
                 await metronome.start(on_beat)
@@ -101,7 +101,7 @@ class MetronomeTests(unittest.IsolatedAsyncioTestCase):
             timestamps.append(asyncio.get_running_loop().time())
             return True
 
-        metronome.set_beats_per_bar(4)
+        metronome.set_signature("4_4")
         with (
             patch("engine.metronome.midi.metronome_note_on", side_effect=record_note),
             patch("engine.metronome.tempo.get", return_value=240.0),

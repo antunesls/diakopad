@@ -27,13 +27,14 @@
   </main>
 
   <main id="view-sounds" class="view hidden">
+    <nav id="sound-breadcrumb" class="breadcrumb"></nav>
     <section class="upload-zone" id="upload-zone">
       <p>Arraste arquivos de som aqui ou</p>
       <label class="upload-btn">
         Escolher arquivos
         <input type="file" id="file-input" accept=".wav,.mp3,.ogg,.flac,.aiff,.aif" multiple hidden>
       </label>
-      <p class="hint">wav, mp3, ogg, flac, aiff</p>
+      <p class="hint">wav, mp3, ogg, flac, aiff — vai pra pasta atual</p>
     </section>
     <ul id="sound-list" class="sound-list"></ul>
   </main>

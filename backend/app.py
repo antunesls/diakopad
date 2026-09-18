@@ -101,6 +101,10 @@ class KitRequest(BaseModel):
     name: str
 
 
+class PatternRequest(BaseModel):
+    name: str
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self.active: list[WebSocket] = []
@@ -185,7 +189,7 @@ def _handle_note(note: int, velocity: int) -> None:
         return
     for pad_number in pad_numbers:
         _queue_pad_hit(pad_number, velocity)
-        if looper.get_state()["state"] == "recording":
+        if looper.get_state()["state"] in ("recording", "overdubbing"):
             looper.record_event(pad_number, velocity)
 
 
@@ -375,6 +379,10 @@ async def _drain_sequencer_ticks() -> None:
 
 async def _broadcast_sequencer() -> None:
     await manager.broadcast({"type": "sequencer", **sequencer.get_state()})
+
+
+async def _broadcast_patterns() -> None:
+    await manager.broadcast({"type": "patterns", "patterns": storage.list_patterns()})
 
 
 async def _broadcast_looper() -> None:
@@ -815,6 +823,42 @@ async def clear_sequencer():
     return {"ok": True}
 
 
+# ── Sequencer patterns ───────────────────────────────────────────────────────
+
+
+@app.get("/api/patterns")
+def list_patterns():
+    return storage.list_patterns()
+
+
+@app.post("/api/patterns")
+async def save_pattern(body: PatternRequest):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "name must not be empty")
+    pattern_id = storage.save_pattern(name, storage.list_sequencer_steps())
+    await _broadcast_patterns()
+    return {"ok": True, "pattern": {"id": pattern_id, "name": name}}
+
+
+@app.delete("/api/patterns/{pattern_id}")
+async def delete_pattern(pattern_id: int):
+    if not storage.delete_pattern(pattern_id):
+        raise HTTPException(404, "pattern not found")
+    await _broadcast_patterns()
+    return {"ok": True}
+
+
+@app.post("/api/patterns/{pattern_id}/load")
+async def load_pattern(pattern_id: int):
+    pattern = storage.apply_pattern(pattern_id)
+    if pattern is None:
+        raise HTTPException(404, "pattern not found")
+    sequencer.load_pattern(storage.list_sequencer_steps())
+    await _broadcast_sequencer()
+    return {"ok": True, "pattern": {"id": pattern["id"], "name": pattern["name"]}}
+
+
 @app.get("/api/looper")
 def get_looper():
     return looper.get_state()
@@ -844,6 +888,20 @@ async def looper_stop():
 @app.post("/api/looper/clear")
 async def looper_clear():
     looper.clear()
+    await _broadcast_looper()
+    return {"ok": True}
+
+
+@app.post("/api/looper/overdub/start")
+async def looper_overdub_start():
+    looper.overdub_start()
+    await _broadcast_looper()
+    return {"ok": True}
+
+
+@app.post("/api/looper/overdub/stop")
+async def looper_overdub_stop():
+    looper.overdub_stop()
     await _broadcast_looper()
     return {"ok": True}
 
@@ -921,6 +979,7 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.send_json({"type": "master", **orchestrator.master_state()})
         await ws.send_json({"type": "engine_status", **(await asyncio.to_thread(orchestrator.engine_status))})
         await ws.send_json({"type": "kits", "kits": storage.list_kits()})
+        await ws.send_json({"type": "patterns", "patterns": storage.list_patterns()})
         await ws.send_json({"type": "note_learn", "pending_pad": _pending_note_learn})
         await ws.send_json(
             {

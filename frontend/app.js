@@ -15,7 +15,7 @@
     padEffects: [],
     effectsCatalog: [],
     sequencer: { running: false, current_step: 0, steps: [] },
-    looper: { state: "stopped", loop_duration: null, event_count: 0, started_at: null },
+    looper: { state: "stopped", loop_duration: null, event_count: 0, overdub_event_count: 0, started_at: null },
     tempo: { bpm: 100 },
     metronome: { running: false, beat_in_bar: 0, beats_per_bar: 4, style: "digital" },
     metronomeStyles: [],
@@ -23,6 +23,8 @@
     engineStatus: { jack: false, modhost: false, pads: {}, metronome: false, last_error: null },
     kits: [],
     kitIndex: 0,
+    patterns: [],
+    patternIndex: 0,
   };
 
   const knobPicker = { step: null, scope: null, padNumber: null };
@@ -39,6 +41,12 @@
     kitCount: document.getElementById("kit-count"),
     kitSave: document.getElementById("kit-save"),
     kitDelete: document.getElementById("kit-delete"),
+    patternPrev: document.getElementById("pattern-prev"),
+    patternNext: document.getElementById("pattern-next"),
+    patternName: document.getElementById("pattern-name"),
+    patternCount: document.getElementById("pattern-count"),
+    patternSave: document.getElementById("pattern-save"),
+    patternDelete: document.getElementById("pattern-delete"),
     soundList: document.getElementById("sound-list"),
     soundBreadcrumb: document.getElementById("sound-breadcrumb"),
     volumeList: document.getElementById("volume-list"),
@@ -75,6 +83,7 @@
     looperStateLabel: document.getElementById("looper-state-label"),
     looperElapsed: document.getElementById("looper-elapsed"),
     looperRecordBtn: document.getElementById("looper-record-btn"),
+    looperOverdubBtn: document.getElementById("looper-overdub-btn"),
     looperStopBtn: document.getElementById("looper-stop-btn"),
     looperClearBtn: document.getElementById("looper-clear-btn"),
     metronomeBpm: document.getElementById("metronome-bpm"),
@@ -663,6 +672,78 @@
   });
   el.sequencerClearBtn.addEventListener("click", () => fetch("/api/sequencer/clear", { method: "POST" }));
 
+  // Patterns: named snapshots of the sequencer grid (same relationship as
+  // Kits have to the pads), so a set can flip between programmed patterns
+  // instead of only ever editing the one live grid.
+
+  async function loadPatterns() {
+    const res = await fetch("/api/patterns");
+    state.patterns = await res.json();
+    if (state.patternIndex >= state.patterns.length) state.patternIndex = 0;
+    renderPatternStrip();
+  }
+
+  function renderPatternStrip() {
+    const pattern = state.patterns[state.patternIndex];
+    el.patternName.textContent = pattern ? pattern.name : "Padrão sem salvar";
+    el.patternCount.textContent = state.patterns.length
+      ? `${state.patternIndex + 1} / ${state.patterns.length}`
+      : "";
+    el.patternPrev.disabled = state.patterns.length < 2;
+    el.patternNext.disabled = state.patterns.length < 2;
+    el.patternDelete.disabled = !pattern;
+  }
+
+  async function loadPatternAt(index) {
+    if (!state.patterns.length) return;
+    state.patternIndex = (index + state.patterns.length) % state.patterns.length;
+    renderPatternStrip();
+    const pattern = state.patterns[state.patternIndex];
+    const wrap = el.sequencerBody.closest(".sequencer-grid-wrap");
+    wrap.classList.add("applying");
+    try {
+      await fetch(`/api/patterns/${pattern.id}/load`, { method: "POST" });
+    } finally {
+      wrap.classList.remove("applying");
+    }
+  }
+
+  async function saveCurrentPattern() {
+    const suggestion = state.patterns[state.patternIndex] ? state.patterns[state.patternIndex].name : "";
+    const name = window.prompt("Nome do padrão:", suggestion);
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const res = await fetch("/api/patterns", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: trimmed }),
+    });
+    if (!res.ok) {
+      window.alert("Não foi possível salvar o padrão.");
+      return;
+    }
+    await loadPatterns();
+    const saved = state.patterns.findIndex((p) => p.name === trimmed);
+    if (saved >= 0) {
+      state.patternIndex = saved;
+      renderPatternStrip();
+    }
+  }
+
+  async function deleteCurrentPattern() {
+    const pattern = state.patterns[state.patternIndex];
+    if (!pattern) return;
+    if (!window.confirm(`Excluir o padrão "${pattern.name}"?`)) return;
+    await fetch(`/api/patterns/${pattern.id}`, { method: "DELETE" });
+    await loadPatterns();
+  }
+
+  el.patternPrev.addEventListener("click", () => loadPatternAt(state.patternIndex - 1));
+  el.patternNext.addEventListener("click", () => loadPatternAt(state.patternIndex + 1));
+  el.patternSave.addEventListener("click", saveCurrentPattern);
+  el.patternDelete.addEventListener("click", deleteCurrentPattern);
+
   // --- Metrônomo e tempo global ---------------------------------------
 
   function renderTempo() {
@@ -758,15 +839,24 @@
 
   function renderLooper() {
     const s = state.looper;
-    const labels = { stopped: "Parado", recording: "Gravando...", playing: "Tocando em loop" };
+    const labels = {
+      stopped: "Parado",
+      recording: "Gravando...",
+      playing: "Tocando em loop",
+      overdubbing: "Sobrepondo...",
+    };
     el.looperStateLabel.textContent = labels[s.state] || s.state;
     el.looperRecordBtn.textContent = s.state === "recording" ? "■ Fechar loop" : "● Gravar";
     el.looperRecordBtn.classList.toggle("active", s.state === "recording");
-    el.looperStopBtn.disabled = s.state !== "playing";
+    el.looperRecordBtn.disabled = s.state === "overdubbing";
+    el.looperOverdubBtn.textContent = s.state === "overdubbing" ? "■ Fechar sobreposição" : "+ Sobrepor";
+    el.looperOverdubBtn.classList.toggle("active", s.state === "overdubbing");
+    el.looperOverdubBtn.disabled = s.state !== "playing" && s.state !== "overdubbing";
+    el.looperStopBtn.disabled = s.state !== "playing" && s.state !== "overdubbing";
     el.looperClearBtn.disabled = s.state === "stopped" && s.event_count === 0;
 
     clearInterval(looperTimer);
-    if (s.state === "recording" || s.state === "playing") {
+    if (s.state === "recording" || s.state === "playing" || s.state === "overdubbing") {
       looperTimer = setInterval(updateLooperElapsed, 200);
       updateLooperElapsed();
     } else {
@@ -783,14 +873,19 @@
     const elapsed = Date.now() / 1000 - s.started_at;
     if (s.state === "recording") {
       el.looperElapsed.textContent = `${elapsed.toFixed(1)}s`;
-    } else if (s.state === "playing" && s.loop_duration) {
+    } else if ((s.state === "playing" || s.state === "overdubbing") && s.loop_duration) {
       const pos = ((elapsed % s.loop_duration) + s.loop_duration) % s.loop_duration;
-      el.looperElapsed.textContent = `${pos.toFixed(1)}s / ${s.loop_duration.toFixed(1)}s`;
+      const suffix = s.state === "overdubbing" ? ` · ${s.overdub_event_count || 0} toques novos` : "";
+      el.looperElapsed.textContent = `${pos.toFixed(1)}s / ${s.loop_duration.toFixed(1)}s${suffix}`;
     }
   }
 
   el.looperRecordBtn.addEventListener("click", () => {
     const endpoint = state.looper.state === "recording" ? "/api/looper/record/stop" : "/api/looper/record/start";
+    fetch(endpoint, { method: "POST" });
+  });
+  el.looperOverdubBtn.addEventListener("click", () => {
+    const endpoint = state.looper.state === "overdubbing" ? "/api/looper/overdub/stop" : "/api/looper/overdub/start";
     fetch(endpoint, { method: "POST" });
   });
   el.looperStopBtn.addEventListener("click", () => fetch("/api/looper/stop", { method: "POST" }));
@@ -1130,15 +1225,25 @@
         state.kits = msg.kits;
         if (state.kitIndex >= state.kits.length) state.kitIndex = 0;
         renderKitStrip();
+      } else if (msg.type === "patterns") {
+        state.patterns = msg.patterns;
+        if (state.patternIndex >= state.patterns.length) state.patternIndex = 0;
+        renderPatternStrip();
       } else if (msg.type === "looper") {
-        state.looper = { state: msg.state, loop_duration: msg.loop_duration, event_count: msg.event_count, started_at: msg.started_at };
+        state.looper = {
+          state: msg.state,
+          loop_duration: msg.loop_duration,
+          event_count: msg.event_count,
+          overdub_event_count: msg.overdub_event_count,
+          started_at: msg.started_at,
+        };
         renderLooper();
       }
     });
   }
 
   async function init() {
-    const [padsRes, soundsRes, knobsRes, settingsRes, padEffectsRes, catalogRes, knobTargetsRes, sequencerRes, looperRes, tempoRes, metronomeRes, metronomeStylesRes, masterRes, engineStatusRes, kitsRes] =
+    const [padsRes, soundsRes, knobsRes, settingsRes, padEffectsRes, catalogRes, knobTargetsRes, sequencerRes, looperRes, tempoRes, metronomeRes, metronomeStylesRes, masterRes, engineStatusRes, kitsRes, patternsRes] =
       await Promise.all([
         fetch("/api/pads"),
         fetch("/api/sounds"),
@@ -1155,6 +1260,7 @@
         fetch("/api/master"),
         fetch("/api/engine/status"),
         fetch("/api/kits"),
+        fetch("/api/patterns"),
       ]);
     state.pads = await padsRes.json();
     state.sounds = await soundsRes.json();
@@ -1175,9 +1281,12 @@
     state.engineStatus = await engineStatusRes.json();
     state.kits = await kitsRes.json();
     if (state.kitIndex >= state.kits.length) state.kitIndex = 0;
+    state.patterns = await patternsRes.json();
+    if (state.patternIndex >= state.patterns.length) state.patternIndex = 0;
 
     renderPads();
     renderKitStrip();
+    renderPatternStrip();
     await loadSoundBrowser();
     renderVolumes();
     renderSettings();

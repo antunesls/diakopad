@@ -1,11 +1,12 @@
 import asyncio
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 import storage
-from engine import metronome, metronome_sounds, sequencer, tempo, trigger
+from engine import looper, metronome, metronome_sounds, sequencer, tempo, trigger
 
 
 class SequencerRegressionTests(unittest.TestCase):
@@ -127,6 +128,56 @@ class MetronomeTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue((Path(temp_dir) / f"{style}_normal.wav").exists())
             finally:
                 metronome_sounds.GENERATED_DIR = original_generated_dir
+
+
+class LooperOverdubTests(unittest.TestCase):
+    def setUp(self):
+        self._reset_looper()
+
+    def tearDown(self):
+        self._reset_looper()
+
+    @staticmethod
+    def _reset_looper():
+        looper._state = "stopped"
+        looper._events = []
+        looper._overdub_events = []
+        looper._loop_duration = None
+        looper._loop_start = None
+        looper._record_start = None
+        looper._started_at = None
+        looper._task = None
+
+    def test_overdub_start_is_a_no_op_unless_a_loop_is_already_playing(self):
+        looper.overdub_start()
+        self.assertEqual(looper.get_state()["state"], "stopped")
+
+    def test_overdub_merges_new_hits_at_their_wrapped_loop_offset(self):
+        looper._state = "playing"
+        looper._events = [{"offset": 0.1, "pad_number": 1, "velocity": 100}]
+        looper._loop_duration = 2.0
+        looper._loop_start = time.monotonic() - 2.5  # 0.5s into the second cycle
+
+        looper.overdub_start()
+        self.assertEqual(looper.get_state()["state"], "overdubbing")
+
+        looper.record_event(2, 80)
+        self.assertEqual(looper.get_state()["overdub_event_count"], 1)
+        self.assertEqual(len(looper._events), 1)  # not merged into the live loop yet
+
+        looper.overdub_stop()
+
+        self.assertEqual(looper.get_state()["state"], "playing")
+        self.assertEqual(looper.get_state()["overdub_event_count"], 0)
+        pad_numbers = {e["pad_number"] for e in looper._events}
+        self.assertEqual(pad_numbers, {1, 2})
+        new_event = next(e for e in looper._events if e["pad_number"] == 2)
+        self.assertAlmostEqual(new_event["offset"], 0.5, delta=0.05)
+
+    def test_record_event_is_ignored_outside_recording_and_overdubbing(self):
+        looper._state = "playing"
+        looper.record_event(1, 100)
+        self.assertEqual(looper._events, [])
 
 
 if __name__ == "__main__":

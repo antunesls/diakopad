@@ -107,6 +107,24 @@ CREATE TABLE IF NOT EXISTS kit_effects (
     PRIMARY KEY (kit_id, pad_number, slot_index),
     FOREIGN KEY (kit_id) REFERENCES kits(id) ON DELETE CASCADE
 );
+
+-- Named snapshots of the sequencer_steps grid (same relationship as
+-- kits/kit_pads have to pads), so a set can flip between programmed
+-- patterns instead of only ever editing the one live grid.
+CREATE TABLE IF NOT EXISTS patterns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pattern_steps (
+    pattern_id INTEGER NOT NULL,
+    pad_number INTEGER NOT NULL,
+    step_index INTEGER NOT NULL,
+    active INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (pattern_id, pad_number, step_index),
+    FOREIGN KEY (pattern_id) REFERENCES patterns(id) ON DELETE CASCADE
+);
 """
 
 EFFECT_SLOTS_PER_PAD = 3
@@ -554,6 +572,102 @@ def clear_sequencer_steps() -> None:
     try:
         conn.execute("UPDATE sequencer_steps SET active = 0")
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Sequencer patterns ───────────────────────────────────────────────────────
+
+
+def list_patterns() -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT id, name, created_at FROM patterns ORDER BY name").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def save_pattern(name: str, steps: list[dict]) -> int:
+    """Captures the current sequencer grid (see list_sequencer_steps) as a
+    named pattern. Saving over an existing name replaces its contents."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT id FROM patterns WHERE name = ?", (name,)).fetchone()
+        if row is None:
+            cur = conn.execute(
+                "INSERT INTO patterns (name, created_at) VALUES (?, ?)", (name, time.time())
+            )
+            pattern_id = int(cur.lastrowid)
+        else:
+            pattern_id = row["id"]
+            conn.execute("DELETE FROM pattern_steps WHERE pattern_id = ?", (pattern_id,))
+        conn.executemany(
+            "INSERT INTO pattern_steps (pattern_id, pad_number, step_index, active) VALUES (?, ?, ?, ?)",
+            [
+                (pattern_id, s["pad_number"], s["step_index"], 1 if s["active"] else 0)
+                for s in steps
+            ],
+        )
+        conn.commit()
+        return pattern_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_pattern(pattern_id: int) -> Optional[dict]:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, name, created_at FROM patterns WHERE id = ?", (pattern_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        steps = conn.execute(
+            "SELECT pad_number, step_index, active FROM pattern_steps WHERE pattern_id = ? "
+            "ORDER BY pad_number, step_index",
+            (pattern_id,),
+        ).fetchall()
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "created_at": row["created_at"],
+            "steps": [dict(r) for r in steps],
+        }
+    finally:
+        conn.close()
+
+
+def delete_pattern(pattern_id: int) -> bool:
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM patterns WHERE id = ?", (pattern_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def apply_pattern(pattern_id: int) -> Optional[dict]:
+    """Copies a saved pattern onto the live sequencer_steps grid (single
+    transaction). Returns the pattern dict, or None if it doesn't exist.
+    Callers must also refresh engine.sequencer's in-memory cache afterwards
+    (see app.py) - this only touches the DB."""
+    pattern = get_pattern(pattern_id)
+    if pattern is None:
+        return None
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE sequencer_steps SET active = 0")
+        conn.executemany(
+            "UPDATE sequencer_steps SET active = ? WHERE pad_number = ? AND step_index = ?",
+            [(s["active"], s["pad_number"], s["step_index"]) for s in pattern["steps"]],
+        )
+        conn.commit()
+        return pattern
     finally:
         conn.close()
 

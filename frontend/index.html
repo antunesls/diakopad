@@ -87,6 +87,16 @@
   </main>
 
   <main id="view-sequencer" class="view hidden">
+    <div class="kit-strip pattern-strip">
+      <button id="pattern-prev" class="kit-nav" type="button" aria-label="Padrão anterior">◀</button>
+      <div class="kit-current">
+        <span id="pattern-name" class="kit-name">Padrão sem salvar</span>
+        <span id="pattern-count" class="kit-count"></span>
+      </div>
+      <button id="pattern-next" class="kit-nav" type="button" aria-label="Próximo padrão">▶</button>
+      <button id="pattern-save" class="kit-action" type="button">Salvar</button>
+      <button id="pattern-delete" class="kit-action danger" type="button">Excluir</button>
+    </div>
     <div class="sequencer-toolbar">
       <button id="sequencer-play-btn" class="accent-btn" type="button">▶ Tocar</button>
       <label class="bpm-control">
@@ -147,13 +157,15 @@
     </div>
     <div class="looper-controls">
       <button id="looper-record-btn" class="accent-btn" type="button">● Gravar</button>
+      <button id="looper-overdub-btn" class="secondary-btn" type="button" disabled>+ Sobrepor</button>
       <button id="looper-stop-btn" class="secondary-btn" type="button">■ Parar loop</button>
       <button id="looper-clear-btn" class="danger-btn" type="button">Limpar</button>
     </div>
     <p class="tab-note">
       Grava um único loop compartilhado: toque os pads normalmente enquanto
       grava, solte "Gravar" de novo pra fechar o loop e ele passa a repetir
-      sozinho.
+      sozinho. Com o loop tocando, "Sobrepor" grava uma camada extra por
+      cima sem reiniciar o que já está tocando.
     </p>
   </main>
 

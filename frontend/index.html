@@ -72,31 +72,38 @@
   </main>
 
   <main id="view-metronome" class="view hidden">
-    <div class="metronome-bpm-row">
-      <label class="bpm-control">
-        BPM
-        <input type="number" id="metronome-bpm" min="40" max="240" step="1">
-      </label>
-      <button id="metronome-tap-btn" class="secondary-btn" type="button">Tap</button>
-    </div>
-    <div class="metronome-beat-row" id="metronome-beat-row"></div>
-    <div class="metronome-controls">
-      <button id="metronome-play-btn" class="accent-btn" type="button">▶ Tocar</button>
-      <label class="metronome-select-control">
-        Som
-        <select id="metronome-style-select"></select>
-      </label>
-      <label class="metronome-select-control">
-        Compasso
-        <select id="metronome-beats-select">
-          <option value="2">2/4</option>
-          <option value="3">3/4</option>
-          <option value="4" selected>4/4</option>
-          <option value="5">5/4</option>
-          <option value="6">6/8</option>
-        </select>
-      </label>
-    </div>
+    <section class="metronome-panel">
+      <p class="metronome-kicker">TEMPO GLOBAL</p>
+      <div class="metronome-bpm-row">
+        <label class="metronome-bpm-control">
+          <input type="number" id="metronome-bpm" min="40" max="240" step="1" aria-label="BPM do metrônomo">
+          <span>BPM</span>
+        </label>
+        <button id="metronome-tap-btn" class="metronome-tap-btn" type="button">TAP</button>
+      </div>
+      <p class="metronome-hint">Compartilhado com o Sequencer e com o controle global dos Knobs.</p>
+      <div class="metronome-beat-row" id="metronome-beat-row" aria-label="Tempos do compasso"></div>
+      <button id="metronome-play-btn" class="metronome-play-btn" type="button">▶ Tocar</button>
+      <div class="metronome-controls">
+        <label class="metronome-select-control">
+          <span>Som</span>
+          <select id="metronome-style-select"></select>
+        </label>
+        <label class="metronome-select-control">
+          <span>Compasso</span>
+          <select id="metronome-beats-select">
+            <option value="2">2/4</option>
+            <option value="3">3/4</option>
+            <option value="4" selected>4/4</option>
+            <option value="5">5/4</option>
+            <option value="6">6/4</option>
+          </select>
+        </label>
+      </div>
+      <p id="metronome-engine-warning" class="metronome-engine-warning hidden">
+        Som salvo, mas o motor de áudio não conseguiu aplicá-lo agora.
+      </p>
+    </section>
   </main>
 
   <main id="view-looper" class="view hidden">

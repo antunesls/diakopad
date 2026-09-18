@@ -81,7 +81,7 @@ def disconnect(src: str, dst: str) -> bool:
         return False
 
 
-def connect_pattern_to_all(src_pattern: str, dst_pattern: str) -> None:
+def connect_pattern_to_all(src_pattern: str, dst_pattern: str) -> bool:
     """Connects every output port matching src_pattern to every input port
     matching dst_pattern (both regexes, as jack.Client.get_ports takes).
     Used to fan the SMC-PAD's raw hardware MIDI capture port(s) out to a
@@ -90,16 +90,18 @@ def connect_pattern_to_all(src_pattern: str, dst_pattern: str) -> None:
     deploy/diakopad-midi-connect.service."""
     client = _get_client()
     if not client:
-        return
+        return False
     try:
         srcs = client.get_ports(src_pattern, is_output=True)
         dsts = client.get_ports(dst_pattern, is_input=True)
     except Exception as exc:
         logger.debug("jack get_ports(%s)/(%s): %s", src_pattern, dst_pattern, exc)
-        return
+        return False
+    connected = False
     for src in srcs:
         for dst in dsts:
-            connect(src.name, dst.name)
+            connected = connect(src.name, dst.name) or connected
+    return connected
 
 
 def disconnect_all(port_name_pattern: str) -> None:

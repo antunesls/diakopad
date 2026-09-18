@@ -19,6 +19,7 @@ import asyncio
 import time
 from typing import Awaitable, Callable, Optional
 
+import storage
 from engine import tempo, trigger
 
 STEP_COUNT = 16
@@ -88,6 +89,9 @@ async def _clock(pads: list[dict], settings: dict) -> None:
                 await _on_tick(_current_step)
             _current_step = (_current_step + 1) % STEP_COUNT
             next_tick += step_seconds
+            now = time.monotonic()
+            if next_tick <= now:
+                next_tick = now + step_seconds
             await asyncio.sleep(max(0.0, next_tick - time.monotonic()))
     except asyncio.CancelledError:
         pass

@@ -7,9 +7,9 @@ OS (kernel RT e jackd já calibrados), mas com **zynthian-ui e
 zynthian-webconf desabilitados** — o próprio DiakoPad orquestra o áudio
 diretamente: uma instância do **Sfizz** por pad, mais **mod-host** (o mesmo
 host de plugins LV2 que o Zynthian usa) para os efeitos configuráveis por
-pad, um step sequencer e um looper ao vivo, todos disparando os pads via um
-canal MIDI próprio. Veja `backend/engine/` e o plano de migração para os
-detalhes.
+pad, um step sequencer, um metrônomo e um looper ao vivo. Sequencer e looper
+disparam os pads via um canal MIDI próprio; o metrônomo usa uma instância
+Sfizz dedicada. Veja `backend/engine/` e o plano de migração para os detalhes.
 
 
 ## Rodando localmente (sem hardware, para desenvolver a UI)
@@ -67,11 +67,16 @@ O Sfizz em si nunca suportou reverb/delay internos (opcode `effect1`/
 hospedado via **mod-host** (LV2), o mesmo host de efeitos que o Zynthian usa
 nativamente, e não via SFZ.
 
-## Sequencer e Looper
+## Sequencer, Metrônomo e Looper
 
 Aba **Sequencer**: step sequencer clássico (16 passos × 16 pads, um padrão
 compartilhado, BPM global) — liga/desliga passos na grade, dá play/stop, e
 o passo atual é destacado em tempo real via WebSocket.
+
+Aba **Metrônomo**: clique independente com Tap Tempo, destaque visual do
+tempo atual, escolha de compasso e quatro estilos de som sintetizados
+(Digital, Beep, Madeira e Click seco). O BPM é global e compartilhado em
+tempo real com o Sequencer e com o alvo Tempo da aba Knobs.
 
 Aba **Looper**: um loop único e compartilhado, estilo pedal de loop. Grava o
 que você toca em qualquer pad enquanto está gravando; ao fechar a gravação,
@@ -87,7 +92,7 @@ para o looper não gravar os próprios disparos automáticos.
 
 Aba central pra atribuir função a cada knob físico do SMC-PAD: clique em
 "Atribuir novo knob", escolha o alvo (um pad específico ou "Global", hoje só
-com o Tempo do sequencer), escolha o parâmetro daquele alvo (volume, pan,
+com o Tempo compartilhado), escolha o parâmetro daquele alvo (volume, pan,
 tom, ou um parâmetro de um efeito já atribuído a algum slot do pad) e gire o
 knob físico — o app captura o CC automaticamente (MIDI learn). A lista mostra
 todos os mapeamentos atuais, com opção de remover um por um ou limpar todos.
@@ -100,8 +105,8 @@ apontava pra um parâmetro dele.
 backend/         App FastAPI (API + WebSocket), storage SQLite, geração de .sfz
 backend/engine/  Orquestrador do motor de áudio: sfizz por pad, mod-host,
                  catálogo de efeitos, registro de parâmetros de knob,
-                 step sequencer, looper, grafo JACK
+                 step sequencer, metrônomo, looper, grafo JACK
 frontend/        UI web estática (pads, sons, volumes, efeitos, sequencer,
-                 looper, knobs, config)
+                 metrônomo, looper, knobs, config)
 deploy/          systemd units e script de instalação
 ```

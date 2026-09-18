@@ -31,7 +31,10 @@ async def trigger_pad(
     note = _note_for_pad(pad_number, pads)
     if note is None:
         return False
-    return await trigger_note(note, velocity)
+    sent = await trigger_note(note, velocity)
+    if sent and settings is not None and settings.get("sustain_mode", "1") != "1":
+        asyncio.get_event_loop().call_later(0.05, midi.note_off, midi.MIDI_CHANNEL, note)
+    return sent
 
 
 async def trigger_note(note: int, velocity: int = 100) -> bool:

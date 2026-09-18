@@ -58,6 +58,7 @@
     metronomePlayBtn: document.getElementById("metronome-play-btn"),
     metronomeStyleSelect: document.getElementById("metronome-style-select"),
     metronomeBeatsSelect: document.getElementById("metronome-beats-select"),
+    metronomeEngineWarning: document.getElementById("metronome-engine-warning"),
     knobsList: document.getElementById("knobs-list"),
     knobAddBtn: document.getElementById("knob-add-btn"),
     knobClearAllBtn: document.getElementById("knob-clear-all-btn"),
@@ -418,13 +419,99 @@
     });
   });
   el.sequencerBpm.addEventListener("change", () => {
-    fetch("/api/sequencer/bpm", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bpm: Number(el.sequencerBpm.value) }),
-    });
+    setTempo(Number(el.sequencerBpm.value));
   });
   el.sequencerClearBtn.addEventListener("click", () => fetch("/api/sequencer/clear", { method: "POST" }));
+
+  // --- Metrônomo e tempo global ---------------------------------------
+
+  function renderTempo() {
+    const bpm = Math.round(state.tempo.bpm);
+    el.sequencerBpm.value = bpm;
+    el.metronomeBpm.value = bpm;
+  }
+
+  function renderMetronome() {
+    const s = state.metronome;
+    el.metronomePlayBtn.textContent = s.running ? "■ Parar" : "▶ Tocar";
+    el.metronomePlayBtn.classList.toggle("active", s.running);
+    el.metronomeStyleSelect.value = s.style;
+    el.metronomeBeatsSelect.value = String(s.beats_per_bar);
+    renderMetronomeBeat(s.beat_in_bar);
+  }
+
+  function renderMetronomeStyles() {
+    el.metronomeStyleSelect.innerHTML = state.metronomeStyles
+      .map((style) => `<option value="${style.style}">${escapeHtml(style.label)}</option>`)
+      .join("");
+  }
+
+  function renderMetronomeBeat(activeBeat) {
+    el.metronomeBeatRow.innerHTML = "";
+    for (let beat = 0; beat < state.metronome.beats_per_bar; beat++) {
+      const dot = document.createElement("span");
+      dot.className = "metronome-beat" +
+        (beat === 0 ? " accent" : "") +
+        (state.metronome.running && beat === activeBeat ? " active" : "");
+      dot.setAttribute("aria-label", `Tempo ${beat + 1}`);
+      el.metronomeBeatRow.appendChild(dot);
+    }
+  }
+
+  function setTempo(bpm) {
+    if (!Number.isFinite(bpm) || bpm < 40 || bpm > 240) {
+      renderTempo();
+      return;
+    }
+    state.tempo.bpm = bpm;
+    renderTempo();
+    fetch("/api/tempo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bpm }),
+    });
+  }
+
+  function tapTempo() {
+    const now = performance.now();
+    if (tapTimestamps.length && now - tapTimestamps[tapTimestamps.length - 1] > 2000) {
+      tapTimestamps = [];
+    }
+    tapTimestamps.push(now);
+    tapTimestamps = tapTimestamps.slice(-6);
+    if (tapTimestamps.length < 2) return;
+
+    const elapsed = tapTimestamps[tapTimestamps.length - 1] - tapTimestamps[0];
+    const averageInterval = elapsed / (tapTimestamps.length - 1);
+    const bpm = Math.max(40, Math.min(240, Math.round(60000 / averageInterval)));
+    setTempo(bpm);
+  }
+
+  el.metronomeBpm.addEventListener("change", () => setTempo(Number(el.metronomeBpm.value)));
+  el.metronomeTapBtn.addEventListener("click", tapTempo);
+  el.metronomePlayBtn.addEventListener("click", () => {
+    fetch("/api/metronome/transport", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ running: !state.metronome.running }),
+    });
+  });
+  el.metronomeStyleSelect.addEventListener("change", async () => {
+    const response = await fetch("/api/metronome/style", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ style: el.metronomeStyleSelect.value }),
+    });
+    const result = await response.json();
+    el.metronomeEngineWarning.classList.toggle("hidden", result.engine_applied !== false);
+  });
+  el.metronomeBeatsSelect.addEventListener("change", () => {
+    fetch("/api/metronome/beats-per-bar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ beats_per_bar: Number(el.metronomeBeatsSelect.value) }),
+    });
+  });
 
   // --- Looper ----------------------------------------------------------
 
@@ -746,11 +833,25 @@
         state.padEffects = msg.pad_effects;
         renderEffects();
       } else if (msg.type === "sequencer") {
-        state.sequencer = { bpm: msg.bpm, running: msg.running, current_step: msg.current_step, steps: msg.steps };
+        state.sequencer = { running: msg.running, current_step: msg.current_step, steps: msg.steps };
         renderSequencer();
       } else if (msg.type === "sequencer_tick") {
         state.sequencer.current_step = msg.current_step;
         updateSequencerPlayhead(msg.current_step);
+      } else if (msg.type === "tempo") {
+        state.tempo.bpm = msg.bpm;
+        renderTempo();
+      } else if (msg.type === "metronome") {
+        state.metronome = {
+          running: msg.running,
+          beat_in_bar: msg.beat_in_bar,
+          beats_per_bar: msg.beats_per_bar,
+          style: msg.style,
+        };
+        renderMetronome();
+      } else if (msg.type === "metronome_tick") {
+        state.metronome.beat_in_bar = msg.beat_in_bar;
+        renderMetronomeBeat(msg.beat_in_bar);
       } else if (msg.type === "looper") {
         state.looper = { state: msg.state, loop_duration: msg.loop_duration, event_count: msg.event_count, started_at: msg.started_at };
         renderLooper();
@@ -759,7 +860,7 @@
   }
 
   async function init() {
-    const [padsRes, soundsRes, knobsRes, settingsRes, padEffectsRes, catalogRes, knobTargetsRes, sequencerRes, looperRes] =
+    const [padsRes, soundsRes, knobsRes, settingsRes, padEffectsRes, catalogRes, knobTargetsRes, sequencerRes, looperRes, tempoRes, metronomeRes, metronomeStylesRes] =
       await Promise.all([
         fetch("/api/pads"),
         fetch("/api/sounds"),
@@ -770,6 +871,9 @@
         fetch("/api/knobs/targets"),
         fetch("/api/sequencer"),
         fetch("/api/looper"),
+        fetch("/api/tempo"),
+        fetch("/api/metronome"),
+        fetch("/api/metronome/styles"),
       ]);
     state.pads = await padsRes.json();
     state.sounds = await soundsRes.json();
@@ -781,8 +885,11 @@
     state.effectsCatalog = await catalogRes.json();
     state.knobTargets = await knobTargetsRes.json();
     const sequencerData = await sequencerRes.json();
-    state.sequencer = { bpm: sequencerData.bpm, running: sequencerData.running, current_step: sequencerData.current_step, steps: sequencerData.steps };
+    state.sequencer = { running: sequencerData.running, current_step: sequencerData.current_step, steps: sequencerData.steps };
     state.looper = await looperRes.json();
+    state.tempo = await tempoRes.json();
+    state.metronome = await metronomeRes.json();
+    state.metronomeStyles = await metronomeStylesRes.json();
 
     renderPads();
     await loadSoundBrowser();
@@ -791,6 +898,9 @@
     renderEffects();
     renderSequencerHead();
     renderSequencer();
+    renderTempo();
+    renderMetronomeStyles();
+    renderMetronome();
     renderLooper();
     renderKnobs();
     connectWebSocket();

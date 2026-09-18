@@ -26,6 +26,7 @@ rather than assumed here.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -182,18 +183,22 @@ async def apply_metronome_style(style: str) -> bool:
     click style and wires it into the graph - same pattern as a pad, but it
     isn't one of the 16 performance pads and only ever plays the two fixed
     click notes (see engine/metronome_sounds.py)."""
+    return await asyncio.to_thread(_apply_metronome_style_sync, style)
+
+
+def _apply_metronome_style_sync(style: str) -> bool:
     sfz_path = metronome_sounds.write_metronome_sfz(style)
     if not sfizz_proc.spawn(METRONOME_CLIENT, sfz_path):
         return False
     if not jackgraph.wait_for_port(f"{METRONOME_CLIENT}:output_1"):
         logger.warning("sfizz JACK ports for the metronome never appeared")
         return False
-    jackgraph.connect(f"{METRONOME_CLIENT}:output_1", MASTER_L)
-    jackgraph.connect(f"{METRONOME_CLIENT}:output_2", MASTER_R)
-    jackgraph.connect_pattern_to_all(
-        rf"{re.escape(midi.OUTPUT_PORT_NAME)}$", f"^{re.escape(METRONOME_CLIENT)}:input$"
+    audio_left = jackgraph.connect(f"{METRONOME_CLIENT}:output_1", MASTER_L)
+    audio_right = jackgraph.connect(f"{METRONOME_CLIENT}:output_2", MASTER_R)
+    midi_connected = jackgraph.connect_pattern_to_all(
+        rf"{re.escape(midi.METRONOME_OUTPUT_PORT_NAME)}$", f"^{re.escape(METRONOME_CLIENT)}:input$"
     )
-    return True
+    return audio_left and audio_right and midi_connected
 
 
 def shutdown() -> None:

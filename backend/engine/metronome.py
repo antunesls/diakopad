@@ -12,7 +12,8 @@ import asyncio
 import time
 from typing import Awaitable, Callable, Optional
 
-from engine import metronome_sounds, tempo, trigger
+import midi
+from engine import metronome_sounds, tempo
 
 _running = False
 _beat_in_bar = 0
@@ -56,11 +57,15 @@ async def _clock() -> None:
     try:
         while _running:
             note = metronome_sounds.ACCENT_NOTE if _beat_in_bar == 0 else metronome_sounds.NORMAL_NOTE
-            await trigger.trigger_note(note)
+            midi.metronome_note_on(midi.MIDI_CHANNEL, note, 100)
             if _on_beat is not None:
                 await _on_beat(_beat_in_bar)
             _beat_in_bar = (_beat_in_bar + 1) % _beats_per_bar
-            next_tick += 60.0 / tempo.get()
+            interval = 60.0 / tempo.get()
+            next_tick += interval
+            now = time.monotonic()
+            if next_tick <= now:
+                next_tick = now + interval
             await asyncio.sleep(max(0.0, next_tick - time.monotonic()))
     except asyncio.CancelledError:
         pass

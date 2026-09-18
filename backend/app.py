@@ -116,6 +116,11 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+_sequencer_tick_task: Optional[asyncio.Task] = None
+_pending_sequencer_step: Optional[int] = None
+_metronome_tick_task: Optional[asyncio.Task] = None
+_pending_metronome_beat: Optional[int] = None
+_metronome_style_lock = asyncio.Lock()
 
 # --- Knob MIDI-learn state -------------------------------------------------
 # The MIDI input callback fires on mido/rtmidi's own thread; everything here
@@ -280,7 +285,18 @@ async def _broadcast_pad_effects() -> None:
 
 
 async def _on_sequencer_tick(current_step: int) -> None:
-    await manager.broadcast({"type": "sequencer_tick", "current_step": current_step})
+    global _sequencer_tick_task, _pending_sequencer_step
+    _pending_sequencer_step = current_step
+    if _sequencer_tick_task is None or _sequencer_tick_task.done():
+        _sequencer_tick_task = asyncio.create_task(_drain_sequencer_ticks())
+
+
+async def _drain_sequencer_ticks() -> None:
+    global _pending_sequencer_step
+    while _pending_sequencer_step is not None:
+        current_step = _pending_sequencer_step
+        _pending_sequencer_step = None
+        await manager.broadcast({"type": "sequencer_tick", "current_step": current_step})
 
 
 async def _broadcast_sequencer() -> None:
@@ -296,7 +312,18 @@ async def _broadcast_tempo() -> None:
 
 
 async def _on_metronome_beat(beat_in_bar: int) -> None:
-    await manager.broadcast({"type": "metronome_tick", "beat_in_bar": beat_in_bar})
+    global _metronome_tick_task, _pending_metronome_beat
+    _pending_metronome_beat = beat_in_bar
+    if _metronome_tick_task is None or _metronome_tick_task.done():
+        _metronome_tick_task = asyncio.create_task(_drain_metronome_ticks())
+
+
+async def _drain_metronome_ticks() -> None:
+    global _pending_metronome_beat
+    while _pending_metronome_beat is not None:
+        beat_in_bar = _pending_metronome_beat
+        _pending_metronome_beat = None
+        await manager.broadcast({"type": "metronome_tick", "beat_in_bar": beat_in_bar})
 
 
 async def _broadcast_metronome() -> None:
@@ -652,10 +679,11 @@ async def set_metronome_transport(body: MetronomeTransportRequest):
 async def set_metronome_style(body: MetronomeStyleRequest):
     if body.style not in metronome_sounds.STYLES:
         raise HTTPException(400, "unknown metronome style")
-    storage.set_setting("metronome_style", body.style)
-    await orchestrator.apply_metronome_style(body.style)
-    await _broadcast_metronome()
-    return {"ok": True}
+    async with _metronome_style_lock:
+        engine_applied = await orchestrator.apply_metronome_style(body.style)
+        storage.set_setting("metronome_style", body.style)
+        await _broadcast_metronome()
+    return {"ok": True, "engine_applied": engine_applied}
 
 
 @app.post("/api/metronome/beats-per-bar")

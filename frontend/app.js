@@ -13,12 +13,16 @@
     settings: { sustain_mode: "1", velocity_sensitive: "0" },
     padEffects: [],
     effectsCatalog: [],
-    sequencer: { bpm: 100, running: false, current_step: 0, steps: [] },
+    sequencer: { running: false, current_step: 0, steps: [] },
     looper: { state: "stopped", loop_duration: null, event_count: 0, started_at: null },
+    tempo: { bpm: 100 },
+    metronome: { running: false, beat_in_bar: 0, beats_per_bar: 4, style: "digital" },
+    metronomeStyles: [],
   };
 
   const knobPicker = { step: null, scope: null, padNumber: null };
   let looperTimer = null;
+  let tapTimestamps = [];
 
   const el = {
     padGrid: document.getElementById("pad-grid"),
@@ -48,6 +52,12 @@
     looperRecordBtn: document.getElementById("looper-record-btn"),
     looperStopBtn: document.getElementById("looper-stop-btn"),
     looperClearBtn: document.getElementById("looper-clear-btn"),
+    metronomeBpm: document.getElementById("metronome-bpm"),
+    metronomeTapBtn: document.getElementById("metronome-tap-btn"),
+    metronomeBeatRow: document.getElementById("metronome-beat-row"),
+    metronomePlayBtn: document.getElementById("metronome-play-btn"),
+    metronomeStyleSelect: document.getElementById("metronome-style-select"),
+    metronomeBeatsSelect: document.getElementById("metronome-beats-select"),
     knobsList: document.getElementById("knobs-list"),
     knobAddBtn: document.getElementById("knob-add-btn"),
     knobClearAllBtn: document.getElementById("knob-clear-all-btn"),
@@ -58,7 +68,7 @@
     knobModalWaiting: document.getElementById("knob-modal-waiting"),
   };
 
-  const VIEWS = ["pads", "sounds", "volumes", "effects", "sequencer", "looper", "knobs", "config"];
+  const VIEWS = ["pads", "sounds", "volumes", "effects", "sequencer", "metronome", "looper", "knobs", "config"];
   for (const name of VIEWS) {
     document.getElementById(`tab-${name}`).addEventListener("click", () => switchView(name));
   }
@@ -356,7 +366,6 @@
   }
 
   function renderSequencer() {
-    el.sequencerBpm.value = Math.round(state.sequencer.bpm);
     el.sequencerPlayBtn.textContent = state.sequencer.running ? "■ Parar" : "▶ Tocar";
     el.sequencerPlayBtn.classList.toggle("active", state.sequencer.running);
 

@@ -31,7 +31,11 @@ async def trigger_pad(
     note = _note_for_pad(pad_number, pads)
     if note is None:
         return False
-    sent = midi.note_on(midi.MIDI_CHANNEL, note, velocity)
-    if sent and settings is not None and settings.get("sustain_mode", "1") != "1":
-        asyncio.get_event_loop().call_later(0.05, midi.note_off, midi.MIDI_CHANNEL, note)
-    return sent
+    return await trigger_note(note, velocity)
+
+
+async def trigger_note(note: int, velocity: int = 100) -> bool:
+    """Lower-level primitive: sends a bare Note On for an arbitrary MIDI
+    note, with no pad lookup and no note-off (for one-shot-only players like
+    the metronome's click, see engine/metronome.py)."""
+    return midi.note_on(midi.MIDI_CHANNEL, note, velocity)

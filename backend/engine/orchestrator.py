@@ -32,7 +32,7 @@ import re
 
 import midi
 import sfz
-from engine import effects_catalog, jackgraph, modhost_client, sfizz_proc
+from engine import effects_catalog, jackgraph, metronome_sounds, modhost_client, sfizz_proc
 
 logger = logging.getLogger("diakopad.engine.orchestrator")
 
@@ -84,15 +84,15 @@ async def apply_pad(pad_number: int, pads: list[dict], settings: dict, pad_effec
     pad = next((p for p in pads if p["pad_number"] == pad_number), None)
     if pad is None:
         return False
+    client = sfizz_proc.client_name(pad_number)
     if not pad.get("filename"):
-        sfizz_proc.stop(pad_number)
+        sfizz_proc.stop(client)
         return False
 
     sfz_path = sfz.write_pad_kit(pad_number, pad, settings)
-    if not sfizz_proc.spawn(pad_number, sfz_path):
+    if not sfizz_proc.spawn(client, sfz_path):
         return False
 
-    client = sfizz_proc.client_name(pad_number)
     if not jackgraph.wait_for_port(f"{client}:output_1"):
         logger.warning("sfizz JACK ports for pad %d never appeared", pad_number)
         return False
@@ -172,6 +172,28 @@ async def set_effect_param(pad_number: int, slot_index: int, symbol: str, value:
     rewiring, just a mod-host param_set."""
     instance = _slot_instance(pad_number, slot_index)
     return await modhost_client.param_set(instance, symbol, value)
+
+
+METRONOME_CLIENT = "diakopad_metronome"
+
+
+async def apply_metronome_style(style: str) -> bool:
+    """(Re)spawns the dedicated metronome sfizz instance with the chosen
+    click style and wires it into the graph - same pattern as a pad, but it
+    isn't one of the 16 performance pads and only ever plays the two fixed
+    click notes (see engine/metronome_sounds.py)."""
+    sfz_path = metronome_sounds.write_metronome_sfz(style)
+    if not sfizz_proc.spawn(METRONOME_CLIENT, sfz_path):
+        return False
+    if not jackgraph.wait_for_port(f"{METRONOME_CLIENT}:output_1"):
+        logger.warning("sfizz JACK ports for the metronome never appeared")
+        return False
+    jackgraph.connect(f"{METRONOME_CLIENT}:output_1", MASTER_L)
+    jackgraph.connect(f"{METRONOME_CLIENT}:output_2", MASTER_R)
+    jackgraph.connect_pattern_to_all(
+        rf"{re.escape(midi.OUTPUT_PORT_NAME)}$", f"^{re.escape(METRONOME_CLIENT)}:input$"
+    )
+    return True
 
 
 def shutdown() -> None:

@@ -7,3 +7,5 @@ backend/samples/*
 !backend/samples/.gitkeep
 backend/sfz_bank/*
 !backend/sfz_bank/.gitkeep
+backend/generated/*
+!backend/generated/.gitkeep

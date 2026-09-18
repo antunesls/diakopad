@@ -1,8 +1,13 @@
-"""Per-pad sfizz JACK-client process lifecycle.
+"""Generic sfizz JACK-client process lifecycle, keyed by JACK client name.
 
-One `sfizz_jack` subprocess per pad, each loading only that pad's own tiny
-.sfz and exposing its own JACK client (`diakopad_padNN`, ports `output_1`/
-`output_2` and MIDI input `input` - see sfizz's clients/jack_client.cpp).
+One `sfizz_jack` subprocess per client, each loading its own tiny .sfz and
+exposing its own JACK ports (`output_1`/`output_2` and MIDI input `input` -
+see sfizz's clients/jack_client.cpp). Used both for the 16 performance pads
+(`client_name(pad_number)` -> `diakopad_padNN`) and for the dedicated
+metronome click instance (`diakopad_metronome`, see
+engine/metronome_sounds.py) - anything that needs its own independent
+one-shot-sample player gets its own client here.
+
 `--jack_autoconnect=false` because DiakoPad wires the graph itself
 (backend/engine/jackgraph.py) instead of letting sfizz auto-patch to
 physical outputs.
@@ -24,7 +29,7 @@ logger = logging.getLogger("diakopad.engine.sfizz_proc")
 
 SFIZZ_BIN = os.environ.get("DIAKOPAD_SFIZZ_BIN", "sfizz_jack")
 
-_procs: dict[int, subprocess.Popen] = {}
+_procs: dict[str, subprocess.Popen] = {}
 _watchdog_task: Optional[asyncio.Task] = None
 _unavailable_logged = False
 
@@ -42,16 +47,16 @@ def _binary_available() -> bool:
     return found
 
 
-def spawn(pad_number: int, sfz_path: Path) -> bool:
-    """(Re)starts the sfizz instance for a pad, replacing any previous one."""
-    stop(pad_number)
+def spawn(client: str, sfz_path: Path) -> bool:
+    """(Re)starts the sfizz instance for a client, replacing any previous one."""
+    stop(client)
     if not _binary_available():
         return False
     try:
         proc = subprocess.Popen(
             [
                 SFIZZ_BIN,
-                f"--client_name={client_name(pad_number)}",
+                f"--client_name={client}",
                 "--jack_autoconnect=false",
                 str(sfz_path),
             ],
@@ -59,17 +64,15 @@ def spawn(pad_number: int, sfz_path: Path) -> bool:
             stderr=subprocess.DEVNULL,
         )
     except OSError as exc:
-        logger.warning("failed to spawn sfizz for pad %d: %s", pad_number, exc)
+        logger.warning("failed to spawn sfizz for %s: %s", client, exc)
         return False
-    _procs[pad_number] = proc
-    logger.info(
-        "spawned sfizz for pad %d (pid %d, client %s)", pad_number, proc.pid, client_name(pad_number)
-    )
+    _procs[client] = proc
+    logger.info("spawned sfizz for %s (pid %d)", client, proc.pid)
     return True
 
 
-def stop(pad_number: int) -> None:
-    proc = _procs.pop(pad_number, None)
+def stop(client: str) -> None:
+    proc = _procs.pop(client, None)
     if proc is None:
         return
     proc.terminate()
@@ -79,28 +82,28 @@ def stop(pad_number: int) -> None:
         proc.kill()
 
 
-def is_running(pad_number: int) -> bool:
-    proc = _procs.get(pad_number)
+def is_running(client: str) -> bool:
+    proc = _procs.get(client)
     return proc is not None and proc.poll() is None
 
 
 def stop_all() -> None:
-    for pad_number in list(_procs):
-        stop(pad_number)
+    for client in list(_procs):
+        stop(client)
 
 
 async def _watchdog(interval: float = 3.0) -> None:
     while True:
         await asyncio.sleep(interval)
-        for pad_number, proc in list(_procs.items()):
+        for client, proc in list(_procs.items()):
             if proc.poll() is not None:
                 logger.warning(
-                    "sfizz for pad %d exited unexpectedly (code %s); leaving it stopped "
-                    "until the pad is reassigned or a mix value changes",
-                    pad_number,
+                    "sfizz for %s exited unexpectedly (code %s); leaving it stopped "
+                    "until reassigned/reapplied",
+                    client,
                     proc.returncode,
                 )
-                _procs.pop(pad_number, None)
+                _procs.pop(client, None)
 
 
 def start_watchdog() -> None:

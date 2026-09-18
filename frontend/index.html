@@ -15,6 +15,7 @@
       <button id="tab-volumes" class="tab" type="button">Volumes</button>
       <button id="tab-effects" class="tab" type="button">Efeitos</button>
       <button id="tab-sequencer" class="tab" type="button">Sequencer</button>
+      <button id="tab-metronome" class="tab" type="button">Metrônomo</button>
       <button id="tab-looper" class="tab" type="button">Looper</button>
       <button id="tab-knobs" class="tab" type="button">Knobs</button>
       <button id="tab-config" class="tab" type="button">Config</button>
@@ -67,6 +68,34 @@
         </thead>
         <tbody id="sequencer-body"></tbody>
       </table>
+    </div>
+  </main>
+
+  <main id="view-metronome" class="view hidden">
+    <div class="metronome-bpm-row">
+      <label class="bpm-control">
+        BPM
+        <input type="number" id="metronome-bpm" min="40" max="240" step="1">
+      </label>
+      <button id="metronome-tap-btn" class="secondary-btn" type="button">Tap</button>
+    </div>
+    <div class="metronome-beat-row" id="metronome-beat-row"></div>
+    <div class="metronome-controls">
+      <button id="metronome-play-btn" class="accent-btn" type="button">▶ Tocar</button>
+      <label class="metronome-select-control">
+        Som
+        <select id="metronome-style-select"></select>
+      </label>
+      <label class="metronome-select-control">
+        Compasso
+        <select id="metronome-beats-select">
+          <option value="2">2/4</option>
+          <option value="3">3/4</option>
+          <option value="4" selected>4/4</option>
+          <option value="5">5/4</option>
+          <option value="6">6/8</option>
+        </select>
+      </label>
     </div>
   </main>
 

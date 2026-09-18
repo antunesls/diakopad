@@ -1,7 +1,8 @@
 """DiakoPad web app: pad grid + sound library, served to the touchscreen and
 to any browser on the LAN. Owns its own audio engine directly - one sfizz
 instance per pad, per-pad configurable mod-host effect chains, a step
-sequencer and a live looper - orchestrated by engine/orchestrator.py."""
+sequencer, a live looper and a metronome - orchestrated by
+engine/orchestrator.py."""
 from __future__ import annotations
 
 import asyncio
@@ -18,7 +19,7 @@ from pydantic import BaseModel
 
 import midi
 import storage
-from engine import effects_catalog, knob_registry, looper, orchestrator, sequencer
+from engine import effects_catalog, knob_registry, looper, metronome, metronome_sounds, orchestrator, sequencer, tempo
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("diakopad")
@@ -67,16 +68,28 @@ class EffectParamRequest(BaseModel):
     value: float
 
 
-class SequencerBpmRequest(BaseModel):
-    bpm: float
-
-
 class SequencerTransportRequest(BaseModel):
     running: bool
 
 
 class SequencerStepRequest(BaseModel):
     active: bool
+
+
+class TempoRequest(BaseModel):
+    bpm: float
+
+
+class MetronomeTransportRequest(BaseModel):
+    running: bool
+
+
+class MetronomeStyleRequest(BaseModel):
+    style: str
+
+
+class MetronomeBeatsPerBarRequest(BaseModel):
+    beats_per_bar: int
 
 
 class ConnectionManager:
@@ -183,8 +196,8 @@ async def _apply_knob_target(key: tuple[str, Optional[int], str]) -> None:
     value = knob_registry.cc_to_value(cc_value, meta)
 
     if scope == "global" and param == "tempo":
-        sequencer.set_bpm(value)
-        await _broadcast_sequencer()
+        tempo.set(value)
+        await _broadcast_tempo()
         return
 
     slot = _parse_slot_param(param)
@@ -217,12 +230,15 @@ async def on_startup() -> None:
     await orchestrator.startup()
     await orchestrator.apply_all_pads(storage.list_pads(), storage.get_settings(), storage.list_pad_effects())
     sequencer.load_pattern(storage.list_sequencer_steps())
-    sequencer.set_bpm(float(storage.get_settings().get("sequencer_bpm", 100)), persist=False)
+    tempo.load()
+    metronome.set_beats_per_bar(int(storage.get_settings().get("metronome_beats_per_bar", 4)))
+    await orchestrator.apply_metronome_style(storage.get_settings().get("metronome_style", metronome_sounds.DEFAULT_STYLE))
 
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
     await sequencer.stop()
+    await metronome.stop()
     looper.stop()
     orchestrator.shutdown()
 
@@ -273,6 +289,24 @@ async def _broadcast_sequencer() -> None:
 
 async def _broadcast_looper() -> None:
     await manager.broadcast({"type": "looper", **looper.get_state()})
+
+
+async def _broadcast_tempo() -> None:
+    await manager.broadcast({"type": "tempo", "bpm": tempo.get()})
+
+
+async def _on_metronome_beat(beat_in_bar: int) -> None:
+    await manager.broadcast({"type": "metronome_tick", "beat_in_bar": beat_in_bar})
+
+
+async def _broadcast_metronome() -> None:
+    await manager.broadcast(
+        {
+            "type": "metronome",
+            **metronome.get_state(),
+            "style": storage.get_settings().get("metronome_style", metronome_sounds.DEFAULT_STYLE),
+        }
+    )
 
 
 def _settings_payload() -> dict:
@@ -526,15 +560,6 @@ async def set_sequencer_transport(body: SequencerTransportRequest):
     return {"ok": True}
 
 
-@app.post("/api/sequencer/bpm")
-async def set_sequencer_bpm(body: SequencerBpmRequest):
-    if not 40 <= body.bpm <= 240:
-        raise HTTPException(400, "bpm must be between 40 and 240")
-    sequencer.set_bpm(body.bpm)
-    await _broadcast_sequencer()
-    return {"ok": True}
-
-
 @app.post("/api/sequencer/steps/{pad_number}/{step_index}")
 async def toggle_sequencer_step(pad_number: int, step_index: int, body: SequencerStepRequest):
     if not 1 <= pad_number <= 16:
@@ -586,6 +611,63 @@ async def looper_clear():
     return {"ok": True}
 
 
+@app.get("/api/tempo")
+def get_tempo():
+    return {"bpm": tempo.get()}
+
+
+@app.post("/api/tempo")
+async def set_tempo(body: TempoRequest):
+    if not tempo.MIN_BPM <= body.bpm <= tempo.MAX_BPM:
+        raise HTTPException(400, f"bpm must be between {tempo.MIN_BPM:.0f} and {tempo.MAX_BPM:.0f}")
+    tempo.set(body.bpm)
+    await _broadcast_tempo()
+    return {"ok": True}
+
+
+@app.get("/api/metronome/styles")
+def get_metronome_styles():
+    return metronome_sounds.list_styles()
+
+
+@app.get("/api/metronome")
+def get_metronome():
+    return {
+        **metronome.get_state(),
+        "style": storage.get_settings().get("metronome_style", metronome_sounds.DEFAULT_STYLE),
+    }
+
+
+@app.post("/api/metronome/transport")
+async def set_metronome_transport(body: MetronomeTransportRequest):
+    if body.running:
+        await metronome.start(_on_metronome_beat)
+    else:
+        await metronome.stop()
+    await _broadcast_metronome()
+    return {"ok": True}
+
+
+@app.post("/api/metronome/style")
+async def set_metronome_style(body: MetronomeStyleRequest):
+    if body.style not in metronome_sounds.STYLES:
+        raise HTTPException(400, "unknown metronome style")
+    storage.set_setting("metronome_style", body.style)
+    await orchestrator.apply_metronome_style(body.style)
+    await _broadcast_metronome()
+    return {"ok": True}
+
+
+@app.post("/api/metronome/beats-per-bar")
+async def set_metronome_beats_per_bar(body: MetronomeBeatsPerBarRequest):
+    if not 1 <= body.beats_per_bar <= 12:
+        raise HTTPException(400, "beats_per_bar must be between 1 and 12")
+    storage.set_setting("metronome_beats_per_bar", str(body.beats_per_bar))
+    metronome.set_beats_per_bar(body.beats_per_bar)
+    await _broadcast_metronome()
+    return {"ok": True}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await manager.connect(ws)
@@ -597,6 +679,14 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.send_json({"type": "pad_effects", "pad_effects": storage.list_pad_effects()})
         await ws.send_json({"type": "sequencer", **sequencer.get_state()})
         await ws.send_json({"type": "looper", **looper.get_state()})
+        await ws.send_json({"type": "tempo", "bpm": tempo.get()})
+        await ws.send_json(
+            {
+                "type": "metronome",
+                **metronome.get_state(),
+                "style": storage.get_settings().get("metronome_style", metronome_sounds.DEFAULT_STYLE),
+            }
+        )
         while True:
             await ws.receive_text()  # client doesn't send anything meaningful; just keep alive
     except WebSocketDisconnect:

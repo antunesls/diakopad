@@ -88,8 +88,16 @@ SEQUENCER_STEPS = 16
 # velocity_sensitive=0: every hit plays at the pad's set volume regardless of
 # how hard it's struck (amp_veltrack=0) - this was the fix for hits sounding
 # too quiet. velocity_sensitive=1: harder hits are louder (amp_veltrack=100).
-# sequencer_bpm: the step sequencer's single global tempo (see engine/sequencer.py).
-DEFAULT_SETTINGS = {"sustain_mode": "1", "velocity_sensitive": "0", "sequencer_bpm": "100"}
+# sequencer_bpm: the app's single global tempo, shared by the sequencer and
+# the metronome (see engine/tempo.py). metronome_style/_beats_per_bar: the
+# metronome's click sound and time signature (see engine/metronome*.py).
+DEFAULT_SETTINGS = {
+    "sustain_mode": "1",
+    "velocity_sensitive": "0",
+    "sequencer_bpm": "100",
+    "metronome_style": "digital",
+    "metronome_beats_per_bar": "4",
+}
 
 # Default note layout: sequential from 36 (C1), matches a typical MPC-style
 # performance preset. Overridden per pad via the API once real notes are

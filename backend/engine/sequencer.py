@@ -1,4 +1,5 @@
-"""Step sequencer clock: one shared 16-step pattern, one global tempo.
+"""Step sequencer clock: one shared 16-step pattern, running at the app's
+shared global tempo (engine/tempo.py - also used by the metronome).
 
 State is split between SQLite (the pattern itself, persisted via storage.py
 so it survives a restart) and an in-memory cache kept in sync on every
@@ -18,12 +19,10 @@ import asyncio
 import time
 from typing import Awaitable, Callable, Optional
 
-import storage
-from engine import trigger
+from engine import tempo, trigger
 
 STEP_COUNT = 16
 
-_bpm: float = 100.0
 _running = False
 _current_step = 0
 _pattern: dict[tuple[int, int], bool] = {}
@@ -34,13 +33,6 @@ _on_tick: Optional[Callable[[int], Awaitable[None]]] = None
 def load_pattern(steps: list[dict]) -> None:
     global _pattern
     _pattern = {(s["pad_number"], s["step_index"]): bool(s["active"]) for s in steps}
-
-
-def set_bpm(bpm: float, persist: bool = True) -> None:
-    global _bpm
-    _bpm = bpm
-    if persist:
-        storage.set_setting("sequencer_bpm", str(bpm))
 
 
 def toggle_step(pad_number: int, step_index: int, active: bool) -> None:
@@ -56,7 +48,6 @@ def clear() -> None:
 
 def get_state() -> dict:
     return {
-        "bpm": _bpm,
         "running": _running,
         "current_step": _current_step,
         "steps": [
@@ -89,7 +80,7 @@ async def _clock(pads: list[dict], settings: dict) -> None:
     next_tick = time.monotonic()
     try:
         while _running:
-            step_seconds = 60.0 / _bpm / 4.0  # 16th notes
+            step_seconds = 60.0 / tempo.get() / 4.0  # 16th notes
             for (pad_number, step_index), active in list(_pattern.items()):
                 if active and step_index == _current_step:
                     await trigger.trigger_pad(pad_number, pads, settings=settings)

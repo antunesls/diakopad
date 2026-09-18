@@ -1,13 +1,26 @@
 [Unit]
-Description=DiakoPad web app (pad grid + sound library)
-After=network.target sound.target
+Description=DiakoPad web app + audio engine orchestrator (pad grid, sound library, sfizz/mod-host)
+After=network.target sound.target jack2.service a2jmidid.service
+Requires=jack2.service a2jmidid.service
 
 [Service]
 Type=simple
 User=zynthian
 WorkingDirectory=/home/zynthian/diakopad/backend
-Environment=DIAKOPAD_SFZ_BANK_DIR=/zynthian/zynthian-my-data/soundfonts/sfz/DiakoPad
+Environment=DIAKOPAD_SFZ_BANK_DIR=/home/zynthian/diakopad/backend/sfz_bank
 Environment=DIAKOPAD_MIDI_CHANNEL=10
+# sfizz/mod-host binaries and the effect catalog's LV2 URIs/ports - confirm
+# on-device with `which sfizz_jack`, `which mod-host` and `lv2ls`/`lv2info`
+# (see README.md and backend/engine/effects_catalog.py) before relying on
+# the placeholder defaults baked into backend/engine/.
+Environment=DIAKOPAD_SFIZZ_BIN=sfizz_jack
+Environment=DIAKOPAD_MODHOST_BIN=mod-host
+Environment=DIAKOPAD_MODHOST_PORT=5555
+#Environment=DIAKOPAD_FX_REVERB_LV2_URI=
+#Environment=DIAKOPAD_FX_DELAY_LV2_URI=
+#Environment=DIAKOPAD_FX_COMPRESSOR_LV2_URI=
+#Environment=DIAKOPAD_FX_DRIVE_LV2_URI=
+#Environment=DIAKOPAD_FX_EQ3_LV2_URI=
 ExecStart=/home/zynthian/diakopad/backend/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8080
 Restart=on-failure
 RestartSec=2

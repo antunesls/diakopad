@@ -14,8 +14,10 @@
       <button id="tab-sounds" class="tab" type="button">Sons</button>
       <button id="tab-volumes" class="tab" type="button">Volumes</button>
       <button id="tab-effects" class="tab" type="button">Efeitos</button>
-      <button id="tab-config" class="tab" type="button">Config</button>
       <button id="tab-sequencer" class="tab" type="button">Sequencer</button>
+      <button id="tab-looper" class="tab" type="button">Looper</button>
+      <button id="tab-knobs" class="tab" type="button">Knobs</button>
+      <button id="tab-config" class="tab" type="button">Config</button>
     </nav>
     <span id="conn-status" class="conn-status" title="Conexão">●</span>
   </header>
@@ -42,10 +44,54 @@
 
   <main id="view-effects" class="view hidden">
     <p class="tab-note">
-      Reverb/delay não é suportado pela versão do Sfizz deste Zynthian — o tom
-      aqui é um filtro grave/agudo por pad.
+      Tom é um filtro grave/agudo do próprio pad. Reverb, delay e outros
+      efeitos são plugins que você escolhe por slot, abaixo.
     </p>
     <ul id="effects-list" class="mix-list"></ul>
+  </main>
+
+  <main id="view-sequencer" class="view hidden">
+    <div class="sequencer-toolbar">
+      <button id="sequencer-play-btn" class="accent-btn" type="button">▶ Tocar</button>
+      <label class="bpm-control">
+        BPM
+        <input type="number" id="sequencer-bpm" min="40" max="240" step="1">
+      </label>
+      <button id="sequencer-clear-btn" class="danger-btn" type="button">Limpar padrão</button>
+    </div>
+    <div class="sequencer-grid-wrap">
+      <table class="sequencer-grid">
+        <thead>
+          <tr id="sequencer-head-row"><th class="sequencer-pad-col"></th></tr>
+        </thead>
+        <tbody id="sequencer-body"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <main id="view-looper" class="view hidden">
+    <div class="looper-status">
+      <div class="looper-state-label" id="looper-state-label">Parado</div>
+      <div class="looper-elapsed" id="looper-elapsed"></div>
+    </div>
+    <div class="looper-controls">
+      <button id="looper-record-btn" class="accent-btn" type="button">● Gravar</button>
+      <button id="looper-stop-btn" class="secondary-btn" type="button">■ Parar loop</button>
+      <button id="looper-clear-btn" class="danger-btn" type="button">Limpar</button>
+    </div>
+    <p class="tab-note">
+      Grava um único loop compartilhado: toque os pads normalmente enquanto
+      grava, solte "Gravar" de novo pra fechar o loop e ele passa a repetir
+      sozinho.
+    </p>
+  </main>
+
+  <main id="view-knobs" class="view hidden">
+    <div class="knobs-toolbar">
+      <button id="knob-add-btn" class="accent-btn" type="button">+ Atribuir novo knob</button>
+      <button id="knob-clear-all-btn" class="danger-btn" type="button">Limpar todos</button>
+    </div>
+    <ul id="knobs-list" class="sound-list"></ul>
   </main>
 
   <main id="view-config" class="view hidden">
@@ -71,29 +117,6 @@
         </label>
       </li>
     </ul>
-
-    <div class="settings-row knobs-clear-row">
-      <div class="settings-text">
-        <span class="settings-label">Knobs atribuídos</span>
-        <span class="settings-desc" id="knobs-count-label">nenhum knob atribuído</span>
-      </div>
-      <button id="clear-knobs-btn" class="danger-btn" type="button">Limpar todos</button>
-    </div>
-  </main>
-
-  <main id="view-sequencer" class="view hidden">
-    <p class="tab-note">
-      Programe ritmos no <strong>Step Sequencer nativo do Zynthian</strong>
-      usando os mesmos sons do DiakoPad: crie ou selecione uma track, ajuste
-      o canal MIDI dela para <strong id="sequencer-channel">10</strong> (o
-      mesmo canal do DiakoPad) e use as notas abaixo nos passos.
-    </p>
-    <table class="ref-table">
-      <thead>
-        <tr><th>Pad</th><th>Nota MIDI</th><th>Som</th></tr>
-      </thead>
-      <tbody id="sequencer-ref-body"></tbody>
-    </table>
   </main>
 
   <div id="assign-modal" class="modal hidden">
@@ -107,6 +130,17 @@
         <button id="modal-clear" class="danger-btn" type="button">Remover som deste pad</button>
       </div>
       <ul id="modal-sound-list" class="sound-list modal-sound-list"></ul>
+    </div>
+  </div>
+
+  <div id="knob-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="knob-modal-title">Atribuir knob</h2>
+        <button id="knob-modal-close" class="icon-btn" type="button">✕</button>
+      </div>
+      <ul id="knob-modal-list" class="sound-list modal-sound-list"></ul>
+      <p id="knob-modal-waiting" class="tab-note hidden">Gire o knob físico que você quer atribuir a esse controle...</p>
     </div>
   </div>
 

@@ -5,10 +5,18 @@
     pads: [],
     sounds: [],
     knobs: [],
+    knobTargets: { global: [], pads: {} },
     pendingLearn: null,
     selectedPad: null,
     settings: { sustain_mode: "1", velocity_sensitive: "0" },
+    padEffects: [],
+    effectsCatalog: [],
+    sequencer: { bpm: 100, running: false, current_step: 0, steps: [] },
+    looper: { state: "stopped", loop_duration: null, event_count: 0, started_at: null },
   };
+
+  const knobPicker = { step: null, scope: null, padNumber: null };
+  let looperTimer = null;
 
   const el = {
     padGrid: document.getElementById("pad-grid"),
@@ -27,13 +35,27 @@
     previewAudio: document.getElementById("preview-audio"),
     settingSustain: document.getElementById("setting-sustain"),
     settingVelocity: document.getElementById("setting-velocity"),
-    knobsCountLabel: document.getElementById("knobs-count-label"),
-    clearKnobsBtn: document.getElementById("clear-knobs-btn"),
-    sequencerChannel: document.getElementById("sequencer-channel"),
-    sequencerRefBody: document.getElementById("sequencer-ref-body"),
+    sequencerPlayBtn: document.getElementById("sequencer-play-btn"),
+    sequencerBpm: document.getElementById("sequencer-bpm"),
+    sequencerClearBtn: document.getElementById("sequencer-clear-btn"),
+    sequencerHeadRow: document.getElementById("sequencer-head-row"),
+    sequencerBody: document.getElementById("sequencer-body"),
+    looperStateLabel: document.getElementById("looper-state-label"),
+    looperElapsed: document.getElementById("looper-elapsed"),
+    looperRecordBtn: document.getElementById("looper-record-btn"),
+    looperStopBtn: document.getElementById("looper-stop-btn"),
+    looperClearBtn: document.getElementById("looper-clear-btn"),
+    knobsList: document.getElementById("knobs-list"),
+    knobAddBtn: document.getElementById("knob-add-btn"),
+    knobClearAllBtn: document.getElementById("knob-clear-all-btn"),
+    knobModal: document.getElementById("knob-modal"),
+    knobModalTitle: document.getElementById("knob-modal-title"),
+    knobModalClose: document.getElementById("knob-modal-close"),
+    knobModalList: document.getElementById("knob-modal-list"),
+    knobModalWaiting: document.getElementById("knob-modal-waiting"),
   };
 
-  const VIEWS = ["pads", "sounds", "volumes", "effects", "config", "sequencer"];
+  const VIEWS = ["pads", "sounds", "volumes", "effects", "sequencer", "looper", "knobs", "config"];
   for (const name of VIEWS) {
     document.getElementById(`tab-${name}`).addEventListener("click", () => switchView(name));
   }
@@ -97,51 +119,7 @@
     }
   }
 
-  // --- Volumes / Efeitos --------------------------------------------------
-
-  function findKnobCc(padNumber, param) {
-    const m = state.knobs.find((k) => k.pad_number === padNumber && k.param === param);
-    return m ? m.cc_number : null;
-  }
-
-  function isLearning(padNumber, param) {
-    return (
-      state.pendingLearn &&
-      state.pendingLearn.pad_number === padNumber &&
-      state.pendingLearn.param === param
-    );
-  }
-
-  async function toggleLearn(padNumber, param) {
-    if (isLearning(padNumber, param)) {
-      await fetch("/api/knobs/learn/cancel", { method: "POST" });
-    } else {
-      await fetch("/api/knobs/learn", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pad_number: padNumber, param }),
-      });
-    }
-  }
-
-  function learnButtonHtml(padNumber, param) {
-    const cc = findKnobCc(padNumber, param);
-    if (isLearning(padNumber, param)) return `<button class="learn-btn waiting" data-param="${param}">gire o knob...</button>`;
-    if (cc !== null) return `<button class="learn-btn bound" data-param="${param}">CC${cc} ✕</button>`;
-    return `<button class="learn-btn" data-param="${param}">atribuir knob</button>`;
-  }
-
-  function wireLearnButton(row, padNumber, param) {
-    const btn = row.querySelector(`.learn-btn[data-param="${param}"]`);
-    btn.addEventListener("click", async () => {
-      const cc = findKnobCc(padNumber, param);
-      if (cc !== null && !isLearning(padNumber, param)) {
-        await fetch(`/api/knobs/${cc}`, { method: "DELETE" });
-        return;
-      }
-      toggleLearn(padNumber, param);
-    });
-  }
+  // --- Volumes --------------------------------------------------------
 
   function renderVolumes() {
     el.volumeList.innerHTML = "";
@@ -158,13 +136,11 @@
             <span class="mix-control-label">Volume</span>
             <input type="range" min="-24" max="12" step="0.5" value="${pad.volume_db}" data-role="volume">
             <span class="mix-value" data-role="volume-value">${pad.volume_db} dB</span>
-            ${learnButtonHtml(pad.pad_number, "volume")}
           </div>
           <div class="mix-control">
             <span class="mix-control-label">Pan</span>
             <input type="range" min="-100" max="100" step="1" value="${pad.pan}" data-role="pan">
             <span class="mix-value" data-role="pan-value">${panLabel(pad.pan)}</span>
-            ${learnButtonHtml(pad.pad_number, "pan")}
           </div>
         </div>
       `;
@@ -178,8 +154,6 @@
       panInput.addEventListener("input", () => (panValue.textContent = panLabel(Number(panInput.value))));
       panInput.addEventListener("change", () => setPadMix(pad.pad_number, { pan: Number(panInput.value) }));
 
-      wireLearnButton(li, pad.pad_number, "volume");
-      wireLearnButton(li, pad.pad_number, "pan");
       el.volumeList.appendChild(li);
     }
   }
@@ -194,6 +168,8 @@
     const frac = Math.log(cutoffHz / 200) / Math.log(20000 / 200);
     return Math.round(frac * 100);
   }
+
+  // --- Efeitos (tom + slots configuráveis) --------------------------------
 
   function renderEffects() {
     el.effectsList.innerHTML = "";
@@ -211,9 +187,9 @@
             <span class="mix-control-label">Tom</span>
             <input type="range" min="0" max="100" step="1" value="${tone}" data-role="tone">
             <span class="mix-value" data-role="tone-value">${tone >= 100 ? "aberto" : tone + "%"}</span>
-            ${learnButtonHtml(pad.pad_number, "cutoff")}
           </div>
         </div>
+        <div class="effect-slots"></div>
       `;
       const toneInput = li.querySelector('[data-role="tone"]');
       const toneValue = li.querySelector('[data-role="tone-value"]');
@@ -222,9 +198,82 @@
         toneValue.textContent = v >= 100 ? "aberto" : v + "%";
       });
       toneInput.addEventListener("change", () => setPadMix(pad.pad_number, { tone: Number(toneInput.value) }));
-      wireLearnButton(li, pad.pad_number, "cutoff");
+
+      renderEffectSlots(li.querySelector(".effect-slots"), pad.pad_number);
       el.effectsList.appendChild(li);
     }
+  }
+
+  function renderEffectSlots(container, padNumber) {
+    container.innerHTML = "";
+    const slots = state.padEffects
+      .filter((e) => e.pad_number === padNumber)
+      .sort((a, b) => a.slot_index - b.slot_index);
+    for (const slot of slots) {
+      const div = document.createElement("div");
+      div.className = "effect-slot";
+      const options = ['<option value="">Vazio</option>'].concat(
+        state.effectsCatalog.map(
+          (p) => `<option value="${p.plugin_id}" ${p.plugin_id === slot.plugin_id ? "selected" : ""}>${escapeHtml(p.label)}</option>`
+        )
+      );
+      div.innerHTML = `
+        <div class="effect-slot-header">
+          <span class="effect-slot-label">Slot ${slot.slot_index}</span>
+          <select class="effect-slot-select">${options.join("")}</select>
+        </div>
+        <div class="effect-slot-params"></div>
+      `;
+      div.querySelector("select").addEventListener("change", (e) => {
+        setPadEffectSlot(padNumber, slot.slot_index, e.target.value || null);
+      });
+      if (slot.plugin_id) {
+        renderEffectParams(div.querySelector(".effect-slot-params"), padNumber, slot);
+      }
+      container.appendChild(div);
+    }
+  }
+
+  function renderEffectParams(container, padNumber, slot) {
+    const plugin = state.effectsCatalog.find((p) => p.plugin_id === slot.plugin_id);
+    if (!plugin) return;
+    for (const p of plugin.params) {
+      const value = slot.params[p.symbol] ?? p.default;
+      const step = (p.max - p.min) / 100 || 1;
+      const row = document.createElement("div");
+      row.className = "mix-control";
+      row.innerHTML = `
+        <span class="mix-control-label">${escapeHtml(p.label)}</span>
+        <input type="range" min="${p.min}" max="${p.max}" step="${step}" value="${value}">
+        <span class="mix-value">${formatParamValue(value, p.unit)}</span>
+      `;
+      const input = row.querySelector("input");
+      const valueEl = row.querySelector(".mix-value");
+      input.addEventListener("input", () => (valueEl.textContent = formatParamValue(Number(input.value), p.unit)));
+      input.addEventListener("change", () => setPadEffectParam(padNumber, slot.slot_index, p.symbol, Number(input.value)));
+      container.appendChild(row);
+    }
+  }
+
+  function formatParamValue(value, unit) {
+    const rounded = Math.round(value * 100) / 100;
+    return unit ? `${rounded}${unit}` : `${rounded}`;
+  }
+
+  async function setPadEffectSlot(padNumber, slotIndex, pluginId) {
+    await fetch(`/api/pads/${padNumber}/effects/${slotIndex}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plugin_id: pluginId }),
+    });
+  }
+
+  async function setPadEffectParam(padNumber, slotIndex, symbol, value) {
+    await fetch(`/api/pads/${padNumber}/effects/${slotIndex}/param`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol, value }),
+    });
   }
 
   async function setPadMix(padNumber, body) {
@@ -235,30 +284,219 @@
     });
   }
 
+  // --- Sequencer -----------------------------------------------------
+
+  function renderSequencerHead() {
+    el.sequencerHeadRow.innerHTML = '<th class="sequencer-pad-col"></th>';
+    for (let step = 0; step < 16; step++) {
+      const th = document.createElement("th");
+      th.textContent = String(step + 1);
+      if (step % 4 === 0) th.classList.add("beat-start");
+      el.sequencerHeadRow.appendChild(th);
+    }
+  }
+
+  function renderSequencer() {
+    el.sequencerBpm.value = Math.round(state.sequencer.bpm);
+    el.sequencerPlayBtn.textContent = state.sequencer.running ? "■ Parar" : "▶ Tocar";
+    el.sequencerPlayBtn.classList.toggle("active", state.sequencer.running);
+
+    const activeByKey = new Set(
+      state.sequencer.steps.filter((s) => s.active).map((s) => `${s.pad_number}:${s.step_index}`)
+    );
+
+    el.sequencerBody.innerHTML = "";
+    for (const pad of displayOrder(state.pads)) {
+      const tr = document.createElement("tr");
+      const labelTd = document.createElement("td");
+      labelTd.className = "sequencer-pad-col";
+      labelTd.textContent = `PAD ${pad.pad_number}`;
+      tr.appendChild(labelTd);
+      for (let step = 0; step < 16; step++) {
+        const active = activeByKey.has(`${pad.pad_number}:${step}`);
+        const td = document.createElement("td");
+        td.className =
+          "sequencer-cell" +
+          (active ? " active" : "") +
+          (step % 4 === 0 ? " beat-start" : "") +
+          (state.sequencer.running && step === state.sequencer.current_step ? " current" : "");
+        td.dataset.step = String(step);
+        td.addEventListener("click", () => toggleSequencerStep(pad.pad_number, step, !active));
+        tr.appendChild(td);
+      }
+      el.sequencerBody.appendChild(tr);
+    }
+  }
+
+  function updateSequencerPlayhead(step) {
+    el.sequencerBody.querySelectorAll(".sequencer-cell.current").forEach((c) => c.classList.remove("current"));
+    if (!state.sequencer.running) return;
+    el.sequencerBody.querySelectorAll(`.sequencer-cell[data-step="${step}"]`).forEach((c) => c.classList.add("current"));
+  }
+
+  async function toggleSequencerStep(padNumber, stepIndex, active) {
+    await fetch(`/api/sequencer/steps/${padNumber}/${stepIndex}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active }),
+    });
+  }
+
+  el.sequencerPlayBtn.addEventListener("click", () => {
+    fetch("/api/sequencer/transport", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ running: !state.sequencer.running }),
+    });
+  });
+  el.sequencerBpm.addEventListener("change", () => {
+    fetch("/api/sequencer/bpm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bpm: Number(el.sequencerBpm.value) }),
+    });
+  });
+  el.sequencerClearBtn.addEventListener("click", () => fetch("/api/sequencer/clear", { method: "POST" }));
+
+  // --- Looper ----------------------------------------------------------
+
+  function renderLooper() {
+    const s = state.looper;
+    const labels = { stopped: "Parado", recording: "Gravando...", playing: "Tocando em loop" };
+    el.looperStateLabel.textContent = labels[s.state] || s.state;
+    el.looperRecordBtn.textContent = s.state === "recording" ? "■ Fechar loop" : "● Gravar";
+    el.looperRecordBtn.classList.toggle("active", s.state === "recording");
+    el.looperStopBtn.disabled = s.state !== "playing";
+    el.looperClearBtn.disabled = s.state === "stopped" && s.event_count === 0;
+
+    clearInterval(looperTimer);
+    if (s.state === "recording" || s.state === "playing") {
+      looperTimer = setInterval(updateLooperElapsed, 200);
+      updateLooperElapsed();
+    } else {
+      el.looperElapsed.textContent = "";
+    }
+  }
+
+  function updateLooperElapsed() {
+    const s = state.looper;
+    if (!s.started_at) {
+      el.looperElapsed.textContent = "";
+      return;
+    }
+    const elapsed = Date.now() / 1000 - s.started_at;
+    if (s.state === "recording") {
+      el.looperElapsed.textContent = `${elapsed.toFixed(1)}s`;
+    } else if (s.state === "playing" && s.loop_duration) {
+      const pos = ((elapsed % s.loop_duration) + s.loop_duration) % s.loop_duration;
+      el.looperElapsed.textContent = `${pos.toFixed(1)}s / ${s.loop_duration.toFixed(1)}s`;
+    }
+  }
+
+  el.looperRecordBtn.addEventListener("click", () => {
+    const endpoint = state.looper.state === "recording" ? "/api/looper/record/stop" : "/api/looper/record/start";
+    fetch(endpoint, { method: "POST" });
+  });
+  el.looperStopBtn.addEventListener("click", () => fetch("/api/looper/stop", { method: "POST" }));
+  el.looperClearBtn.addEventListener("click", () => fetch("/api/looper/clear", { method: "POST" }));
+
+  // --- Knobs -----------------------------------------------------------
+
+  function renderKnobs() {
+    el.knobsList.innerHTML = "";
+    el.knobClearAllBtn.disabled = state.knobs.length === 0;
+    if (state.knobs.length === 0) {
+      el.knobsList.innerHTML = `<li class="sound-item"><span class="sound-name">Nenhum knob atribuído ainda.</span></li>`;
+      return;
+    }
+    for (const k of state.knobs) {
+      const li = document.createElement("li");
+      li.className = "sound-item";
+      li.innerHTML = `
+        <span class="sound-name">CC${k.cc_number} → ${escapeHtml(k.label)}</span>
+        <button class="icon-btn delete-btn" title="Remover">🗑</button>
+      `;
+      li.querySelector(".delete-btn").addEventListener("click", () => fetch(`/api/knobs/${k.cc_number}`, { method: "DELETE" }));
+      el.knobsList.appendChild(li);
+    }
+  }
+
+  el.knobClearAllBtn.addEventListener("click", () => fetch("/api/knobs", { method: "DELETE" }));
+
+  el.knobAddBtn.addEventListener("click", openKnobStepTarget);
+
+  function openKnobStepTarget() {
+    knobPicker.step = "target";
+    el.knobModalTitle.textContent = "Qual pad (ou Global)?";
+    el.knobModalWaiting.classList.add("hidden");
+    el.knobModalList.classList.remove("hidden");
+    el.knobModalList.innerHTML = "";
+
+    const globalLi = document.createElement("li");
+    globalLi.className = "sound-item";
+    globalLi.innerHTML = `<span class="sound-name">Global</span>`;
+    globalLi.querySelector(".sound-name").addEventListener("click", () => openKnobStepParam("global", null));
+    el.knobModalList.appendChild(globalLi);
+
+    for (let n = 1; n <= 16; n++) {
+      const pad = state.pads.find((p) => p.pad_number === n);
+      const li = document.createElement("li");
+      li.className = "sound-item";
+      li.innerHTML = `<span class="sound-name">Pad ${n}${pad && pad.has_sample ? " — " + escapeHtml(pad.display_name) : ""}</span>`;
+      li.querySelector(".sound-name").addEventListener("click", () => openKnobStepParam("pad", n));
+      el.knobModalList.appendChild(li);
+    }
+    el.knobModal.classList.remove("hidden");
+  }
+
+  function openKnobStepParam(scope, padNumber) {
+    knobPicker.step = "param";
+    knobPicker.scope = scope;
+    knobPicker.padNumber = padNumber;
+    el.knobModalTitle.textContent = scope === "global" ? "O que controlar (Global)?" : `O que controlar (Pad ${padNumber})?`;
+    el.knobModalList.innerHTML = "";
+    const params = scope === "global" ? state.knobTargets.global : state.knobTargets.pads[String(padNumber)] || [];
+    if (params.length === 0) {
+      el.knobModalList.innerHTML = `<li class="sound-item"><span class="sound-name">Nenhum parâmetro disponível (adicione um efeito a esse pad primeiro).</span></li>`;
+      return;
+    }
+    for (const p of params) {
+      const li = document.createElement("li");
+      li.className = "sound-item";
+      li.innerHTML = `<span class="sound-name">${escapeHtml(p.label)}</span>`;
+      li.querySelector(".sound-name").addEventListener("click", () => startKnobCapture(scope, padNumber, p.param));
+      el.knobModalList.appendChild(li);
+    }
+  }
+
+  async function startKnobCapture(scope, padNumber, param) {
+    knobPicker.step = "capture";
+    el.knobModalTitle.textContent = "Gire o knob";
+    el.knobModalList.classList.add("hidden");
+    el.knobModalWaiting.classList.remove("hidden");
+    await fetch("/api/knobs/learn", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope, pad_number: padNumber, param }),
+    });
+  }
+
+  function closeKnobModal() {
+    const wasCapturing = knobPicker.step === "capture";
+    el.knobModal.classList.add("hidden");
+    knobPicker.step = null;
+    if (wasCapturing && state.pendingLearn) fetch("/api/knobs/learn/cancel", { method: "POST" });
+  }
+  el.knobModalClose.addEventListener("click", closeKnobModal);
+  el.knobModal.addEventListener("click", (e) => {
+    if (e.target === el.knobModal) closeKnobModal();
+  });
+
   // --- Config ---------------------------------------------------------
 
   function renderSettings() {
     el.settingSustain.checked = state.settings.sustain_mode === "1";
     el.settingVelocity.checked = state.settings.velocity_sensitive === "1";
-    const n = state.knobs.length;
-    el.knobsCountLabel.textContent = n === 0 ? "nenhum knob atribuído" : `${n} knob${n > 1 ? "s" : ""} atribuído${n > 1 ? "s" : ""}`;
-    el.clearKnobsBtn.disabled = n === 0;
-  }
-
-  el.clearKnobsBtn.addEventListener("click", () => fetch("/api/knobs", { method: "DELETE" }));
-
-  function renderSequencerRef() {
-    if (state.settings.midi_channel) el.sequencerChannel.textContent = state.settings.midi_channel;
-    el.sequencerRefBody.innerHTML = "";
-    for (const pad of displayOrder(state.pads)) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>PAD ${pad.pad_number}</td>
-        <td>${pad.midi_note}</td>
-        <td>${pad.has_sample ? escapeHtml(pad.display_name) : "vazio"}</td>
-      `;
-      el.sequencerRefBody.appendChild(tr);
-    }
   }
 
   el.settingSustain.addEventListener("change", () => {
@@ -418,43 +656,71 @@
         renderSoundList();
         renderVolumes();
         renderEffects();
-        renderSequencerRef();
       } else if (msg.type === "sounds") {
         state.sounds = msg.sounds;
         renderSoundList();
       } else if (msg.type === "knobs") {
         state.knobs = msg.knobs;
         state.pendingLearn = msg.pending_learn;
-        renderVolumes();
-        renderEffects();
-        renderSettings();
+        renderKnobs();
+        if (knobPicker.step === "capture" && !state.pendingLearn) {
+          el.knobModal.classList.add("hidden");
+          knobPicker.step = null;
+        }
       } else if (msg.type === "settings") {
         state.settings = msg.settings;
         renderSettings();
-        renderSequencerRef();
+      } else if (msg.type === "pad_effects") {
+        state.padEffects = msg.pad_effects;
+        renderEffects();
+      } else if (msg.type === "sequencer") {
+        state.sequencer = { bpm: msg.bpm, running: msg.running, current_step: msg.current_step, steps: msg.steps };
+        renderSequencer();
+      } else if (msg.type === "sequencer_tick") {
+        state.sequencer.current_step = msg.current_step;
+        updateSequencerPlayhead(msg.current_step);
+      } else if (msg.type === "looper") {
+        state.looper = { state: msg.state, loop_duration: msg.loop_duration, event_count: msg.event_count, started_at: msg.started_at };
+        renderLooper();
       }
     });
   }
 
   async function init() {
-    const [padsRes, soundsRes, knobsRes, settingsRes] = await Promise.all([
-      fetch("/api/pads"),
-      fetch("/api/sounds"),
-      fetch("/api/knobs"),
-      fetch("/api/settings"),
-    ]);
+    const [padsRes, soundsRes, knobsRes, settingsRes, padEffectsRes, catalogRes, knobTargetsRes, sequencerRes, looperRes] =
+      await Promise.all([
+        fetch("/api/pads"),
+        fetch("/api/sounds"),
+        fetch("/api/knobs"),
+        fetch("/api/settings"),
+        fetch("/api/pad-effects"),
+        fetch("/api/effects/catalog"),
+        fetch("/api/knobs/targets"),
+        fetch("/api/sequencer"),
+        fetch("/api/looper"),
+      ]);
     state.pads = await padsRes.json();
     state.sounds = await soundsRes.json();
     const knobsData = await knobsRes.json();
     state.knobs = knobsData.knobs;
     state.pendingLearn = knobsData.pending_learn;
     state.settings = await settingsRes.json();
+    state.padEffects = await padEffectsRes.json();
+    state.effectsCatalog = await catalogRes.json();
+    state.knobTargets = await knobTargetsRes.json();
+    const sequencerData = await sequencerRes.json();
+    state.sequencer = { bpm: sequencerData.bpm, running: sequencerData.running, current_step: sequencerData.current_step, steps: sequencerData.steps };
+    state.looper = await looperRes.json();
+
     renderPads();
     renderSoundList();
     renderVolumes();
     renderSettings();
     renderEffects();
-    renderSequencerRef();
+    renderSequencerHead();
+    renderSequencer();
+    renderLooper();
+    renderKnobs();
     connectWebSocket();
   }
 

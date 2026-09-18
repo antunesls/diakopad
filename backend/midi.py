@@ -1,13 +1,19 @@
-"""Sends the MIDI Program Change that makes Zynthian reload the active kit.
+"""MIDI I/O not already covered by the per-pad sfizz instances themselves.
 
-Uses mido/python-rtmidi to open (or create, on Linux with the rtmidi ALSA
-backend) an output port. On the real deployment this port is connected once
-to Zynthian's MIDI router input via `aconnect` (see deploy/install.sh) so it
-does not need to be reconnected on every restart.
+Two virtual ports, both best-effort (logged and swallowed, never crashing
+the app, if no MIDI backend/port is available - e.g. local dev on a machine
+with no MIDI hardware):
 
-Kept best-effort: if no MIDI backend/port is available (e.g. local
-development on a machine with no MIDI hardware), calls are logged and
-swallowed instead of crashing the web app.
+- An INPUT port (`DiakoPad-in`) fed by the SMC-PAD's hardware knobs/pads
+  (see engine/orchestrator.py's hardware MIDI fan-out): Control Change for
+  knob-learn, and now also Note On, observed (not acted on) so the live
+  looper (engine/looper.py) can record what's actually being played.
+- An OUTPUT port (`DiakoPad-trigger-out`) DiakoPad uses to trigger pads
+  programmatically - the step sequencer and the looper's own playback both
+  send Note On/Off through here, fanned out by the orchestrator to every
+  pad's own sfizz `:input` (see engine/trigger.py). This port must never be
+  wired back into `DiakoPad-in`, or the looper would record its own
+  sequencer/loop-triggered hits.
 """
 from __future__ import annotations
 
@@ -17,62 +23,22 @@ from typing import Callable, Optional
 
 logger = logging.getLogger("diakopad.midi")
 
-PORT_NAME = os.environ.get("DIAKOPAD_MIDI_PORT_NAME", "DiakoPad")
 INPUT_PORT_NAME = os.environ.get("DIAKOPAD_MIDI_INPUT_PORT_NAME", "DiakoPad-in")
+OUTPUT_PORT_NAME = os.environ.get("DIAKOPAD_MIDI_OUTPUT_PORT_NAME", "DiakoPad-trigger-out")
 MIDI_CHANNEL = int(os.environ.get("DIAKOPAD_MIDI_CHANNEL", "10")) - 1  # 0-indexed
 
-_port = None
-_unavailable_logged = False
 _input_port = None
+_output_port = None
+_output_unavailable_logged = False
 
 
-def _get_port():
-    global _port, _unavailable_logged
-    if _port is not None:
-        return _port
-    try:
-        import mido
-
-        _port = mido.open_output(PORT_NAME, virtual=True)
-        logger.info("Opened virtual MIDI output port %r", PORT_NAME)
-    except Exception as exc:  # pragma: no cover - environment dependent
-        if not _unavailable_logged:
-            logger.warning("MIDI output unavailable (%s); Program Change calls will be no-ops", exc)
-            _unavailable_logged = True
-        _port = False
-    return _port
-
-
-def ensure_open() -> bool:
-    """Opens the virtual MIDI port eagerly (called on app startup) so it's
-    already visible to `jack_lsp`/`aconnect` for a boot-time auto-connect
-    script, instead of only appearing after the first pad assignment."""
-    return bool(_get_port())
-
-
-def send_program_change(preset_index: int) -> bool:
-    """Sends a Program Change on MIDI_CHANNEL. Returns True if actually sent."""
-    port = _get_port()
-    if not port:
-        return False
-    import mido
-
-    port.send(mido.Message("program_change", program=preset_index, channel=MIDI_CHANNEL))
-    logger.info("Sent Program Change %d on channel %d", preset_index, MIDI_CHANNEL + 1)
-    return True
-
-
-def open_input(on_cc: Callable[[int, int], None]) -> bool:
-    """Opens a virtual MIDI input port and calls on_cc(control_number, value)
-    for every Control Change received, on any channel. The callback fires on
-    mido/rtmidi's own thread, not the asyncio loop - callers that touch
-    asyncio state must hop back with loop.call_soon_threadsafe.
-
-    Connect the SMC-PAD's knobs to this port once, on the real device, via
-    `jack_connect` from its raw hardware capture port (see
-    deploy/diakopad-midi-connect.service) - it's separate from the ZynMidi
-    Router-bound output port above.
-    """
+def open_input(on_cc: Callable[[int, int], None], on_note: Optional[Callable[[int, int], None]] = None) -> bool:
+    """Opens the virtual MIDI input port. on_cc(control, value) fires for
+    every Control Change; on_note(note, velocity), if given, fires for every
+    Note On (velocity 0 note-ons - the common "note off" encoding - are not
+    forwarded to it). Both fire on mido/rtmidi's own thread, not the asyncio
+    loop - callers that touch asyncio state must hop back with
+    loop.call_soon_threadsafe."""
     global _input_port
     try:
         import mido
@@ -80,10 +46,47 @@ def open_input(on_cc: Callable[[int, int], None]) -> bool:
         def _callback(msg) -> None:
             if msg.type == "control_change":
                 on_cc(msg.control, msg.value)
+            elif msg.type == "note_on" and msg.velocity > 0 and on_note is not None:
+                on_note(msg.note, msg.velocity)
 
         _input_port = mido.open_input(INPUT_PORT_NAME, virtual=True, callback=_callback)
         logger.info("Opened virtual MIDI input port %r", INPUT_PORT_NAME)
         return True
     except Exception as exc:  # pragma: no cover - environment dependent
-        logger.warning("MIDI input unavailable (%s); knob learning will not work", exc)
+        logger.warning("MIDI input unavailable (%s); knob learning/loop recording will not work", exc)
         return False
+
+
+def open_output() -> bool:
+    """Opens the virtual MIDI output port used to trigger pads
+    programmatically (see engine/trigger.py)."""
+    global _output_port, _output_unavailable_logged
+    try:
+        import mido
+
+        _output_port = mido.open_output(OUTPUT_PORT_NAME, virtual=True)
+        logger.info("Opened virtual MIDI output port %r", OUTPUT_PORT_NAME)
+        return True
+    except Exception as exc:  # pragma: no cover - environment dependent
+        if not _output_unavailable_logged:
+            logger.warning("MIDI trigger output unavailable (%s); sequencer/looper playback will be no-ops", exc)
+            _output_unavailable_logged = True
+        return False
+
+
+def note_on(channel: int, note: int, velocity: int = 100) -> bool:
+    if _output_port is None:
+        return False
+    import mido
+
+    _output_port.send(mido.Message("note_on", channel=channel, note=note, velocity=velocity))
+    return True
+
+
+def note_off(channel: int, note: int) -> bool:
+    if _output_port is None:
+        return False
+    import mido
+
+    _output_port.send(mido.Message("note_off", channel=channel, note=note, velocity=0))
+    return True

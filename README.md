@@ -1,9 +1,15 @@
 # DiakoPad
 
-App de gerenciamento de pads para o Zynthian OS + M-Vave SMC-PAD: mostra os
-16 pads numa grade touch-friendly, permite atribuir um som a cada pad e
-subir novos sons por qualquer navegador na rede. Os sons tocam através da
-engine **Sfizz** nativa do Zynthian (mixer/efeitos preservados).
+App standalone de drum pad para Raspberry Pi + M-Vave SMC-PAD: mostra os 16
+pads numa grade touch-friendly, permite atribuir um som a cada pad e subir
+novos sons por qualquer navegador na rede. Roda sobre a imagem do Zynthian
+OS (kernel RT e jackd já calibrados), mas com **zynthian-ui e
+zynthian-webconf desabilitados** — o próprio DiakoPad orquestra o áudio
+diretamente: uma instância do **Sfizz** por pad, mais **mod-host** (o mesmo
+host de plugins LV2 que o Zynthian usa) para os efeitos configuráveis por
+pad, um step sequencer e um looper ao vivo, todos disparando os pads via um
+canal MIDI próprio. Veja `backend/engine/` e o plano de migração para os
+detalhes.
 
 
 ## Rodando localmente (sem hardware, para desenvolver a UI)
@@ -15,17 +21,20 @@ python3 -m venv .venv
 .venv/bin/uvicorn app:app --reload --port 8080
 ```
 
-Abra `http://localhost:8080/`. Sem uma porta MIDI/engine Sfizz real
-conectada, as atribuições de pad funcionam normalmente na interface (grava
-no banco SQLite e gera os `.sfz` em `backend/sfz_bank/`), só o envio do
-Program Change vira um no-op registrado no log.
+Abra `http://localhost:8080/`. Sem JACK/sfizz_jack/mod-host reais disponíveis
+(o caso normal num PC de desenvolvimento), as atribuições de pad funcionam
+normalmente na interface (grava no banco SQLite e gera os `.sfz` em
+`backend/sfz_bank/`), só a parte de motor de áudio vira no-op registrado no
+log — mesmo comportamento best-effort que o MIDI já tinha.
 
-## Deploy no Zynthian
+## Deploy num Raspberry Pi (imagem do Zynthian OS, zynthian-ui desligado)
 
 1. Copie este repositório para o Pi, ex.: `scp -r . zynthian@10.100.99.158:~/diakopad`
 2. No Pi: `bash ~/diakopad/deploy/install.sh`
-3. Siga os passos manuais impressos ao final do script (criar a chain Sfizz
-   na UI nativa, apontar o banco de presets, conectar a porta MIDI).
+3. Siga os passos manuais impressos ao final do script: confirmar que
+   jackd/a2jmidid continuam de pé antes de desligar zynthian-ui/webconf,
+   descobrir os binários/URIs LV2 reais instalados na imagem (`lv2ls`,
+   `lv2info`) e só então iniciar `diakopad.service` e o kiosk.
 
 ## Passo manual único: preparar o SMC-PAD
 
@@ -39,24 +48,60 @@ manual do fabricante não documenta uma tabela fixa). Ajuste as notas de cada
 pad no DiakoPad via `POST /api/pads/{n}/note` (ou uma futura tela de
 configuração) para bater com o que o SMC-PAD realmente envia.
 
-## Volumes, Efeitos e knobs
+## Volumes e Efeitos
 
-Abas **Volumes** (volume + pan por pad) e **Efeitos** (tom/filtro grave-agudo
-por pad, via SFZ) — cada slider aplica ~300ms depois de soltar (regrava o
-`.sfz` e troca A/B, igual à atribuição de som). Reverb/delay **não** está
-disponível: a versão do Sfizz deste Zynthian (1.2.3) não suporta o efeito
-interno (`Unsupported effect type: reverb`, testado com `sfizz_render`).
+Aba **Volumes** (volume + pan por pad): aplicam ~300ms depois de soltar o
+slider (regrava o `.sfz` do pad e reinicia sua instância sfizz).
 
-Cada slider tem um botão **atribuir knob**: clique, gire um knob físico do
-SMC-PAD, o app captura o CC automaticamente (MIDI learn) e a partir daí esse
-knob controla aquele slider (com o mesmo delay de ~300ms). Isso exige a porta
-de entrada MIDI do DiakoPad conectada aos knobs — já feito pelo
-`diakopad-midi-connect.service` (ver `deploy/`).
+Aba **Efeitos**: tom (filtro grave/agudo, nativo do sfizz) mais **3 slots de
+efeito configuráveis por pad** — em cada slot você escolhe um plugin de um
+catálogo curado (Reverb, Delay, Compressor, Overdrive, EQ 3 bandas, ver
+`backend/engine/effects_catalog.py`) e ajusta os parâmetros daquele plugin.
+Trocar o plugin de um slot recria a cadeia no mod-host (`sfizz → slot 1 →
+slot 2 → slot 3 → saída`); mudar só um parâmetro é um `param_set` barato,
+sem reiniciar nada.
+
+O Sfizz em si nunca suportou reverb/delay internos (opcode `effect1`/
+`<effect>` do SFZ v2 não implementado — testado com `sfizz_render` na versão
+1.2.3, `Unsupported effect type: reverb`); é por isso que todo efeito é
+hospedado via **mod-host** (LV2), o mesmo host de efeitos que o Zynthian usa
+nativamente, e não via SFZ.
+
+## Sequencer e Looper
+
+Aba **Sequencer**: step sequencer clássico (16 passos × 16 pads, um padrão
+compartilhado, BPM global) — liga/desliga passos na grade, dá play/stop, e
+o passo atual é destacado em tempo real via WebSocket.
+
+Aba **Looper**: um loop único e compartilhado, estilo pedal de loop. Grava o
+que você toca em qualquer pad enquanto está gravando; ao fechar a gravação,
+a duração do loop fica fixa (sem quantização por tempo) e ele passa a
+repetir sozinho. Sem overdub por enquanto.
+
+Os dois disparam os pads programaticamente pela porta MIDI virtual
+`DiakoPad-trigger-out` (`backend/engine/trigger.py`), conectada pelo
+orchestrator a cada instância sfizz — nunca à porta de entrada `DiakoPad-in`,
+para o looper não gravar os próprios disparos automáticos.
+
+## Knobs
+
+Aba central pra atribuir função a cada knob físico do SMC-PAD: clique em
+"Atribuir novo knob", escolha o alvo (um pad específico ou "Global", hoje só
+com o Tempo do sequencer), escolha o parâmetro daquele alvo (volume, pan,
+tom, ou um parâmetro de um efeito já atribuído a algum slot do pad) e gire o
+knob físico — o app captura o CC automaticamente (MIDI learn). A lista mostra
+todos os mapeamentos atuais, com opção de remover um por um ou limpar todos.
+Trocar/esvaziar um slot de efeito remove automaticamente qualquer knob que
+apontava pra um parâmetro dele.
 
 ## Estrutura
 
 ```
-backend/    App FastAPI (API + WebSocket), geração de .sfz, envio de MIDI
-frontend/   UI web estática (grade de pads + biblioteca de sons)
-deploy/     systemd units, script de instalação, daemon de alternância de tela
+backend/         App FastAPI (API + WebSocket), storage SQLite, geração de .sfz
+backend/engine/  Orquestrador do motor de áudio: sfizz por pad, mod-host,
+                 catálogo de efeitos, registro de parâmetros de knob,
+                 step sequencer, looper, grafo JACK
+frontend/        UI web estática (pads, sons, volumes, efeitos, sequencer,
+                 looper, knobs, config)
+deploy/          systemd units e script de instalação
 ```

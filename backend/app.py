@@ -1,6 +1,7 @@
 """DiakoPad web app: pad grid + sound library, served to the touchscreen and
-to any browser on the LAN. Talks to Zynthian's Sfizz engine indirectly, by
-regenerating an .sfz kit (sfz.py) and sending a Program Change (midi.py)."""
+to any browser on the LAN. Owns its own audio engine directly - one sfizz
+instance per pad, per-pad configurable mod-host effect chains, a step
+sequencer and a live looper - orchestrated by engine/orchestrator.py."""
 from __future__ import annotations
 
 import asyncio
@@ -10,14 +11,14 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import midi
-import sfz
 import storage
+from engine import effects_catalog, knob_registry, looper, orchestrator, sequencer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("diakopad")
@@ -27,8 +28,7 @@ FRONTEND_DIR = BASE_DIR.parent / "frontend"
 SAMPLES_DIR = BASE_DIR / "samples"
 SAMPLES_DIR.mkdir(exist_ok=True)
 
-ALLOWED_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".aiff", ".aif"}
-SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+SLOT_PARAM_RE = re.compile(r"^slot(\d+):(.+)$")
 
 app = FastAPI(title="DiakoPad")
 
@@ -48,13 +48,35 @@ class MixRequest(BaseModel):
 
 
 class LearnRequest(BaseModel):
-    pad_number: int
-    param: str  # "volume" | "pan" | "cutoff"
+    scope: str  # "pad" | "global"
+    pad_number: Optional[int] = None
+    param: str
 
 
 class SettingsRequest(BaseModel):
     sustain_mode: Optional[bool] = None
     velocity_sensitive: Optional[bool] = None
+
+
+class EffectSlotRequest(BaseModel):
+    plugin_id: Optional[str] = None
+
+
+class EffectParamRequest(BaseModel):
+    symbol: str
+    value: float
+
+
+class SequencerBpmRequest(BaseModel):
+    bpm: float
+
+
+class SequencerTransportRequest(BaseModel):
+    running: bool
+
+
+class SequencerStepRequest(BaseModel):
+    active: bool
 
 
 class ConnectionManager:
@@ -86,9 +108,9 @@ manager = ConnectionManager()
 # The MIDI input callback fires on mido/rtmidi's own thread; everything here
 # only ever runs on the main asyncio loop, reached via call_soon_threadsafe.
 _main_loop: Optional[asyncio.AbstractEventLoop] = None
-_pending_learn: Optional[dict] = None  # {"pad_number": int, "param": str}
-_pending_cc_values: dict[tuple[int, str], int] = {}
-_debounce_handles: dict[tuple[int, str], asyncio.TimerHandle] = {}
+_pending_learn: Optional[dict] = None  # {"scope": str, "pad_number": int|None, "param": str}
+_pending_cc_values: dict[tuple[str, Optional[int], str], int] = {}
+_debounce_handles: dict[tuple[str, Optional[int], str], asyncio.TimerHandle] = {}
 KNOB_DEBOUNCE_SECONDS = 0.3
 
 
@@ -99,16 +121,9 @@ def _frac_to_cutoff(frac: float) -> Optional[float]:
     return round(200 * (20000 / 200) ** frac)
 
 
-def _cc_to_volume_db(v: int) -> float:
-    return round(-24 + (v / 127) * 36, 1)  # -24..+12 dB
-
-
-def _cc_to_pan(v: int) -> float:
-    return round(-100 + (v / 127) * 200)  # -100..100
-
-
-def _cc_to_cutoff(v: int) -> Optional[float]:
-    return _frac_to_cutoff(v / 127)
+def _parse_slot_param(param: str) -> Optional[tuple[int, str]]:
+    m = SLOT_PARAM_RE.match(param)
+    return (int(m.group(1)), m.group(2)) if m else None
 
 
 def _on_midi_cc(control: int, value: int) -> None:
@@ -116,10 +131,28 @@ def _on_midi_cc(control: int, value: int) -> None:
         _main_loop.call_soon_threadsafe(_handle_cc, control, value)
 
 
+def _on_midi_note(note: int, velocity: int) -> None:
+    if _main_loop is not None:
+        _main_loop.call_soon_threadsafe(_handle_note, note, velocity)
+
+
+def _handle_note(note: int, velocity: int) -> None:
+    """Feeds the live looper's recorder. Only ever sees genuine hardware hits
+    - sequencer/looper-triggered notes go out DiakoPad-trigger-out straight
+    into each pad's sfizz instance, never back through this input port."""
+    if looper.get_state()["state"] != "recording":
+        return
+    pad = next((p for p in storage.list_pads() if p["midi_note"] == note), None)
+    if pad is not None:
+        looper.record_event(pad["pad_number"], velocity)
+
+
 def _handle_cc(control: int, value: int) -> None:
     global _pending_learn
     if _pending_learn is not None:
-        storage.set_knob_mapping(control, _pending_learn["pad_number"], _pending_learn["param"])
+        storage.set_knob_mapping(
+            control, _pending_learn["scope"], _pending_learn["pad_number"], _pending_learn["param"]
+        )
         _pending_learn = None
         asyncio.create_task(_broadcast_knobs())
         return
@@ -127,7 +160,7 @@ def _handle_cc(control: int, value: int) -> None:
     target = storage.get_knob_target(control)
     if target is None:
         return
-    key = (target["pad_number"], target["param"])
+    key = (target["scope"], target["pad_number"], target["param"])
     _pending_cc_values[key] = value
     old_handle = _debounce_handles.get(key)
     if old_handle is not None:
@@ -137,19 +170,38 @@ def _handle_cc(control: int, value: int) -> None:
     )
 
 
-async def _apply_knob_target(key: tuple[int, str]) -> None:
+async def _apply_knob_target(key: tuple[str, Optional[int], str]) -> None:
     _debounce_handles.pop(key, None)
-    value = _pending_cc_values.pop(key, None)
-    if value is None:
+    cc_value = _pending_cc_values.pop(key, None)
+    if cc_value is None:
         return
-    pad_number, param = key
+    scope, pad_number, param = key
+    pad_effects = storage.list_pad_effects()
+    meta = knob_registry.resolve(scope, pad_number, param, pad_effects)
+    if meta is None:
+        return  # stale mapping - e.g. the effect slot it pointed to was emptied since
+    value = knob_registry.cc_to_value(cc_value, meta)
+
+    if scope == "global" and param == "tempo":
+        sequencer.set_bpm(value)
+        await _broadcast_sequencer()
+        return
+
+    slot = _parse_slot_param(param)
+    if slot is not None:
+        slot_index, symbol = slot
+        storage.set_pad_effect_param(pad_number, slot_index, symbol, value)
+        await orchestrator.set_effect_param(pad_number, slot_index, symbol, value)
+        await _broadcast_pad_effects()
+        return
+
     if param == "volume":
-        storage.set_pad_mix(pad_number, volume_db=_cc_to_volume_db(value))
+        storage.set_pad_mix(pad_number, volume_db=value)
     elif param == "pan":
-        storage.set_pad_mix(pad_number, pan=_cc_to_pan(value))
-    elif param == "cutoff":
-        storage.set_pad_mix(pad_number, cutoff_hz=_cc_to_cutoff(value))
-    _regen_kit(storage.list_pads())
+        storage.set_pad_mix(pad_number, pan=value)
+    elif param == "tone":
+        storage.set_pad_mix(pad_number, cutoff_hz=value)
+    await orchestrator.apply_pad(pad_number, storage.list_pads(), storage.get_settings(), pad_effects)
     await _broadcast_pads()
 
 
@@ -157,12 +209,22 @@ async def _apply_knob_target(key: tuple[int, str]) -> None:
 
 
 @app.on_event("startup")
-def on_startup() -> None:
+async def on_startup() -> None:
     global _main_loop
     storage.init_db()
-    midi.ensure_open()
     _main_loop = asyncio.get_event_loop()
-    midi.open_input(_on_midi_cc)
+    midi.open_input(_on_midi_cc, _on_midi_note)
+    await orchestrator.startup()
+    await orchestrator.apply_all_pads(storage.list_pads(), storage.get_settings(), storage.list_pad_effects())
+    sequencer.load_pattern(storage.list_sequencer_steps())
+    sequencer.set_bpm(float(storage.get_settings().get("sequencer_bpm", 100)), persist=False)
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    await sequencer.stop()
+    looper.stop()
+    orchestrator.shutdown()
 
 
 def _pads_payload() -> list[dict]:
@@ -180,27 +242,48 @@ async def _broadcast_sounds() -> None:
     await manager.broadcast({"type": "sounds", "sounds": storage.list_samples()})
 
 
+def _enriched_knob_mappings() -> list[dict]:
+    pad_effects = storage.list_pad_effects()
+    enriched = []
+    for m in storage.list_knob_mappings():
+        meta = knob_registry.resolve(m["scope"], m["pad_number"], m["param"], pad_effects)
+        param_label = meta["label"] if meta else m["param"]
+        target_label = "Global" if m["scope"] == "global" else f"Pad {m['pad_number']}"
+        enriched.append({**m, "label": f"{target_label} · {param_label}"})
+    return enriched
+
+
 async def _broadcast_knobs() -> None:
     await manager.broadcast(
-        {"type": "knobs", "knobs": storage.list_knob_mappings(), "pending_learn": _pending_learn}
+        {"type": "knobs", "knobs": _enriched_knob_mappings(), "pending_learn": _pending_learn}
     )
+
+
+async def _broadcast_pad_effects() -> None:
+    await manager.broadcast({"type": "pad_effects", "pad_effects": storage.list_pad_effects()})
+
+
+async def _on_sequencer_tick(current_step: int) -> None:
+    await manager.broadcast({"type": "sequencer_tick", "current_step": current_step})
+
+
+async def _broadcast_sequencer() -> None:
+    await manager.broadcast({"type": "sequencer", **sequencer.get_state()})
+
+
+async def _broadcast_looper() -> None:
+    await manager.broadcast({"type": "looper", **looper.get_state()})
 
 
 def _settings_payload() -> dict:
     # midi_channel is read-only here (set via DIAKOPAD_MIDI_CHANNEL at
-    # deploy time, see backend/midi.py) - shown so the frontend's Sequencer
-    # reference tab doesn't need to hardcode it.
+    # deploy time, see backend/midi.py) - shown so the frontend doesn't need
+    # to hardcode it.
     return {**storage.get_settings(), "midi_channel": midi.MIDI_CHANNEL + 1}
 
 
 async def _broadcast_settings() -> None:
     await manager.broadcast({"type": "settings", "settings": _settings_payload()})
-
-
-def _regen_kit(pads: list[dict]) -> tuple[str, bool]:
-    filename, preset_index = sfz.write_next_kit(pads, storage.get_settings())
-    sent = midi.send_program_change(preset_index)
-    return filename, sent
 
 
 @app.get("/api/pads")
@@ -218,10 +301,12 @@ async def assign_pad(pad_number: int, body: AssignRequest):
             raise HTTPException(404, "sample not found")
 
     storage.assign_sample(pad_number, body.sample_id)
-    filename, sent = _regen_kit(storage.list_pads())
+    applied = await orchestrator.apply_pad(
+        pad_number, storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
+    )
 
     await _broadcast_pads()
-    return {"ok": True, "kit_file": filename, "midi_sent": sent}
+    return {"ok": True, "engine_applied": applied}
 
 
 @app.post("/api/pads/{pad_number}/note")
@@ -231,7 +316,9 @@ async def set_pad_note(pad_number: int, body: NoteRequest):
     if not 0 <= body.midi_note <= 127:
         raise HTTPException(400, "midi_note must be between 0 and 127")
     storage.set_pad_note(pad_number, body.midi_note)
-    _regen_kit(storage.list_pads())
+    await orchestrator.apply_pad(
+        pad_number, storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
+    )
     await _broadcast_pads()
     return {"ok": True}
 
@@ -247,24 +334,39 @@ async def set_pad_mix(pad_number: int, body: MixRequest):
         cutoff_hz = _frac_to_cutoff(body.tone / 100)
 
     storage.set_pad_mix(pad_number, volume_db=body.volume_db, pan=body.pan, cutoff_hz=cutoff_hz)
-    _regen_kit(storage.list_pads())
+    if body.volume_db is not None or body.pan is not None or body.tone is not None:
+        await orchestrator.apply_pad(
+            pad_number, storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
+        )
     await _broadcast_pads()
     return {"ok": True}
 
 
 @app.get("/api/knobs")
 def get_knobs():
-    return {"knobs": storage.list_knob_mappings(), "pending_learn": _pending_learn}
+    return {"knobs": _enriched_knob_mappings(), "pending_learn": _pending_learn}
+
+
+@app.get("/api/knobs/targets")
+def get_knob_targets():
+    pad_effects = storage.list_pad_effects()
+    return {
+        "global": knob_registry.GLOBAL_PARAMS,
+        "pads": {str(n): knob_registry.list_params("pad", n, pad_effects) for n in range(1, 17)},
+    }
 
 
 @app.post("/api/knobs/learn")
 async def start_knob_learn(body: LearnRequest):
     global _pending_learn
-    if not 1 <= body.pad_number <= 16:
-        raise HTTPException(400, "pad_number must be between 1 and 16")
-    if body.param not in ("volume", "pan", "cutoff"):
-        raise HTTPException(400, "param must be volume, pan or cutoff")
-    _pending_learn = {"pad_number": body.pad_number, "param": body.param}
+    if body.scope not in ("pad", "global"):
+        raise HTTPException(400, "scope must be 'pad' or 'global'")
+    if body.scope == "pad" and not (body.pad_number is not None and 1 <= body.pad_number <= 16):
+        raise HTTPException(400, "pad_number must be between 1 and 16 for scope='pad'")
+    pad_number = body.pad_number if body.scope == "pad" else None
+    if knob_registry.resolve(body.scope, pad_number, body.param, storage.list_pad_effects()) is None:
+        raise HTTPException(400, "unknown param for this target")
+    _pending_learn = {"scope": body.scope, "pad_number": pad_number, "param": body.param}
     await _broadcast_knobs()
     return {"ok": True}
 
@@ -304,7 +406,9 @@ async def update_settings(body: SettingsRequest):
         storage.set_setting("sustain_mode", "1" if body.sustain_mode else "0")
     if body.velocity_sensitive is not None:
         storage.set_setting("velocity_sensitive", "1" if body.velocity_sensitive else "0")
-    _regen_kit(storage.list_pads())
+    await orchestrator.apply_all_pads(
+        storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
+    )
     await _broadcast_settings()
     return {"ok": True}
 
@@ -314,15 +418,20 @@ def get_sounds():
     return storage.list_samples()
 
 
+@app.get("/api/sounds/browse")
+def browse_sounds(folder: str = ""):
+    return storage.browse_samples(folder)
+
+
 @app.post("/api/sounds/upload")
-async def upload_sound(file: UploadFile):
+async def upload_sound(file: UploadFile, folder: str = Form("")):
     original_name = Path(file.filename or "sample").name
     ext = Path(original_name).suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
+    if ext not in storage.ALLOWED_SAMPLE_EXTENSIONS:
         raise HTTPException(400, f"unsupported file type: {ext or '(none)'}")
 
     display_name = Path(original_name).stem
-    safe_stem = SAFE_NAME_RE.sub("_", display_name) or "sample"
+    safe_stem = storage.SAFE_NAME_RE.sub("_", display_name) or "sample"
     stored_filename = f"{safe_stem}-{uuid.uuid4().hex[:8]}{ext}"
     dest = SAMPLES_DIR / stored_filename
 
@@ -330,9 +439,9 @@ async def upload_sound(file: UploadFile):
         while chunk := await file.read(1024 * 1024):
             out.write(chunk)
 
-    sample_id = storage.add_sample(stored_filename, display_name)
+    sample_id = storage.add_sample(stored_filename, display_name, folder)
     await _broadcast_sounds()
-    return {"id": sample_id, "filename": stored_filename, "display_name": display_name}
+    return {"id": sample_id, "filename": stored_filename, "display_name": display_name, "folder": folder}
 
 
 @app.get("/api/sounds/{sample_id}/audio")
@@ -359,16 +468,135 @@ async def delete_sound(sample_id: int):
     return {"ok": True}
 
 
+@app.get("/api/effects/catalog")
+def get_effects_catalog():
+    return effects_catalog.list_catalog()
+
+
+@app.get("/api/pad-effects")
+def get_pad_effects():
+    return storage.list_pad_effects()
+
+
+@app.post("/api/pads/{pad_number}/effects/{slot_index}")
+async def set_pad_effect_slot(pad_number: int, slot_index: int, body: EffectSlotRequest):
+    if not 1 <= pad_number <= 16:
+        raise HTTPException(400, "pad_number must be between 1 and 16")
+    if not 1 <= slot_index <= storage.EFFECT_SLOTS_PER_PAD:
+        raise HTTPException(400, f"slot_index must be between 1 and {storage.EFFECT_SLOTS_PER_PAD}")
+    if body.plugin_id is not None and body.plugin_id not in effects_catalog.PLUGIN_CATALOG:
+        raise HTTPException(404, "unknown plugin_id")
+
+    storage.set_pad_effect_slot(pad_number, slot_index, body.plugin_id)
+    if body.plugin_id:
+        for symbol, value in effects_catalog.default_params(body.plugin_id).items():
+            storage.set_pad_effect_param(pad_number, slot_index, symbol, value)
+    storage.delete_knob_mappings_for_pad_param_prefix(pad_number, f"slot{slot_index}:")
+
+    await orchestrator.apply_pad_effects(pad_number, storage.list_pad_effects())
+    await _broadcast_pad_effects()
+    await _broadcast_knobs()
+    return {"ok": True}
+
+
+@app.post("/api/pads/{pad_number}/effects/{slot_index}/param")
+async def set_pad_effect_param(pad_number: int, slot_index: int, body: EffectParamRequest):
+    if not 1 <= pad_number <= 16:
+        raise HTTPException(400, "pad_number must be between 1 and 16")
+    if not 1 <= slot_index <= storage.EFFECT_SLOTS_PER_PAD:
+        raise HTTPException(400, f"slot_index must be between 1 and {storage.EFFECT_SLOTS_PER_PAD}")
+    storage.set_pad_effect_param(pad_number, slot_index, body.symbol, body.value)
+    await orchestrator.set_effect_param(pad_number, slot_index, body.symbol, body.value)
+    await _broadcast_pad_effects()
+    return {"ok": True}
+
+
+@app.get("/api/sequencer")
+def get_sequencer():
+    return sequencer.get_state()
+
+
+@app.post("/api/sequencer/transport")
+async def set_sequencer_transport(body: SequencerTransportRequest):
+    if body.running:
+        await sequencer.start(storage.list_pads(), storage.get_settings(), _on_sequencer_tick)
+    else:
+        await sequencer.stop()
+    await _broadcast_sequencer()
+    return {"ok": True}
+
+
+@app.post("/api/sequencer/bpm")
+async def set_sequencer_bpm(body: SequencerBpmRequest):
+    if not 40 <= body.bpm <= 240:
+        raise HTTPException(400, "bpm must be between 40 and 240")
+    sequencer.set_bpm(body.bpm)
+    await _broadcast_sequencer()
+    return {"ok": True}
+
+
+@app.post("/api/sequencer/steps/{pad_number}/{step_index}")
+async def toggle_sequencer_step(pad_number: int, step_index: int, body: SequencerStepRequest):
+    if not 1 <= pad_number <= 16:
+        raise HTTPException(400, "pad_number must be between 1 and 16")
+    if not 0 <= step_index < sequencer.STEP_COUNT:
+        raise HTTPException(400, f"step_index must be between 0 and {sequencer.STEP_COUNT - 1}")
+    sequencer.toggle_step(pad_number, step_index, body.active)
+    await _broadcast_sequencer()
+    return {"ok": True}
+
+
+@app.post("/api/sequencer/clear")
+async def clear_sequencer():
+    sequencer.clear()
+    await _broadcast_sequencer()
+    return {"ok": True}
+
+
+@app.get("/api/looper")
+def get_looper():
+    return looper.get_state()
+
+
+@app.post("/api/looper/record/start")
+async def looper_record_start():
+    looper.record_start()
+    await _broadcast_looper()
+    return {"ok": True}
+
+
+@app.post("/api/looper/record/stop")
+async def looper_record_stop():
+    await looper.record_stop(storage.list_pads(), storage.get_settings())
+    await _broadcast_looper()
+    return {"ok": True}
+
+
+@app.post("/api/looper/stop")
+async def looper_stop():
+    looper.stop()
+    await _broadcast_looper()
+    return {"ok": True}
+
+
+@app.post("/api/looper/clear")
+async def looper_clear():
+    looper.clear()
+    await _broadcast_looper()
+    return {"ok": True}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await manager.connect(ws)
     try:
         await ws.send_json({"type": "pads", "pads": _pads_payload()})
         await ws.send_json({"type": "sounds", "sounds": storage.list_samples()})
-        await ws.send_json(
-            {"type": "knobs", "knobs": storage.list_knob_mappings(), "pending_learn": _pending_learn}
-        )
+        await ws.send_json({"type": "knobs", "knobs": _enriched_knob_mappings(), "pending_learn": _pending_learn})
         await ws.send_json({"type": "settings", "settings": _settings_payload()})
+        await ws.send_json({"type": "pad_effects", "pad_effects": storage.list_pad_effects()})
+        await ws.send_json({"type": "sequencer", **sequencer.get_state()})
+        await ws.send_json({"type": "looper", **looper.get_state()})
         while True:
             await ws.receive_text()  # client doesn't send anything meaningful; just keep alive
     except WebSocketDisconnect:

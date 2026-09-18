@@ -1,27 +1,16 @@
 [Unit]
-Description=DiakoPad Chromium kiosk (separate VT, alongside zynthian-ui)
+Description=DiakoPad Chromium kiosk
 After=diakopad.service
 Requires=diakopad.service
 
 [Service]
 Type=simple
-# Runs as root, matching how zynthian-ui's own Xorg process runs on this
-# device (confirmed via `ps aux`) — the zynthian user lacks permission to
-# open a virtual console directly ("Cannot open virtual console 3
-# (Permission denied)" when tried as User=zynthian), since there's no
+# Runs as root: opening a virtual console directly failed with "Cannot open
+# virtual console 1 (Permission denied)" as User=zynthian, since there's no
 # systemd-logind graphical session granting it VT ownership here.
-# On this Zynthian install, zynthian-ui's Xorg session owns VT2 (confirmed
-# via `cat /sys/class/tty/tty0/active`), not VT1 (that's just a text getty).
-# So the kiosk gets its own X server on VT3 instead. VT3 stays inactive (and
-# Chromium idle) until vt-toggle switches to it with `chvt 3`.
-ExecStart=/usr/bin/xinit /home/zynthian/diakopad/deploy/kiosk-xinitrc -- :1 vt3 -nocursor
-# Starting an X server on a VT makes the kernel switch to (activate) that VT
-# immediately as part of the server claiming it — this is normal Xorg
-# behaviour, not something suppressible via flags, and it briefly stole the
-# screen away from zynthian-ui (VT2) during setup. So we switch back to VT2
-# right after, while Chromium keeps initializing on VT3 in the background;
-# only the vt-toggle daemon's deliberate `chvt 3` should make VT3 visible.
-ExecStartPost=/bin/sh -c 'sleep 2; chvt 2'
+# With zynthian-ui disabled there's no other Xorg session to coexist with,
+# so the kiosk just takes over VT1 directly - no VT-switching daemon needed.
+ExecStart=/usr/bin/xinit /home/zynthian/diakopad/deploy/kiosk-xinitrc -- :1 vt1 -nocursor
 Restart=on-failure
 RestartSec=3
 

@@ -92,6 +92,11 @@ class MetronomeBeatsPerBarRequest(BaseModel):
     beats_per_bar: int
 
 
+class MasterRequest(BaseModel):
+    volume: Optional[float] = None
+    muted: Optional[bool] = None
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self.active: list[WebSocket] = []
@@ -121,6 +126,7 @@ _pending_sequencer_step: Optional[int] = None
 _metronome_tick_task: Optional[asyncio.Task] = None
 _pending_metronome_beat: Optional[int] = None
 _metronome_style_lock = asyncio.Lock()
+_engine_status_task: Optional[asyncio.Task] = None
 
 # --- Knob MIDI-learn state -------------------------------------------------
 # The MIDI input callback fires on mido/rtmidi's own thread; everything here
@@ -233,11 +239,15 @@ async def on_startup() -> None:
     _main_loop = asyncio.get_event_loop()
     midi.open_input(_on_midi_cc, _on_midi_note)
     await orchestrator.startup()
-    await orchestrator.apply_all_pads(storage.list_pads(), storage.get_settings(), storage.list_pad_effects())
+    settings = storage.get_settings()
+    await orchestrator.apply_master(float(settings.get("master_volume", 100)), settings.get("master_muted") == "1")
+    await orchestrator.apply_all_pads(storage.list_pads(), settings, storage.list_pad_effects())
     sequencer.load_pattern(storage.list_sequencer_steps())
     tempo.load()
-    metronome.set_beats_per_bar(int(storage.get_settings().get("metronome_beats_per_bar", 4)))
-    await orchestrator.apply_metronome_style(storage.get_settings().get("metronome_style", metronome_sounds.DEFAULT_STYLE))
+    metronome.set_beats_per_bar(int(settings.get("metronome_beats_per_bar", 4)))
+    await orchestrator.apply_metronome_style(settings.get("metronome_style", metronome_sounds.DEFAULT_STYLE))
+    global _engine_status_task
+    _engine_status_task = asyncio.create_task(_broadcast_engine_status_loop())
 
 
 @app.on_event("shutdown")
@@ -245,7 +255,11 @@ async def on_shutdown() -> None:
     await sequencer.stop()
     await metronome.stop()
     looper.stop()
-    orchestrator.shutdown()
+    global _engine_status_task
+    if _engine_status_task is not None:
+        _engine_status_task.cancel()
+        _engine_status_task = None
+    await orchestrator.shutdown()
 
 
 def _pads_payload() -> list[dict]:
@@ -334,6 +348,21 @@ async def _broadcast_metronome() -> None:
             "style": storage.get_settings().get("metronome_style", metronome_sounds.DEFAULT_STYLE),
         }
     )
+
+
+async def _broadcast_master() -> None:
+    await manager.broadcast({"type": "master", **orchestrator.master_state()})
+
+
+async def _broadcast_engine_status() -> None:
+    status = await asyncio.to_thread(orchestrator.engine_status)
+    await manager.broadcast({"type": "engine_status", **status})
+
+
+async def _broadcast_engine_status_loop() -> None:
+    while True:
+        await _broadcast_engine_status()
+        await asyncio.sleep(3)
 
 
 def _settings_payload() -> dict:
@@ -472,6 +501,53 @@ async def update_settings(body: SettingsRequest):
     )
     await _broadcast_settings()
     return {"ok": True}
+
+
+@app.get("/api/master")
+def get_master():
+    return orchestrator.master_state()
+
+
+@app.post("/api/master")
+async def set_master(body: MasterRequest):
+    settings = storage.get_settings()
+    volume = float(settings.get("master_volume", 100)) if body.volume is None else body.volume
+    muted = settings.get("master_muted") == "1" if body.muted is None else body.muted
+    if not 0 <= volume <= 100:
+        raise HTTPException(400, "volume must be between 0 and 100")
+    storage.set_setting("master_volume", str(volume))
+    storage.set_setting("master_muted", "1" if muted else "0")
+    engine_applied = await orchestrator.apply_master(volume, muted)
+    await _broadcast_master()
+    await _broadcast_engine_status()
+    return {"ok": True, "engine_applied": engine_applied}
+
+
+@app.post("/api/panic")
+async def panic():
+    storage.set_setting("master_muted", "1")
+    engine_applied = await orchestrator.panic(storage.list_pads())
+    await _broadcast_master()
+    await _broadcast_sequencer()
+    await _broadcast_metronome()
+    await _broadcast_looper()
+    await _broadcast_engine_status()
+    return {"ok": True, "engine_applied": engine_applied}
+
+
+@app.get("/api/engine/status")
+async def get_engine_status():
+    return await asyncio.to_thread(orchestrator.engine_status)
+
+
+@app.post("/api/engine/restart")
+async def restart_engine():
+    status = await orchestrator.restart_engine(
+        storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
+    )
+    await _broadcast_master()
+    await _broadcast_engine_status()
+    return {"ok": True, "status": status}
 
 
 @app.get("/api/sounds")
@@ -708,6 +784,8 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.send_json({"type": "sequencer", **sequencer.get_state()})
         await ws.send_json({"type": "looper", **looper.get_state()})
         await ws.send_json({"type": "tempo", "bpm": tempo.get()})
+        await ws.send_json({"type": "master", **orchestrator.master_state()})
+        await ws.send_json({"type": "engine_status", **(await asyncio.to_thread(orchestrator.engine_status))})
         await ws.send_json(
             {
                 "type": "metronome",

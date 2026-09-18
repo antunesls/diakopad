@@ -31,6 +31,24 @@ def _entry(env_prefix: str, label: str, params: list[dict]) -> dict:
     }
 
 
+def master_gain_config() -> dict:
+    """Runtime configuration for the single master-gain LV2 instance.
+
+    The URI and control symbol vary across Zynthian images, so they are
+    deployment settings rather than hard-coded assumptions. A missing URI is
+    a supported degraded mode: pad chains stay connected directly to JACK.
+    """
+    in_ports, out_ports = _ports("DIAKOPAD_FX_MASTER_GAIN", "in_l,in_r", "out_l,out_r")
+    return {
+        "lv2_uri": os.environ.get("DIAKOPAD_FX_MASTER_GAIN_LV2_URI"),
+        "in_ports": in_ports,
+        "out_ports": out_ports,
+        "symbol": os.environ.get("DIAKOPAD_FX_MASTER_GAIN_SYMBOL", "gain"),
+        "min": float(os.environ.get("DIAKOPAD_FX_MASTER_GAIN_MIN", "-60")),
+        "max": float(os.environ.get("DIAKOPAD_FX_MASTER_GAIN_MAX", "0")),
+    }
+
+
 PLUGIN_CATALOG: dict[str, dict] = {
     "reverb": _entry(
         "DIAKOPAD_FX_REVERB",

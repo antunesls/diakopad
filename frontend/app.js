@@ -18,11 +18,14 @@
     tempo: { bpm: 100 },
     metronome: { running: false, beat_in_bar: 0, beats_per_bar: 4, style: "digital" },
     metronomeStyles: [],
+    master: { available: false, volume: 100, muted: false },
+    engineStatus: { jack: false, modhost: false, pads: {}, metronome: false, last_error: null },
   };
 
   const knobPicker = { step: null, scope: null, padNumber: null };
   let looperTimer = null;
   let tapTimestamps = [];
+  let panicTimer = null;
 
   const el = {
     padGrid: document.getElementById("pad-grid"),
@@ -39,6 +42,13 @@
     modalClear: document.getElementById("modal-clear"),
     modalSoundList: document.getElementById("modal-sound-list"),
     connStatus: document.getElementById("conn-status"),
+    masterVolume: document.getElementById("master-volume"),
+    masterMuteBtn: document.getElementById("master-mute-btn"),
+    engineStatus: document.getElementById("engine-status"),
+    engineStatusDetail: document.getElementById("engine-status-detail"),
+    engineStatusText: document.getElementById("engine-status-text"),
+    engineRestartBtn: document.getElementById("engine-restart-btn"),
+    panicBtn: document.getElementById("panic-btn"),
     previewAudio: document.getElementById("preview-audio"),
     settingSustain: document.getElementById("setting-sustain"),
     settingVelocity: document.getElementById("setting-velocity"),
@@ -79,6 +89,86 @@
       document.getElementById(`view-${name}`).classList.toggle("hidden", name !== view);
     }
   }
+
+  // --- Controles de palco ---------------------------------------------
+
+  function renderMaster() {
+    el.masterVolume.value = Math.round(state.master.volume);
+    el.masterMuteBtn.textContent = state.master.muted ? "Ativar" : "Mute";
+    el.masterMuteBtn.classList.toggle("active", state.master.muted);
+    el.masterVolume.disabled = !state.master.available;
+    el.masterMuteBtn.disabled = !state.master.available;
+  }
+
+  function renderEngineStatus() {
+    const assignedPads = state.pads.filter((pad) => pad.has_sample);
+    const stoppedPads = assignedPads.filter((pad) => !state.engineStatus.pads[String(pad.pad_number)]);
+    const problems = [];
+    if (!state.engineStatus.jack) problems.push("JACK indisponível");
+    if (!state.engineStatus.modhost) problems.push("mod-host indisponível");
+    if (!state.master.available) problems.push("master sem plugin");
+    if (stoppedPads.length) problems.push(`${stoppedPads.length} pad(s) sem player`);
+    if (state.engineStatus.last_error) problems.push(state.engineStatus.last_error);
+    const level = problems.length === 0 ? "ok" : state.engineStatus.jack ? "warning" : "error";
+
+    el.engineStatus.className = `engine-status ${level}`;
+    el.engineStatus.textContent = level === "ok" ? "Motor OK" : "Motor";
+    el.engineStatus.title = problems.length ? problems.join(" · ") : "Motor de áudio pronto";
+    el.engineStatusText.textContent = problems.length ? problems.join(". ") : "JACK, sfizz e mod-host estão prontos.";
+  }
+
+  async function setMaster(body) {
+    const response = await fetch("/api/master", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) return;
+    state.master = { ...state.master, ...body };
+    renderMaster();
+    if (result.engine_applied === false) {
+      el.engineStatusDetail.classList.remove("hidden");
+      el.engineStatusText.textContent = "Configuração salva, mas o plugin de master não está disponível.";
+    }
+  }
+
+  function cancelPanic() {
+    if (panicTimer !== null) clearTimeout(panicTimer);
+    panicTimer = null;
+    el.panicBtn.classList.remove("arming");
+  }
+
+  function armPanic(event) {
+    event.preventDefault();
+    if (panicTimer !== null) return;
+    el.panicBtn.classList.add("arming");
+    panicTimer = setTimeout(async () => {
+      panicTimer = null;
+      el.panicBtn.classList.remove("arming");
+      const response = await fetch("/api/panic", { method: "POST" });
+      if (response.ok) {
+        el.panicBtn.classList.add("triggered");
+        setTimeout(() => el.panicBtn.classList.remove("triggered"), 1200);
+      }
+    }, 650);
+  }
+
+  el.masterVolume.addEventListener("change", () => setMaster({ volume: Number(el.masterVolume.value) }));
+  el.masterMuteBtn.addEventListener("click", () => setMaster({ muted: !state.master.muted }));
+  el.engineStatus.addEventListener("click", () => {
+    const hidden = el.engineStatusDetail.classList.toggle("hidden");
+    el.engineStatus.setAttribute("aria-expanded", String(!hidden));
+  });
+  el.engineRestartBtn.addEventListener("click", () => fetch("/api/engine/restart", { method: "POST" }));
+  el.panicBtn.addEventListener("pointerdown", armPanic);
+  ["pointerup", "pointerleave", "pointercancel"].forEach((eventName) => {
+    el.panicBtn.addEventListener(eventName, cancelPanic);
+  });
+  el.panicBtn.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") armPanic(event);
+  });
+  el.panicBtn.addEventListener("keyup", cancelPanic);
 
   // The physical SMC-PAD numbers pads bottom-left (1) to top-right (16), in
   // rows of 4 from the bottom: [1-4] bottom, [5-8], [9-12], [13-16] top. The
@@ -841,6 +931,14 @@
       } else if (msg.type === "tempo") {
         state.tempo.bpm = msg.bpm;
         renderTempo();
+      } else if (msg.type === "master") {
+        state.master = { available: msg.available, volume: msg.volume, muted: msg.muted };
+        renderMaster();
+      } else if (msg.type === "engine_status") {
+        state.engineStatus = msg;
+        if (msg.master) state.master = msg.master;
+        renderMaster();
+        renderEngineStatus();
       } else if (msg.type === "metronome") {
         state.metronome = {
           running: msg.running,
@@ -860,7 +958,7 @@
   }
 
   async function init() {
-    const [padsRes, soundsRes, knobsRes, settingsRes, padEffectsRes, catalogRes, knobTargetsRes, sequencerRes, looperRes, tempoRes, metronomeRes, metronomeStylesRes] =
+    const [padsRes, soundsRes, knobsRes, settingsRes, padEffectsRes, catalogRes, knobTargetsRes, sequencerRes, looperRes, tempoRes, metronomeRes, metronomeStylesRes, masterRes, engineStatusRes] =
       await Promise.all([
         fetch("/api/pads"),
         fetch("/api/sounds"),
@@ -874,6 +972,8 @@
         fetch("/api/tempo"),
         fetch("/api/metronome"),
         fetch("/api/metronome/styles"),
+        fetch("/api/master"),
+        fetch("/api/engine/status"),
       ]);
     state.pads = await padsRes.json();
     state.sounds = await soundsRes.json();
@@ -890,6 +990,8 @@
     state.tempo = await tempoRes.json();
     state.metronome = await metronomeRes.json();
     state.metronomeStyles = await metronomeStylesRes.json();
+    state.master = await masterRes.json();
+    state.engineStatus = await engineStatusRes.json();
 
     renderPads();
     await loadSoundBrowser();
@@ -901,6 +1003,8 @@
     renderTempo();
     renderMetronomeStyles();
     renderMetronome();
+    renderMaster();
+    renderEngineStatus();
     renderLooper();
     renderKnobs();
     connectWebSocket();

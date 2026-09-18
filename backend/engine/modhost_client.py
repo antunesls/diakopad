@@ -5,9 +5,8 @@ answered with a line `resp <status> [value]`, status >= 0 meaning success).
 
 This is the same LV2 plugin host Zynthian itself uses for effect chains
 (reverb, delay, ...); DiakoPad drives it directly instead of going through
-zyngine/MOD-UI, hosting the shared reverb/delay buses and the per-pad
-send-gain instances that make independent per-pad effect amounts possible
-despite sfizz's own JACK client only exposing one mixed stereo output.
+zyngine/MOD-UI, hosting the per-pad serial effect chains and the optional
+master-gain instance that mutes every route during PANIC.
 
 Best-effort like the rest of backend/engine: if the `mod-host` binary or its
 control socket isn't reachable (e.g. local dev), calls are logged once and
@@ -66,6 +65,19 @@ def start() -> bool:
         return False
     logger.info("spawned mod-host (pid %d, control port %d)", _proc.pid, CONTROL_PORT)
     return True
+
+
+def is_configured() -> bool:
+    return shutil.which(MODHOST_BIN) is not None
+
+
+def is_alive() -> bool:
+    return _proc is not None and _proc.poll() is None
+
+
+def restart() -> bool:
+    stop()
+    return start()
 
 
 def _connect_socket(timeout: float = CONNECT_TIMEOUT_SECONDS) -> Optional[socket.socket]:

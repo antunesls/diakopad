@@ -51,10 +51,11 @@ cat <<'EOF'
 
   2. Find the real sfizz_jack and mod-host binaries and LV2 plugin URIs
      installed on this image, then set them in
-     /etc/systemd/system/diakopad.service (edit the file, then
-     `sudo systemctl daemon-reload`) - one DIAKOPAD_FX_<NAME>_LV2_URI per
-     entry in backend/engine/effects_catalog.py's PLUGIN_CATALOG (reverb,
-     delay, compressor, drive, eq3):
+      /etc/systemd/system/diakopad.service (edit the file, then
+      `sudo systemctl daemon-reload`) - one DIAKOPAD_FX_<NAME>_LV2_URI per
+      entry in backend/engine/effects_catalog.py's PLUGIN_CATALOG (reverb,
+      delay, compressor, drive, eq3), plus DIAKOPAD_FX_MASTER_GAIN_LV2_URI
+      for the master volume/mute/PANIC control:
          which sfizz_jack mod-host
          lv2ls | grep -i reverb
          lv2ls | grep -i delay

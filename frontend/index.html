@@ -20,7 +20,20 @@
       <button id="tab-knobs" class="tab" type="button">Knobs</button>
       <button id="tab-config" class="tab" type="button">Config</button>
     </nav>
-    <span id="conn-status" class="conn-status" title="Conexão">●</span>
+    <div class="live-controls">
+      <label class="master-control" title="Volume master">
+        <span>Master</span>
+        <input id="master-volume" type="range" min="0" max="100" step="1" value="100" aria-label="Volume master">
+      </label>
+      <button id="master-mute-btn" class="master-mute-btn" type="button">Mute</button>
+      <button id="engine-status" class="engine-status" type="button" aria-expanded="false">Motor</button>
+      <button id="panic-btn" class="panic-btn" type="button" aria-label="Segure para acionar o panic">Segure PANIC</button>
+      <span id="conn-status" class="conn-status" title="Conexão">●</span>
+    </div>
+    <section id="engine-status-detail" class="engine-status-detail hidden" aria-live="polite">
+      <p id="engine-status-text"></p>
+      <button id="engine-restart-btn" class="secondary-btn" type="button">Reiniciar motor</button>
+    </section>
   </header>
 
   <main id="view-pads" class="view">

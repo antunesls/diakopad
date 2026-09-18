@@ -107,3 +107,15 @@ def metronome_note_on(channel: int, note: int, velocity: int = 100) -> bool:
 
     _metronome_output_port.send(mido.Message("note_on", channel=channel, note=note, velocity=velocity))
     return True
+
+
+def all_notes_off(channel: int) -> bool:
+    """Sends the MIDI all-notes-off controller to both engine outputs."""
+    ports = [port for port in (_output_port, _metronome_output_port) if port is not None]
+    if not ports:
+        return False
+    import mido
+
+    for port in ports:
+        port.send(mido.Message("control_change", channel=channel, control=123, value=0))
+    return True

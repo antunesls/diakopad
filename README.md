@@ -61,6 +61,19 @@ Trocar o plugin de um slot recria a cadeia no mod-host (`sfizz → slot 1 →
 slot 2 → slot 3 → saída`); mudar só um parâmetro é um `param_set` barato,
 sem reiniciar nada.
 
+### Master e Segurança De Palco
+
+O topbar oferece volume **Master**, mute, status do motor e **PANIC** (segure
+o botão por cerca de 0,65 s). PANIC para sequencer, metrônomo e looper, envia
+all-notes-off e muta a saída master. Para cortar imediatamente samples
+one-shot, configure um plugin LV2 de ganho estéreo em
+`DIAKOPAD_FX_MASTER_GAIN_LV2_URI`, junto com seus símbolos/limites em dB
+(`DIAKOPAD_FX_MASTER_GAIN_SYMBOL`, `_MIN`, `_MAX`) no serviço systemd.
+
+Sem esse plugin, o app mantém o roteamento direto para a saída JACK e exibe o
+motor como degradado. Nesse modo, PANIC encerra os players sfizz como fallback
+para cortar one-shots e o watchdog os reconstrói em seguida.
+
 O Sfizz em si nunca suportou reverb/delay internos (opcode `effect1`/
 `<effect>` do SFZ v2 não implementado — testado com `sfizz_render` na versão
 1.2.3, `Unsupported effect type: reverb`); é por isso que todo efeito é

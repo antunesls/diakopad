@@ -10,6 +10,7 @@ midi.py's virtual MIDI ports.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Optional
@@ -20,14 +21,22 @@ _client = None
 _unavailable_logged = False
 
 
+def _on_shutdown(*_args) -> None:
+    global _client
+    logger.warning("JACK shut down; the graph will be recreated when it returns")
+    _client = None
+
+
 def _get_client():
     global _client, _unavailable_logged
-    if _client is not None:
+    if _client:
         return _client
+    _client = None
     try:
         import jack
 
         _client = jack.Client("DiakoPad-orchestrator", no_start_server=True)
+        _client.set_shutdown_callback(_on_shutdown)
     except Exception as exc:  # pragma: no cover - environment dependent
         if not _unavailable_logged:
             logger.warning("JACK unavailable (%s); audio graph wiring will be no-ops", exc)
@@ -40,6 +49,17 @@ def available() -> bool:
     return bool(_get_client())
 
 
+def has_port(name_pattern: str) -> bool:
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        return bool(client.get_ports(name_pattern))
+    except Exception as exc:
+        _on_shutdown(exc)
+        return False
+
+
 def wait_for_port(name_pattern: str, timeout: float = 5.0) -> bool:
     """Polls the JACK port list until a port matching name_pattern (passed
     straight to jack.Client.get_ports, which takes a regex) shows up, or the
@@ -50,9 +70,34 @@ def wait_for_port(name_pattern: str, timeout: float = 5.0) -> bool:
         return False
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if client.get_ports(name_pattern):
-            return True
+        try:
+            if client.get_ports(name_pattern):
+                return True
+        except Exception as exc:
+            _on_shutdown(exc)
+            return False
         time.sleep(0.1)
+    return False
+
+
+async def wait_for_port_async(name_pattern: str, timeout: float = 5.0) -> bool:
+    """Async equivalent of wait_for_port for request handlers and clocks.
+
+    The JACK client call itself is quick; yielding between polls keeps the
+    FastAPI event loop responsive while sfizz finishes registering its ports.
+    """
+    client = _get_client()
+    if not client:
+        return False
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if client.get_ports(name_pattern):
+                return True
+        except Exception as exc:
+            _on_shutdown(exc)
+            return False
+        await asyncio.sleep(0.1)
     return False
 
 
@@ -96,6 +141,7 @@ def connect_pattern_to_all(src_pattern: str, dst_pattern: str) -> bool:
         dsts = client.get_ports(dst_pattern, is_input=True)
     except Exception as exc:
         logger.debug("jack get_ports(%s)/(%s): %s", src_pattern, dst_pattern, exc)
+        _on_shutdown(exc)
         return False
     connected = False
     for src in srcs:
@@ -117,3 +163,4 @@ def disconnect_all(port_name_pattern: str) -> None:
                 client.disconnect(port, other)
     except Exception as exc:
         logger.debug("jack disconnect_all(%s): %s", port_name_pattern, exc)
+        _on_shutdown(exc)

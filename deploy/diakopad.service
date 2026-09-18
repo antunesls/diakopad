@@ -21,6 +21,12 @@ Environment=DIAKOPAD_MODHOST_PORT=5555
 #Environment=DIAKOPAD_FX_COMPRESSOR_LV2_URI=
 #Environment=DIAKOPAD_FX_DRIVE_LV2_URI=
 #Environment=DIAKOPAD_FX_EQ3_LV2_URI=
+# Master gain is optional but required for master mute/PANIC to cut one-shot
+# samples immediately. Confirm its control symbol and range with lv2info.
+#Environment=DIAKOPAD_FX_MASTER_GAIN_LV2_URI=
+#Environment=DIAKOPAD_FX_MASTER_GAIN_SYMBOL=gain
+#Environment=DIAKOPAD_FX_MASTER_GAIN_MIN=-60
+#Environment=DIAKOPAD_FX_MASTER_GAIN_MAX=0
 ExecStart=/home/zynthian/diakopad/backend/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8080
 Restart=on-failure
 RestartSec=2

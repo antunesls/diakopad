@@ -97,6 +97,8 @@ DEFAULT_SETTINGS = {
     "sequencer_bpm": "100",
     "metronome_style": "digital",
     "metronome_beats_per_bar": "4",
+    "master_volume": "100",
+    "master_muted": "0",
 }
 
 # Default note layout: sequential from 36 (C1), matches a typical MPC-style

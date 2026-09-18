@@ -699,7 +699,21 @@ html, body {
 
 .modal-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.modal-note-label {
+  margin-right: auto;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.secondary-btn.waiting {
+  color: var(--accent);
+  animation: pulse 1s infinite ease-in-out;
 }
 
 /* Shared accent button (Sequencer play, Looper record, Knobs add...) */

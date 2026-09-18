@@ -9,6 +9,7 @@
     knobs: [],
     knobTargets: { global: [], pads: {} },
     pendingLearn: null,
+    pendingNoteLearn: null,
     selectedPad: null,
     settings: { sustain_mode: "1", velocity_sensitive: "0" },
     padEffects: [],
@@ -50,6 +51,8 @@
     modalSearch: document.getElementById("modal-search"),
     modalClear: document.getElementById("modal-clear"),
     modalSoundList: document.getElementById("modal-sound-list"),
+    modalNoteValue: document.getElementById("modal-note-value"),
+    modalLearnNoteBtn: document.getElementById("modal-learn-note-btn"),
     connStatus: document.getElementById("conn-status"),
     globalTapBtn: document.getElementById("global-tap-btn"),
     globalBpm: document.getElementById("global-bpm"),
@@ -927,17 +930,36 @@
     el.modalSearch.value = "";
     el.modalClear.disabled = !pad || !pad.sample_id;
     renderModalSoundList("");
+    renderNoteLearnButton();
     el.modal.classList.remove("hidden");
     el.modalSearch.focus();
   }
 
   function closeModal() {
+    if (state.selectedPad !== null && state.pendingNoteLearn === state.selectedPad) {
+      fetch(`/api/pads/${state.selectedPad}/note/learn/cancel`, { method: "POST" });
+    }
     el.modal.classList.add("hidden");
     state.selectedPad = null;
   }
   el.modalClose.addEventListener("click", closeModal);
   el.modal.addEventListener("click", (e) => {
     if (e.target === el.modal) closeModal();
+  });
+
+  function renderNoteLearnButton() {
+    const pad = state.pads.find((p) => p.pad_number === state.selectedPad);
+    el.modalNoteValue.textContent = pad ? pad.midi_note : "--";
+    const waiting = state.selectedPad !== null && state.pendingNoteLearn === state.selectedPad;
+    el.modalLearnNoteBtn.textContent = waiting ? "Bata o pad..." : "Aprender nota";
+    el.modalLearnNoteBtn.classList.toggle("waiting", waiting);
+  }
+
+  el.modalLearnNoteBtn.addEventListener("click", async () => {
+    if (state.selectedPad === null) return;
+    const waiting = state.pendingNoteLearn === state.selectedPad;
+    const endpoint = waiting ? "learn/cancel" : "learn";
+    await fetch(`/api/pads/${state.selectedPad}/note/${endpoint}`, { method: "POST" });
   });
 
   function renderModalSoundList(filterText) {
@@ -1053,6 +1075,10 @@
         renderSoundList();
         renderVolumes();
         renderEffects();
+        if (!el.modal.classList.contains("hidden")) renderNoteLearnButton();
+      } else if (msg.type === "note_learn") {
+        state.pendingNoteLearn = msg.pending_pad;
+        if (!el.modal.classList.contains("hidden")) renderNoteLearnButton();
       } else if (msg.type === "pad_hit") {
         flashPadHit(msg.pad_number);
       } else if (msg.type === "sounds") {

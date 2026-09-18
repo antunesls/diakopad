@@ -134,6 +134,7 @@ _engine_status_task: Optional[asyncio.Task] = None
 _pad_notes: dict[int, list[int]] = {}
 _pending_pad_hits: dict[int, int] = {}
 _pad_hit_task: Optional[asyncio.Task] = None
+_pending_note_learn: Optional[int] = None  # pad_number waiting for a physical hit, or None
 
 # --- Knob MIDI-learn state -------------------------------------------------
 # The MIDI input callback fires on mido/rtmidi's own thread; everything here
@@ -168,9 +169,17 @@ def _on_midi_note(note: int, velocity: int) -> None:
 
 
 def _handle_note(note: int, velocity: int) -> None:
-    """Feeds the live looper's recorder. Only ever sees genuine hardware hits
-    - sequencer/looper-triggered notes go out DiakoPad-trigger-out straight
-    into each pad's sfizz instance, never back through this input port."""
+    """Feeds the live looper's recorder and per-pad MIDI-note learn. Only
+    ever sees genuine hardware hits - sequencer/looper-triggered notes go
+    out DiakoPad-trigger-out straight into each pad's sfizz instance, never
+    back through this input port."""
+    global _pending_note_learn
+    if _pending_note_learn is not None:
+        pad_number = _pending_note_learn
+        _pending_note_learn = None
+        asyncio.create_task(_apply_note_learn(pad_number, note))
+        return
+
     pad_numbers = _pad_notes.get(note, [])
     if not pad_numbers:
         return
@@ -178,6 +187,21 @@ def _handle_note(note: int, velocity: int) -> None:
         _queue_pad_hit(pad_number, velocity)
         if looper.get_state()["state"] == "recording":
             looper.record_event(pad_number, velocity)
+
+
+async def _apply_note_learn(pad_number: int, note: int) -> None:
+    global _pad_notes
+    storage.set_pad_note(pad_number, note)
+    _pad_notes = _build_pad_note_map(storage.list_pads())
+    await orchestrator.apply_pad(
+        pad_number, storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
+    )
+    await _broadcast_pads()
+    await _broadcast_note_learn()
+
+
+async def _broadcast_note_learn() -> None:
+    await manager.broadcast({"type": "note_learn", "pending_pad": _pending_note_learn})
 
 
 def _handle_cc(control: int, value: int) -> None:
@@ -448,6 +472,25 @@ async def set_pad_note(pad_number: int, body: NoteRequest):
         pad_number, storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
     )
     await _broadcast_pads()
+    return {"ok": True}
+
+
+@app.post("/api/pads/{pad_number}/note/learn")
+async def start_note_learn(pad_number: int):
+    global _pending_note_learn
+    if not 1 <= pad_number <= 16:
+        raise HTTPException(400, "pad_number must be between 1 and 16")
+    _pending_note_learn = pad_number
+    await _broadcast_note_learn()
+    return {"ok": True}
+
+
+@app.post("/api/pads/{pad_number}/note/learn/cancel")
+async def cancel_note_learn(pad_number: int):
+    global _pending_note_learn
+    if _pending_note_learn == pad_number:
+        _pending_note_learn = None
+        await _broadcast_note_learn()
     return {"ok": True}
 
 
@@ -877,6 +920,8 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.send_json({"type": "tempo", "bpm": tempo.get()})
         await ws.send_json({"type": "master", **orchestrator.master_state()})
         await ws.send_json({"type": "engine_status", **(await asyncio.to_thread(orchestrator.engine_status))})
+        await ws.send_json({"type": "kits", "kits": storage.list_kits()})
+        await ws.send_json({"type": "note_learn", "pending_pad": _pending_note_learn})
         await ws.send_json(
             {
                 "type": "metronome",

@@ -112,6 +112,50 @@ class PadHitFeedbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record_event.call_count, 2)
 
 
+class PadNoteLearnTests(unittest.IsolatedAsyncioTestCase):
+    async def test_apply_note_learn_sets_the_pad_note_and_rebuilds_the_note_map(self):
+        # _pending_note_learn is cleared by _handle_note before scheduling
+        # this coroutine (see the other test below) - not this function's job.
+        original_notes = diakopad_app._pad_notes
+        try:
+            with (
+                patch("app.storage.set_pad_note") as set_pad_note,
+                patch(
+                    "app.storage.list_pads",
+                    return_value=[{"pad_number": 3, "midi_note": 40, "sample_id": None}],
+                ),
+                patch("app.storage.list_pad_effects", return_value=[]),
+                patch("app.storage.get_settings", return_value={}),
+                patch("app.orchestrator.apply_pad", new=AsyncMock()) as apply_pad,
+                patch("app.manager.broadcast", new=AsyncMock()) as broadcast,
+            ):
+                await diakopad_app._apply_note_learn(3, 40)
+
+            set_pad_note.assert_called_once_with(3, 40)
+            apply_pad.assert_awaited_once()
+            self.assertEqual(diakopad_app._pad_notes, {40: [3]})
+            broadcast.assert_any_await({"type": "note_learn", "pending_pad": None})
+        finally:
+            diakopad_app._pad_notes = original_notes
+            diakopad_app._pending_note_learn = None
+
+    async def test_hit_during_learn_is_captured_instead_of_treated_as_a_live_hit(self):
+        diakopad_app._pending_note_learn = 5
+        try:
+            with (
+                patch("app.asyncio.create_task") as create_task,
+                patch("app._queue_pad_hit") as queue_hit,
+            ):
+                diakopad_app._handle_note(40, 90)
+
+            create_task.assert_called_once()
+            create_task.call_args[0][0].close()  # scheduling was mocked out; avoid an "never awaited" warning
+            queue_hit.assert_not_called()
+            self.assertIsNone(diakopad_app._pending_note_learn)
+        finally:
+            diakopad_app._pending_note_learn = None
+
+
 class EngineStatusTests(unittest.TestCase):
     def test_engine_status_reports_jack_modhost_and_pad_health(self):
         with (

@@ -4,6 +4,8 @@
   const state = {
     pads: [],
     sounds: [],
+    soundBrowserPath: [],
+    soundBrowserView: { folders: [], samples: [] },
     knobs: [],
     knobTargets: { global: [], pads: {} },
     pendingLearn: null,
@@ -21,6 +23,7 @@
   const el = {
     padGrid: document.getElementById("pad-grid"),
     soundList: document.getElementById("sound-list"),
+    soundBreadcrumb: document.getElementById("sound-breadcrumb"),
     volumeList: document.getElementById("volume-list"),
     effectsList: document.getElementById("effects-list"),
     uploadZone: document.getElementById("upload-zone"),
@@ -97,14 +100,70 @@
     }
   }
 
+  // Sons: browsed one folder level at a time (see backend GET
+  // /api/sounds/browse) so a huge imported library never has to render as
+  // one giant flat list - state.sounds (the full flat list, fetched
+  // separately) stays reserved for the pad-assign modal's cross-folder search.
+
+  function currentSoundFolder() {
+    return state.soundBrowserPath.join("/");
+  }
+
+  async function loadSoundBrowser() {
+    const res = await fetch(`/api/sounds/browse?folder=${encodeURIComponent(currentSoundFolder())}`);
+    state.soundBrowserView = await res.json();
+    renderSoundList();
+  }
+
+  function navigateToFolder(path) {
+    state.soundBrowserPath = path;
+    loadSoundBrowser();
+  }
+
+  function renderBreadcrumb() {
+    el.soundBreadcrumb.innerHTML = "";
+    const rootBtn = document.createElement("button");
+    rootBtn.type = "button";
+    rootBtn.className = "breadcrumb-item";
+    rootBtn.textContent = "Sons";
+    rootBtn.addEventListener("click", () => navigateToFolder([]));
+    el.soundBreadcrumb.appendChild(rootBtn);
+
+    state.soundBrowserPath.forEach((segment, i) => {
+      const sep = document.createElement("span");
+      sep.className = "breadcrumb-sep";
+      sep.textContent = "/";
+      el.soundBreadcrumb.appendChild(sep);
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "breadcrumb-item";
+      btn.textContent = segment;
+      btn.addEventListener("click", () => navigateToFolder(state.soundBrowserPath.slice(0, i + 1)));
+      el.soundBreadcrumb.appendChild(btn);
+    });
+  }
+
   function renderSoundList() {
+    renderBreadcrumb();
     el.soundList.innerHTML = "";
-    if (state.sounds.length === 0) {
-      el.soundList.innerHTML = `<li class="sound-item"><span class="sound-name">Nenhum som enviado ainda.</span></li>`;
+    const { folders, samples } = state.soundBrowserView;
+
+    for (const name of folders) {
+      const li = document.createElement("li");
+      li.className = "sound-item folder-item";
+      li.innerHTML = `<span class="sound-name">📁 ${escapeHtml(name)}</span>`;
+      li.addEventListener("click", () => navigateToFolder([...state.soundBrowserPath, name]));
+      el.soundList.appendChild(li);
+    }
+
+    if (folders.length === 0 && samples.length === 0) {
+      el.soundList.innerHTML += `<li class="sound-item"><span class="sound-name">Pasta vazia.</span></li>`;
       return;
     }
+
     const inUse = new Set(state.pads.filter(p => p.sample_id).map(p => p.sample_id));
-    for (const sound of state.sounds) {
+    for (const sound of samples) {
       const li = document.createElement("li");
       li.className = "sound-item";
       const used = inUse.has(sound.id);
@@ -561,7 +620,10 @@
       li.className = "sound-item";
       li.innerHTML = `
         <button class="icon-btn play-btn" title="Ouvir">▶</button>
-        <span class="sound-name">${escapeHtml(sound.display_name)}</span>
+        <span class="sound-name">
+          ${escapeHtml(sound.display_name)}
+          ${sound.folder ? `<span class="sound-folder-hint">${escapeHtml(sound.folder)}</span>` : ""}
+        </span>
       `;
       li.querySelector(".play-btn").addEventListener("click", (e) => {
         e.stopPropagation();
@@ -597,6 +659,7 @@
   async function uploadOne(file) {
     const form = new FormData();
     form.append("file", file);
+    form.append("folder", currentSoundFolder());
     const res = await fetch("/api/sounds/upload", { method: "POST", body: form });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -658,7 +721,7 @@
         renderEffects();
       } else if (msg.type === "sounds") {
         state.sounds = msg.sounds;
-        renderSoundList();
+        loadSoundBrowser();
       } else if (msg.type === "knobs") {
         state.knobs = msg.knobs;
         state.pendingLearn = msg.pending_learn;
@@ -713,7 +776,7 @@
     state.looper = await looperRes.json();
 
     renderPads();
-    renderSoundList();
+    await loadSoundBrowser();
     renderVolumes();
     renderSettings();
     renderEffects();

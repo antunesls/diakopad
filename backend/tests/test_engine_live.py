@@ -1,8 +1,13 @@
 import asyncio
 import unittest
 import time
+import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import app as diakopad_app
+import storage
+from app import trigger_pad as trigger_pad_endpoint
 from engine import jackgraph, orchestrator, sfizz_proc
 
 
@@ -62,6 +67,49 @@ class SfizzRecoveryQueueTests(unittest.TestCase):
         finally:
             sfizz_proc._next_recovery_at.clear()
             sfizz_proc._next_recovery_at.update(original_queue)
+
+
+class PadTriggerEndpointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_screen_trigger_sends_the_selected_pad_and_broadcasts_its_hit(self):
+        pads = [{"pad_number": 1, "midi_note": 36}]
+        with (
+            patch("app.storage.list_pads", return_value=pads),
+            patch("app.storage.get_settings", return_value={}),
+            patch("app.trigger.trigger_pad", new=AsyncMock(return_value=True)) as trigger_pad,
+            patch("app._queue_pad_hit") as queue_hit,
+        ):
+            result = await trigger_pad_endpoint(1)
+
+        self.assertTrue(result["ok"])
+        trigger_pad.assert_awaited_once_with(1, pads, 100, {})
+        queue_hit.assert_called_once_with(1, 100)
+
+
+class PadHitFeedbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_hit_queue_coalesces_repeated_hits_for_the_same_pad(self):
+        with patch("app.manager.broadcast", new=AsyncMock()) as broadcast:
+            diakopad_app._queue_pad_hit(1, 40)
+            diakopad_app._queue_pad_hit(1, 100)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+        broadcast.assert_awaited_once_with({"type": "pad_hit", "pad_number": 1, "velocity": 100})
+
+    async def test_duplicate_midi_note_reports_every_matching_pad(self):
+        original_notes = diakopad_app._pad_notes
+        diakopad_app._pad_notes = {36: [1, 2]}
+        try:
+            with (
+                patch("app._queue_pad_hit") as queue_hit,
+                patch("app.looper.get_state", return_value={"state": "recording"}),
+                patch("app.looper.record_event") as record_event,
+            ):
+                diakopad_app._handle_note(36, 90)
+        finally:
+            diakopad_app._pad_notes = original_notes
+
+        self.assertEqual(queue_hit.call_count, 2)
+        self.assertEqual(record_event.call_count, 2)
 
 
 class EngineStatusTests(unittest.TestCase):
@@ -127,6 +175,118 @@ class PanicTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(applied)
         emergency_stop_all.assert_called_once()
+
+
+class KitRoundtripTests(unittest.TestCase):
+    def _with_temp_db(self):
+        temp_ctx = tempfile.TemporaryDirectory()
+        original_db_path = storage.DB_PATH
+        storage.DB_PATH = Path(temp_ctx.name) / "test.db"
+        storage.init_db()
+        return temp_ctx, original_db_path
+
+    def test_save_and_load_kit_restores_pads_and_effects(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            storage.set_pad_effect_slot(1, 1, "reverb")
+            pads_before = storage.list_pads()
+            kit_id = storage.save_kit("show-a", pads_before, storage.list_pad_effects())
+
+            storage.set_pad_effect_slot(1, 1, None)
+            storage.set_pad_effect_slot(2, 2, "delay")
+            storage.set_pad_mix(1, volume_db=-3, pan=0.5)
+            loaded = storage.load_kit(kit_id)
+
+            self.assertIsNotNone(loaded)
+            restored = {
+                (e["pad_number"], e["slot_index"]): e["plugin_id"]
+                for e in storage.list_pad_effects()
+            }
+            self.assertEqual(restored[(1, 1)], "reverb")
+            self.assertEqual(restored[(2, 2)], None)
+            self.assertEqual(storage.list_pads(), pads_before)
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    def test_load_kit_preserves_midi_notes(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            storage.set_pad_note(3, 99)
+            kit_id = storage.save_kit("notes", storage.list_pads(), storage.list_pad_effects())
+
+            storage.load_kit(kit_id)
+
+            self.assertEqual(
+                next(p["midi_note"] for p in storage.list_pads() if p["pad_number"] == 3), 99
+            )
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    def test_save_kit_overwrites_same_name(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            storage.set_pad_effect_slot(1, 1, "reverb")
+            first = storage.save_kit("dup", storage.list_pads(), storage.list_pad_effects())
+            storage.set_pad_effect_slot(1, 1, None)
+            second = storage.save_kit("dup", storage.list_pads(), storage.list_pad_effects())
+
+            self.assertEqual(first, second)
+            kit = storage.get_kit(first)
+            plugin = next(
+                e["plugin_id"] for e in kit["effects"] if e["pad_number"] == 1 and e["slot_index"] == 1
+            )
+            self.assertIsNone(plugin)
+            self.assertEqual(len(storage.list_kits()), 1)
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+
+class KitLoadEndpointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_load_kit_applies_engine_and_rebuilds_note_map(self):
+        original_notes = diakopad_app._pad_notes
+        temp_ctx = tempfile.TemporaryDirectory()
+        original_db_path = storage.DB_PATH
+        storage.DB_PATH = Path(temp_ctx.name) / "test.db"
+        storage.init_db()
+        try:
+            storage.set_pad_note(3, 99)
+            kit_id = storage.save_kit("live", storage.list_pads(), storage.list_pad_effects())
+            with (
+                patch("app.orchestrator.apply_all_pads", new=AsyncMock()) as apply_all,
+                patch("app._broadcast_pads", new=AsyncMock()) as broadcast_pads,
+                patch("app._broadcast_pad_effects", new=AsyncMock()),
+            ):
+                result = await diakopad_app.load_kit(kit_id)
+
+            self.assertTrue(result["ok"])
+            apply_all.assert_awaited_once()
+            broadcast_pads.assert_awaited_once()
+            expected_notes = {35 + n: [n] for n in range(1, 17)}
+            del expected_notes[38]
+            expected_notes[99] = [3]
+            self.assertEqual(diakopad_app._pad_notes, expected_notes)
+        finally:
+            diakopad_app._pad_notes = original_notes
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    async def test_load_kit_missing_returns_404(self):
+        from fastapi import HTTPException
+
+        temp_ctx = tempfile.TemporaryDirectory()
+        original_db_path = storage.DB_PATH
+        storage.DB_PATH = Path(temp_ctx.name) / "test.db"
+        storage.init_db()
+        try:
+            with self.assertRaises(HTTPException) as ctx:
+                await diakopad_app.load_kit(999)
+            self.assertEqual(ctx.exception.status_code, 404)
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
 
 
 if __name__ == "__main__":

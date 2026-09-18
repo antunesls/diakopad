@@ -11,6 +11,7 @@
     <h1>DiakoPad</h1>
     <nav>
       <button id="tab-pads" class="tab active" type="button">Pads</button>
+      <button id="tab-performance" class="tab" type="button">Performance</button>
       <button id="tab-sounds" class="tab" type="button">Sons</button>
       <button id="tab-volumes" class="tab" type="button">Volumes</button>
       <button id="tab-effects" class="tab" type="button">Efeitos</button>
@@ -21,6 +22,10 @@
       <button id="tab-config" class="tab" type="button">Config</button>
     </nav>
     <div class="live-controls">
+      <button id="global-tap-btn" class="global-tap-btn" type="button" aria-label="Tap tempo">
+        <strong id="global-bpm">100</strong> BPM · TAP
+      </button>
+      <button id="global-sequencer-btn" class="global-sequencer-btn" type="button">SEQ ▶</button>
       <label class="master-control" title="Volume master">
         <span>Master</span>
         <input id="master-volume" type="range" min="0" max="100" step="1" value="100" aria-label="Volume master">
@@ -37,7 +42,23 @@
   </header>
 
   <main id="view-pads" class="view">
+    <p class="pad-live-hint">Toque para tocar. Segure um pad para trocar o som.</p>
     <div id="pad-grid" class="pad-grid"></div>
+  </main>
+
+  <main id="view-performance" class="view hidden">
+    <div class="kit-strip">
+      <button id="kit-prev" class="kit-nav" type="button" aria-label="Kit anterior">◀</button>
+      <div class="kit-current">
+        <span id="kit-name" class="kit-name">Nenhum kit salvo</span>
+        <span id="kit-count" class="kit-count"></span>
+      </div>
+      <button id="kit-next" class="kit-nav" type="button" aria-label="Próximo kit">▶</button>
+      <button id="kit-save" class="kit-action" type="button">Salvar</button>
+      <button id="kit-delete" class="kit-action danger" type="button">Excluir</button>
+    </div>
+    <p class="pad-live-hint">Toque para tocar, segure para trocar o som. ◀ ▶ troca o kit ao vivo.</p>
+    <div id="perf-pad-grid" class="pad-grid perf-grid"></div>
   </main>
 
   <main id="view-sounds" class="view hidden">

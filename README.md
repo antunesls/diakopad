@@ -11,6 +11,11 @@ pad, um step sequencer, um metrônomo e um looper ao vivo. Sequencer e looper
 disparam os pads via um canal MIDI próprio; o metrônomo usa uma instância
 Sfizz dedicada. Veja `backend/engine/` e o plano de migração para os detalhes.
 
+Na tela **Pads**, toque para disparar o som e segure o pad para abrir a troca
+de sample. Os hits físicos e os disparos pela tela recebem feedback visual;
+o topbar mantém BPM/Tap, transporte do Sequencer, master, status e PANIC
+acessíveis durante a execução.
+
 
 ## Rodando localmente (sem hardware, para desenvolver a UI)
 
@@ -36,6 +41,27 @@ log — mesmo comportamento best-effort que o MIDI já tinha.
    descobrir os binários/URIs LV2 reais instalados na imagem (`lv2ls`,
    `lv2info`) e só então iniciar `diakopad.service` e o kiosk.
 
+### Deploy rápido (dev → Pi, sem reinstalar)
+
+Para enviar só o código durante o desenvolvimento, use
+`bash deploy/sync-to-pi.sh` (rsync, assume o alias `diakopad-pi` do
+`~/.ssh/config`). **Nunca** copie `backend/diakopad.db` nem
+`backend/samples/` por cima do Pi: o banco guarda as atribuições dos pads, o
+catálogo de samples, os efeitos e os knobs. No Windows, o equivalente é:
+
+```powershell
+tar -czf "$env:TEMP\diakopad.tgz" --exclude=.git --exclude=.venv `
+  --exclude=__pycache__ --exclude=diakopad.db --exclude=samples `
+  --exclude=sfz_bank --exclude=.pytest_cache .
+scp "$env:TEMP\diakopad.tgz" diakopad-pi:/tmp/ ; ssh diakopad-pi `
+  "tar -xzf /tmp/diakopad.tgz -C ~/diakopad && sudo systemctl restart diakopad.service"
+```
+
+Se o banco for sobrescrito por engano, `deploy/recover_pads_from_sfz.py`
+reconstrói o catálogo de samples e as atribuições (sample, volume, pan,
+nota) a partir dos arquivos de sample e dos `padNN.sfz` gerados pelo motor —
+efeitos, knobs e sequencer não são recuperáveis.
+
 ## Passo manual único: preparar o SMC-PAD
 
 No app **CubeSuite** (M-Vave), configure um preset onde os 16 pads enviam
@@ -58,8 +84,18 @@ efeito configuráveis por pad** — em cada slot você escolhe um plugin de um
 catálogo curado (Reverb, Delay, Compressor, Overdrive, EQ 3 bandas, ver
 `backend/engine/effects_catalog.py`) e ajusta os parâmetros daquele plugin.
 Trocar o plugin de um slot recria a cadeia no mod-host (`sfizz → slot 1 →
-slot 2 → slot 3 → saída`); mudar só um parâmetro é um `param_set` barato,
+slot 2 → slot 3 → master`); mudar só um parâmetro é um `param_set` barato,
 sem reiniciar nada.
+
+O catálogo foi validado no-device (imagem bookworm): Reverb = mda/Ambience,
+Delay = mda/Delay, Compressor = mda/Dynamics, Overdrive = mda/Overdrive
+(pacote apt `mda-lv2`; portas de controle normalizadas 0..1) e EQ 3 bandas
+= x42 fil4 stereo (gains ±18 dB, já presente em `/usr/local/lib/lv2`).
+O drop-in `deploy/diakopad-master.conf` também exporta o `LV2_PATH` com os
+três diretórios de plugins da imagem — sem isso o mod-host só enxerga 10
+plugins de exemplo. Há ainda ~139 bundles extras na imagem (Surge XT
+Effects, Xenia, etc.) caso queira curar mais slots; cada entrada do
+catálogo continua sobreponível por `DIAKOPAD_FX_<NAME>_LV2_URI`.
 
 ### Master e Segurança De Palco
 
@@ -74,11 +110,42 @@ Sem esse plugin, o app mantém o roteamento direto para a saída JACK e exibe o
 motor como degradado. Nesse modo, PANIC encerra os players sfizz como fallback
 para cortar one-shots e o watchdog os reconstrói em seguida.
 
+### Achados da validação em hardware (set/2026, imagem bookworm/kernel 6.12)
+
+* **Master LV2**: use o plugin lvtk "Volume" (`http://lvtk.org/plugins/volume`,
+  símbolo `volume`, estéreo, sem latência) — já configurado no drop-in
+  `deploy/diakopad-master.conf`.
+* **Usuário do serviço**: jackd roda como root e a memória compartilhada do
+  JACK é escopada por UID, então o app roda como root via drop-in
+  `deploy/diakopad-runtime.conf`.
+* **mod-host**: o protocolo de controle exige comandos terminados em NUL
+  (`\x00`), não `\n` — com `\n` o parser do servidor lê memória heap como
+  comandos (respostas corrompidas e crashes). O binário também daemoniza
+  (o pai sai com código 0): o cliente detecta vida via TCP e desliga via
+  `quit`. Se um binário antigo corromper a memória, rebuild:
+  `cd /zynthian/zynthian-sw/mod-host && sudo make && sudo make install`.
+* **JACK-Client no venv**: se o log mostrar `No module named 'jack'`,
+  rode o `pip install -r requirements.txt` do install.sh de novo.
+
 O Sfizz em si nunca suportou reverb/delay internos (opcode `effect1`/
 `<effect>` do SFZ v2 não implementado — testado com `sfizz_render` na versão
 1.2.3, `Unsupported effect type: reverb`); é por isso que todo efeito é
 hospedado via **mod-host** (LV2), o mesmo host de efeitos que o Zynthian usa
 nativamente, e não via SFZ.
+
+## Performance e Kits
+
+Aba **Performance**: modo de palco com os 16 pads grandes e uma faixa de
+kits no topo. Um **kit** é um snapshot nomeado de tudo que define o som do
+set: a atribuição de cada pad, volume/pan/tom e as cadeias de efeito.
+Use ◀ ▶ para trocar de kit ao vivo (recarrega todos os pads no motor),
+**Salvar** para gravar o estado atual sobre um nome e **Excluir** para
+remover. O padrão do sequencer, os knobs e as notas MIDI dos pads **não**
+fazem parte do kit (as notas pertencem ao controlador físico).
+
+Trocar de kit reaplica os 16 pads no motor (cada um regrava o `.sfz` e
+reinicia sua instância sfizz), então leva alguns segundos — a grade fica em
+estado "aplicando" durante a troca.
 
 ## Sequencer, Metrônomo e Looper
 

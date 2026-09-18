@@ -76,6 +76,37 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Performance kits: a named snapshot of the full pad state (assignment +
+-- volume/pan/tone) and the per-pad effect chains, for quick switching
+-- during a show. midi_note is NOT captured - it belongs to the physical
+-- controller mapping, not to the kit's sound.
+CREATE TABLE IF NOT EXISTS kits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS kit_pads (
+    kit_id INTEGER NOT NULL,
+    pad_number INTEGER NOT NULL,
+    sample_id INTEGER,
+    volume_db REAL NOT NULL DEFAULT 6,
+    pan REAL NOT NULL DEFAULT 0,
+    cutoff_hz REAL,
+    PRIMARY KEY (kit_id, pad_number),
+    FOREIGN KEY (kit_id) REFERENCES kits(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS kit_effects (
+    kit_id INTEGER NOT NULL,
+    pad_number INTEGER NOT NULL,
+    slot_index INTEGER NOT NULL,
+    plugin_id TEXT,
+    params TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (kit_id, pad_number, slot_index),
+    FOREIGN KEY (kit_id) REFERENCES kits(id) ON DELETE CASCADE
+);
 """
 
 EFFECT_SLOTS_PER_PAD = 3
@@ -525,3 +556,141 @@ def clear_sequencer_steps() -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+# ── Performance kits ─────────────────────────────────────────────────────────
+
+
+def list_kits() -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT id, name, created_at FROM kits ORDER BY name").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def save_kit(name: str, pads: list[dict], pad_effects: list[dict]) -> int:
+    """Captures the current pad state (assignment + mix, and the effect
+    chains) as a kit. Saving over an existing name replaces its contents."""
+    conn = get_connection()
+    try:
+        kit_id = conn.execute("SELECT id FROM kits WHERE name = ?", (name,)).fetchone()
+        if kit_id is None:
+            cur = conn.execute(
+                "INSERT INTO kits (name, created_at) VALUES (?, ?)", (name, time.time())
+            )
+            kit_id_val = int(cur.lastrowid)
+        else:
+            kit_id_val = kit_id["id"]
+            conn.execute("DELETE FROM kit_pads WHERE kit_id = ?", (kit_id_val,))
+            conn.execute("DELETE FROM kit_effects WHERE kit_id = ?", (kit_id_val,))
+        conn.executemany(
+            "INSERT INTO kit_pads (kit_id, pad_number, sample_id, volume_db, pan, cutoff_hz) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (kit_id_val, p["pad_number"], p.get("sample_id"), p.get("volume_db", 6),
+                 p.get("pan", 0), p.get("cutoff_hz"))
+                for p in pads
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO kit_effects (kit_id, pad_number, slot_index, plugin_id, params) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                (
+                    kit_id_val,
+                    e["pad_number"],
+                    e["slot_index"],
+                    e.get("plugin_id"),
+                    json.dumps(e.get("params") or {}),
+                )
+                for e in pad_effects
+            ],
+        )
+        conn.commit()
+        return kit_id_val
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_kit(kit_id: int) -> Optional[dict]:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT id, name, created_at FROM kits WHERE id = ?", (kit_id,)).fetchone()
+        if row is None:
+            return None
+        pads = conn.execute(
+            "SELECT pad_number, sample_id, volume_db, pan, cutoff_hz FROM kit_pads "
+            "WHERE kit_id = ? ORDER BY pad_number",
+            (kit_id,),
+        ).fetchall()
+        effects = conn.execute(
+            "SELECT pad_number, slot_index, plugin_id, params FROM kit_effects "
+            "WHERE kit_id = ? ORDER BY pad_number, slot_index",
+            (kit_id,),
+        ).fetchall()
+        effects_parsed = []
+        for r in effects:
+            d = dict(r)
+            d["params"] = json.loads(d["params"])
+            effects_parsed.append(d)
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "created_at": row["created_at"],
+            "pads": [dict(r) for r in pads],
+            "effects": effects_parsed,
+        }
+    finally:
+        conn.close()
+
+
+def delete_kit(kit_id: int) -> bool:
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM kits WHERE id = ?", (kit_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def load_kit(kit_id: int) -> Optional[dict]:
+    """Copies a kit onto the live pad state (single transaction). midi_note is
+    preserved (physical controller mapping). Returns the kit dict, or None if
+    the kit doesn't exist."""
+    kit = get_kit(kit_id)
+    if kit is None:
+        return None
+    conn = get_connection()
+    try:
+        for p in kit["pads"]:
+            conn.execute(
+                "UPDATE pads SET sample_id = ?, volume_db = ?, pan = ?, cutoff_hz = ? "
+                "WHERE pad_number = ?",
+                (p["sample_id"], p["volume_db"], p["pan"], p["cutoff_hz"], p["pad_number"]),
+            )
+        conn.execute("DELETE FROM pad_effects")
+        conn.executemany(
+            "INSERT INTO pad_effects (pad_number, slot_index, plugin_id, params) VALUES (?, ?, ?, ?)",
+            [
+                (
+                    e["pad_number"],
+                    e["slot_index"],
+                    e["plugin_id"],
+                    json.dumps(e.get("params") or {}),
+                )
+                for e in kit["effects"]
+            ],
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return kit

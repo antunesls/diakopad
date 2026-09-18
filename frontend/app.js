@@ -20,6 +20,8 @@
     metronomeStyles: [],
     master: { available: false, volume: 100, muted: false },
     engineStatus: { jack: false, modhost: false, pads: {}, metronome: false, last_error: null },
+    kits: [],
+    kitIndex: 0,
   };
 
   const knobPicker = { step: null, scope: null, padNumber: null };
@@ -29,6 +31,13 @@
 
   const el = {
     padGrid: document.getElementById("pad-grid"),
+    perfPadGrid: document.getElementById("perf-pad-grid"),
+    kitPrev: document.getElementById("kit-prev"),
+    kitNext: document.getElementById("kit-next"),
+    kitName: document.getElementById("kit-name"),
+    kitCount: document.getElementById("kit-count"),
+    kitSave: document.getElementById("kit-save"),
+    kitDelete: document.getElementById("kit-delete"),
     soundList: document.getElementById("sound-list"),
     soundBreadcrumb: document.getElementById("sound-breadcrumb"),
     volumeList: document.getElementById("volume-list"),
@@ -42,6 +51,9 @@
     modalClear: document.getElementById("modal-clear"),
     modalSoundList: document.getElementById("modal-sound-list"),
     connStatus: document.getElementById("conn-status"),
+    globalTapBtn: document.getElementById("global-tap-btn"),
+    globalBpm: document.getElementById("global-bpm"),
+    globalSequencerBtn: document.getElementById("global-sequencer-btn"),
     masterVolume: document.getElementById("master-volume"),
     masterMuteBtn: document.getElementById("master-mute-btn"),
     engineStatus: document.getElementById("engine-status"),
@@ -79,7 +91,7 @@
     knobModalWaiting: document.getElementById("knob-modal-waiting"),
   };
 
-  const VIEWS = ["pads", "sounds", "volumes", "effects", "sequencer", "metronome", "looper", "knobs", "config"];
+  const VIEWS = ["pads", "performance", "sounds", "volumes", "effects", "sequencer", "metronome", "looper", "knobs", "config"];
   for (const name of VIEWS) {
     document.getElementById(`tab-${name}`).addEventListener("click", () => switchView(name));
   }
@@ -169,6 +181,8 @@
     if (event.key === "Enter" || event.key === " ") armPanic(event);
   });
   el.panicBtn.addEventListener("keyup", cancelPanic);
+  el.globalTapBtn.addEventListener("click", tapTempo);
+  el.globalSequencerBtn.addEventListener("click", toggleSequencer);
 
   // The physical SMC-PAD numbers pads bottom-left (1) to top-right (16), in
   // rows of 4 from the bottom: [1-4] bottom, [5-8], [9-12], [13-16] top. The
@@ -185,21 +199,141 @@
     return order;
   }
 
+  function buildPadButton(pad) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "pad" + (pad.has_sample ? " filled" : "");
+    button.dataset.padNumber = String(pad.pad_number);
+    button.setAttribute("aria-label", `Pad ${pad.pad_number}: ${pad.has_sample ? pad.display_name : "vazio"}`);
+    button.innerHTML = `
+      <div class="pad-number">PAD ${pad.pad_number}</div>
+      <div class="pad-name">${pad.has_sample ? escapeHtml(pad.display_name) : "vazio"}</div>
+      <div class="pad-note">nota ${pad.midi_note}</div>
+    `;
+    let pressTimer = null;
+    let longPressed = false;
+    const cancelPress = () => {
+      if (pressTimer !== null) clearTimeout(pressTimer);
+      pressTimer = null;
+    };
+    button.addEventListener("pointerdown", () => {
+      longPressed = false;
+      pressTimer = setTimeout(() => {
+        longPressed = true;
+        pressTimer = null;
+        openAssignModal(pad.pad_number);
+      }, 550);
+    });
+    button.addEventListener("pointerup", () => {
+      const shouldTrigger = !longPressed;
+      cancelPress();
+      if (shouldTrigger) triggerScreenPad(pad.pad_number);
+    });
+    ["pointercancel", "pointerleave"].forEach((eventName) => button.addEventListener(eventName, cancelPress));
+    button.addEventListener("keydown", (event) => {
+      if (!event.repeat && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault();
+        triggerScreenPad(pad.pad_number);
+      }
+    });
+    return button;
+  }
+
   function renderPads() {
-    el.padGrid.innerHTML = "";
     const pads = displayOrder(state.pads);
-    for (const pad of pads) {
-      const div = document.createElement("div");
-      div.className = "pad" + (pad.has_sample ? " filled" : "");
-      div.innerHTML = `
-        <div class="pad-number">PAD ${pad.pad_number}</div>
-        <div class="pad-name">${pad.has_sample ? escapeHtml(pad.display_name) : "vazio"}</div>
-        <div class="pad-note">nota ${pad.midi_note}</div>
-      `;
-      div.addEventListener("click", () => openAssignModal(pad.pad_number));
-      el.padGrid.appendChild(div);
+    for (const grid of [el.padGrid, el.perfPadGrid]) {
+      grid.innerHTML = "";
+      for (const pad of pads) {
+        grid.appendChild(buildPadButton(pad));
+      }
     }
   }
+
+  // The hit animation comes from the server's pad_hit broadcast, so every
+  // client (including this one) flashes exactly once per hit.
+  async function triggerScreenPad(padNumber) {
+    await fetch(`/api/pads/${padNumber}/trigger`, { method: "POST" });
+  }
+
+  function flashPadHit(padNumber) {
+    for (const grid of [el.padGrid, el.perfPadGrid]) {
+      const pad = grid.querySelector(`[data-pad-number="${padNumber}"]`);
+      if (!pad) continue;
+      pad.classList.remove("hit");
+      void pad.offsetWidth;
+      pad.classList.add("hit");
+      setTimeout(() => pad.classList.remove("hit"), 130);
+    }
+  }
+
+  // Kits: named snapshots of the 16 pad assignments + effect chains, for
+  // switching the whole set during a show. Kit switching re-applies every
+  // pad in the engine, so the grid shows a busy state while it runs.
+
+  async function loadKits() {
+    const res = await fetch("/api/kits");
+    state.kits = await res.json();
+    if (state.kitIndex >= state.kits.length) state.kitIndex = 0;
+    renderKitStrip();
+  }
+
+  function renderKitStrip() {
+    const kit = state.kits[state.kitIndex];
+    el.kitName.textContent = kit ? kit.name : "Nenhum kit salvo";
+    el.kitCount.textContent = state.kits.length ? `${state.kitIndex + 1} / ${state.kits.length}` : "";
+    el.kitPrev.disabled = state.kits.length < 2;
+    el.kitNext.disabled = state.kits.length < 2;
+    el.kitDelete.disabled = !kit;
+  }
+
+  async function loadKitAt(index) {
+    if (!state.kits.length) return;
+    state.kitIndex = (index + state.kits.length) % state.kits.length;
+    renderKitStrip();
+    const kit = state.kits[state.kitIndex];
+    el.perfPadGrid.classList.add("applying");
+    try {
+      await fetch(`/api/kits/${kit.id}/load`, { method: "POST" });
+    } finally {
+      el.perfPadGrid.classList.remove("applying");
+    }
+  }
+
+  async function saveCurrentKit() {
+    const suggestion = state.kits[state.kitIndex] ? state.kits[state.kitIndex].name : "";
+    const name = window.prompt("Nome do kit:", suggestion);
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const res = await fetch("/api/kits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: trimmed }),
+    });
+    if (!res.ok) {
+      window.alert("Não foi possível salvar o kit.");
+      return;
+    }
+    await loadKits();
+    const saved = state.kits.findIndex((k) => k.name === trimmed);
+    if (saved >= 0) {
+      state.kitIndex = saved;
+      renderKitStrip();
+    }
+  }
+
+  async function deleteCurrentKit() {
+    const kit = state.kits[state.kitIndex];
+    if (!kit) return;
+    if (!window.confirm(`Excluir o kit "${kit.name}"?`)) return;
+    await fetch(`/api/kits/${kit.id}`, { method: "DELETE" });
+    await loadKits();
+  }
+
+  el.kitPrev.addEventListener("click", () => loadKitAt(state.kitIndex - 1));
+  el.kitNext.addEventListener("click", () => loadKitAt(state.kitIndex + 1));
+  el.kitSave.addEventListener("click", saveCurrentKit);
+  el.kitDelete.addEventListener("click", deleteCurrentKit);
 
   // Sons: browsed one folder level at a time (see backend GET
   // /api/sounds/browse) so a huge imported library never has to render as
@@ -456,9 +590,28 @@
     }
   }
 
+  // Optimistic toggle: flipping the local state before the request keeps
+  // rapid double taps meaningful (start then stop) even before the server
+  // echo arrives over the WebSocket.
+  function toggleSequencer() {
+    const running = !state.sequencer.running;
+    state.sequencer.running = running;
+    renderSequencer();
+    fetch("/api/sequencer/transport", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ running }),
+    }).catch(() => {
+      state.sequencer.running = !running;
+      renderSequencer();
+    });
+  }
+
   function renderSequencer() {
     el.sequencerPlayBtn.textContent = state.sequencer.running ? "■ Parar" : "▶ Tocar";
     el.sequencerPlayBtn.classList.toggle("active", state.sequencer.running);
+    el.globalSequencerBtn.textContent = state.sequencer.running ? "SEQ ■" : "SEQ ▶";
+    el.globalSequencerBtn.classList.toggle("active", state.sequencer.running);
 
     const activeByKey = new Set(
       state.sequencer.steps.filter((s) => s.active).map((s) => `${s.pad_number}:${s.step_index}`)
@@ -501,13 +654,7 @@
     });
   }
 
-  el.sequencerPlayBtn.addEventListener("click", () => {
-    fetch("/api/sequencer/transport", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ running: !state.sequencer.running }),
-    });
-  });
+  el.sequencerPlayBtn.addEventListener("click", toggleSequencer);
   el.sequencerBpm.addEventListener("change", () => {
     setTempo(Number(el.sequencerBpm.value));
   });
@@ -519,6 +666,7 @@
     const bpm = Math.round(state.tempo.bpm);
     el.sequencerBpm.value = bpm;
     el.metronomeBpm.value = bpm;
+    el.globalBpm.textContent = String(bpm);
   }
 
   function renderMetronome() {
@@ -905,6 +1053,8 @@
         renderSoundList();
         renderVolumes();
         renderEffects();
+      } else if (msg.type === "pad_hit") {
+        flashPadHit(msg.pad_number);
       } else if (msg.type === "sounds") {
         state.sounds = msg.sounds;
         loadSoundBrowser();
@@ -950,6 +1100,10 @@
       } else if (msg.type === "metronome_tick") {
         state.metronome.beat_in_bar = msg.beat_in_bar;
         renderMetronomeBeat(msg.beat_in_bar);
+      } else if (msg.type === "kits") {
+        state.kits = msg.kits;
+        if (state.kitIndex >= state.kits.length) state.kitIndex = 0;
+        renderKitStrip();
       } else if (msg.type === "looper") {
         state.looper = { state: msg.state, loop_duration: msg.loop_duration, event_count: msg.event_count, started_at: msg.started_at };
         renderLooper();
@@ -958,7 +1112,7 @@
   }
 
   async function init() {
-    const [padsRes, soundsRes, knobsRes, settingsRes, padEffectsRes, catalogRes, knobTargetsRes, sequencerRes, looperRes, tempoRes, metronomeRes, metronomeStylesRes, masterRes, engineStatusRes] =
+    const [padsRes, soundsRes, knobsRes, settingsRes, padEffectsRes, catalogRes, knobTargetsRes, sequencerRes, looperRes, tempoRes, metronomeRes, metronomeStylesRes, masterRes, engineStatusRes, kitsRes] =
       await Promise.all([
         fetch("/api/pads"),
         fetch("/api/sounds"),
@@ -974,6 +1128,7 @@
         fetch("/api/metronome/styles"),
         fetch("/api/master"),
         fetch("/api/engine/status"),
+        fetch("/api/kits"),
       ]);
     state.pads = await padsRes.json();
     state.sounds = await soundsRes.json();
@@ -992,8 +1147,11 @@
     state.metronomeStyles = await metronomeStylesRes.json();
     state.master = await masterRes.json();
     state.engineStatus = await engineStatusRes.json();
+    state.kits = await kitsRes.json();
+    if (state.kitIndex >= state.kits.length) state.kitIndex = 0;
 
     renderPads();
+    renderKitStrip();
     await loadSoundBrowser();
     renderVolumes();
     renderSettings();

@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 import midi
 import storage
-from engine import effects_catalog, knob_registry, looper, metronome, metronome_sounds, orchestrator, sequencer, tempo
+from engine import effects_catalog, knob_registry, looper, metronome, metronome_sounds, orchestrator, sequencer, tempo, trigger
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("diakopad")
@@ -97,6 +97,10 @@ class MasterRequest(BaseModel):
     muted: Optional[bool] = None
 
 
+class KitRequest(BaseModel):
+    name: str
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self.active: list[WebSocket] = []
@@ -127,6 +131,9 @@ _metronome_tick_task: Optional[asyncio.Task] = None
 _pending_metronome_beat: Optional[int] = None
 _metronome_style_lock = asyncio.Lock()
 _engine_status_task: Optional[asyncio.Task] = None
+_pad_notes: dict[int, list[int]] = {}
+_pending_pad_hits: dict[int, int] = {}
+_pad_hit_task: Optional[asyncio.Task] = None
 
 # --- Knob MIDI-learn state -------------------------------------------------
 # The MIDI input callback fires on mido/rtmidi's own thread; everything here
@@ -164,11 +171,13 @@ def _handle_note(note: int, velocity: int) -> None:
     """Feeds the live looper's recorder. Only ever sees genuine hardware hits
     - sequencer/looper-triggered notes go out DiakoPad-trigger-out straight
     into each pad's sfizz instance, never back through this input port."""
-    if looper.get_state()["state"] != "recording":
+    pad_numbers = _pad_notes.get(note, [])
+    if not pad_numbers:
         return
-    pad = next((p for p in storage.list_pads() if p["midi_note"] == note), None)
-    if pad is not None:
-        looper.record_event(pad["pad_number"], velocity)
+    for pad_number in pad_numbers:
+        _queue_pad_hit(pad_number, velocity)
+        if looper.get_state()["state"] == "recording":
+            looper.record_event(pad_number, velocity)
 
 
 def _handle_cc(control: int, value: int) -> None:
@@ -234,12 +243,13 @@ async def _apply_knob_target(key: tuple[str, Optional[int], str]) -> None:
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    global _main_loop
+    global _main_loop, _pad_notes
     storage.init_db()
     _main_loop = asyncio.get_event_loop()
     midi.open_input(_on_midi_cc, _on_midi_note)
     await orchestrator.startup()
     settings = storage.get_settings()
+    _pad_notes = _build_pad_note_map(storage.list_pads())
     await orchestrator.apply_master(float(settings.get("master_volume", 100)), settings.get("master_muted") == "1")
     await orchestrator.apply_all_pads(storage.list_pads(), settings, storage.list_pad_effects())
     sequencer.load_pattern(storage.list_sequencer_steps())
@@ -271,6 +281,32 @@ def _pads_payload() -> list[dict]:
 
 async def _broadcast_pads() -> None:
     await manager.broadcast({"type": "pads", "pads": _pads_payload()})
+
+
+async def _broadcast_pad_hit(pad_number: int, velocity: int) -> None:
+    await manager.broadcast({"type": "pad_hit", "pad_number": pad_number, "velocity": velocity})
+
+
+def _build_pad_note_map(pads: list[dict]) -> dict[int, list[int]]:
+    result: dict[int, list[int]] = {}
+    for pad in pads:
+        result.setdefault(pad["midi_note"], []).append(pad["pad_number"])
+    return result
+
+
+def _queue_pad_hit(pad_number: int, velocity: int) -> None:
+    global _pad_hit_task
+    _pending_pad_hits[pad_number] = velocity
+    if _pad_hit_task is None or _pad_hit_task.done():
+        _pad_hit_task = asyncio.create_task(_drain_pad_hits())
+
+
+async def _drain_pad_hits() -> None:
+    while _pending_pad_hits:
+        hits = list(_pending_pad_hits.items())
+        _pending_pad_hits.clear()
+        for pad_number, velocity in hits:
+            await _broadcast_pad_hit(pad_number, velocity)
 
 
 async def _broadcast_sounds() -> None:
@@ -401,16 +437,29 @@ async def assign_pad(pad_number: int, body: AssignRequest):
 
 @app.post("/api/pads/{pad_number}/note")
 async def set_pad_note(pad_number: int, body: NoteRequest):
+    global _pad_notes
     if not 1 <= pad_number <= 16:
         raise HTTPException(400, "pad_number must be between 1 and 16")
     if not 0 <= body.midi_note <= 127:
         raise HTTPException(400, "midi_note must be between 0 and 127")
     storage.set_pad_note(pad_number, body.midi_note)
+    _pad_notes = _build_pad_note_map(storage.list_pads())
     await orchestrator.apply_pad(
         pad_number, storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
     )
     await _broadcast_pads()
     return {"ok": True}
+
+
+@app.post("/api/pads/{pad_number}/trigger")
+async def trigger_pad(pad_number: int):
+    if not 1 <= pad_number <= 16:
+        raise HTTPException(400, "pad_number must be between 1 and 16")
+    pads = storage.list_pads()
+    sent = await trigger.trigger_pad(pad_number, pads, 100, storage.get_settings())
+    if sent:
+        _queue_pad_hit(pad_number, 100)
+    return {"ok": sent}
 
 
 @app.post("/api/pads/{pad_number}/mix")
@@ -646,6 +695,48 @@ async def set_pad_effect_param(pad_number: int, slot_index: int, body: EffectPar
     await orchestrator.set_effect_param(pad_number, slot_index, body.symbol, body.value)
     await _broadcast_pad_effects()
     return {"ok": True}
+
+
+# ── Performance kits ─────────────────────────────────────────────────────────
+
+
+@app.get("/api/kits")
+def list_kits():
+    return storage.list_kits()
+
+
+@app.post("/api/kits")
+async def save_kit(body: KitRequest):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "name must not be empty")
+    kit_id = storage.save_kit(name, storage.list_pads(), storage.list_pad_effects())
+    await manager.broadcast({"type": "kits", "kits": storage.list_kits()})
+    return {"ok": True, "kit": {"id": kit_id, "name": name}}
+
+
+@app.delete("/api/kits/{kit_id}")
+async def delete_kit(kit_id: int):
+    if not storage.delete_kit(kit_id):
+        raise HTTPException(404, "kit not found")
+    await manager.broadcast({"type": "kits", "kits": storage.list_kits()})
+    return {"ok": True}
+
+
+@app.post("/api/kits/{kit_id}/load")
+async def load_kit(kit_id: int):
+    global _pad_notes
+    kit = storage.load_kit(kit_id)
+    if kit is None:
+        raise HTTPException(404, "kit not found")
+
+    _pad_notes = _build_pad_note_map(storage.list_pads())
+    await orchestrator.apply_all_pads(
+        storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
+    )
+    await _broadcast_pads()
+    await _broadcast_pad_effects()
+    return {"ok": True, "kit": {"id": kit["id"], "name": kit["name"]}}
 
 
 @app.get("/api/sequencer")

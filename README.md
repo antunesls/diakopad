@@ -135,6 +135,28 @@ perto do hardware.
   `bluez_midi.<endereço>`, `SMC-PAD:out`, `BLE MIDI 1:out`) — **não**
   adicione esses ao padrão: são representações duplicadas do mesmo stream,
   e conectar mais de uma faz cada pad disparar mais de uma vez por toque.
+* **Pareado não é conectado**: um periférico BLE (caso do SMC-PAD por
+  Bluetooth) derruba a própria conexão sozinho depois de um tempo parado,
+  mesmo já pareado/confiável/*bonded* (`bluetoothctl info <endereço>`
+  mostra `Paired: yes` mas `Connected: no`). Quando isso acontece, a porta
+  `Midi-Bridge:SMC-PAD Bluetooth` continua aparecendo no grafo do JACK
+  (parece "conectada" ali), mas nenhum byte de MIDI passa mais — os pads
+  simplesmente param de reagir ao toque físico, sem nenhum erro no log do
+  DiakoPad (ele só vê o grafo JACK/PipeWire, nunca a pilha Bluetooth em
+  si, então não detecta nem conserta isso sozinho). `deploy/
+  diakopad-bt-watchdog.sh` + `deploy/diakopad-bt-watchdog.service` existem
+  pra isso: um serviço `systemd --user` opcional que fica checando a
+  conexão a cada poucos segundos e reconecta (`bluetoothctl connect`)
+  quando cair. Só instale se for usar o SMC-PAD por Bluetooth (o cabeado
+  não precisa) — `install-ubuntu-studio.sh` não instala isso sozinho
+  porque precisa do endereço MAC do seu dispositivo:
+  ```bash
+  bluetoothctl devices   # ache o endereço do SMC-PAD (deve já estar pareado/trusted)
+  sed -e "s#__INSTALL_DIR__#$HOME/diakopad#g" -e "s#__BT_MAC__#AA:BB:CC:DD:EE:FF#g" \
+    deploy/diakopad-bt-watchdog.service > ~/.config/systemd/user/diakopad-bt-watchdog.service
+  systemctl --user daemon-reload
+  systemctl --user enable --now diakopad-bt-watchdog.service
+  ```
 
 ## Passo manual único: preparar o SMC-PAD
 
@@ -219,11 +241,13 @@ nativamente, e não via SFZ.
 
 Aba **Performance**: modo de palco com os 16 pads grandes e uma faixa de
 kits no topo. Um **kit** é um snapshot nomeado de tudo que define o som do
-set: a atribuição de cada pad, volume/pan/tom e as cadeias de efeito.
-Use ◀ ▶ para trocar de kit ao vivo (recarrega todos os pads no motor),
-**Salvar** para gravar o estado atual sobre um nome e **Excluir** para
-remover. O padrão do sequencer, os knobs e as notas MIDI dos pads **não**
-fazem parte do kit (as notas pertencem ao controlador físico).
+set: a atribuição de cada pad, volume/pan/tom, as cadeias de efeito e os
+mapeamentos de knob (trocar de kit também troca o layout dos knobs
+físicos; kits gravados antes disso entram no snapshot deixam os mapeamentos
+atuais como estão). Use ◀ ▶ para trocar de kit ao vivo (recarrega todos os
+pads no motor), **Salvar** para gravar o estado atual sobre um nome e
+**Excluir** para remover. O padrão do sequencer e as notas MIDI dos pads
+**não** fazem parte do kit (as notas pertencem ao controlador físico).
 
 Trocar de kit reaplica os 16 pads no motor (cada um regrava o `.sfz` e
 reinicia sua instância sfizz), então leva alguns segundos — a grade fica em

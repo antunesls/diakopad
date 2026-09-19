@@ -1,0 +1,30 @@
+# systemd --user unit that keeps a Bluetooth MIDI device (e.g. the SMC-PAD
+# paired over BLE) connected - see deploy/diakopad-bt-watchdog.sh and the
+# README's Bluetooth section for why this is needed (a BLE peripheral drops
+# its own connection over time; being paired/trusted/bonded doesn't prevent
+# that, and DiakoPad can't see or fix it - it only sees the JACK/PipeWire
+# MIDI graph once a connection exists).
+#
+# OPTIONAL: only install this if you're running the SMC-PAD over Bluetooth
+# instead of USB - a wired connection never needs it. Not installed by
+# install-ubuntu-studio.sh automatically, since it needs a device-specific
+# MAC address that script can't know in advance.
+#
+# Install to ~/.config/systemd/user/diakopad-bt-watchdog.service
+# (substituting __INSTALL_DIR__ and __BT_MAC__ - find the address with
+# `bluetoothctl devices`, device must already be paired/trusted), then:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now diakopad-bt-watchdog.service
+[Unit]
+Description=Reconnects the SMC-PAD's Bluetooth MIDI link when it drops
+After=bluetooth.target
+
+[Service]
+Type=simple
+Environment=DIAKOPAD_BT_MAC=__BT_MAC__
+ExecStart=/bin/bash __INSTALL_DIR__/deploy/diakopad-bt-watchdog.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

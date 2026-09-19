@@ -880,8 +880,8 @@ async def set_pad_effect_param(pad_number: int, slot_index: int, body: EffectPar
 
 async def _apply_kit_and_broadcast(kit: dict) -> None:
     """Reapplies an already-loaded (storage.load_kit) kit onto the engine
-    and broadcasts pads/pad_effects - shared by the REST load endpoint and
-    the hardware-triggered kit_next dispatch, so neither duplicates the
+    and broadcasts pads/pad_effects/knobs - shared by the REST load endpoint
+    and the hardware-triggered kit_next dispatch, so neither duplicates the
     other's engine-reload logic."""
     global _pad_notes
     _pad_notes = _build_pad_note_map(storage.list_pads())
@@ -890,6 +890,7 @@ async def _apply_kit_and_broadcast(kit: dict) -> None:
     )
     await _broadcast_pads()
     await _broadcast_pad_effects()
+    await _broadcast_knobs()
 
 
 async def _broadcast_kits() -> None:
@@ -912,7 +913,9 @@ async def save_kit(body: KitRequest):
     name = body.name.strip()
     if not name:
         raise HTTPException(400, "name must not be empty")
-    kit_id = storage.save_kit(name, storage.list_pads(), storage.list_pad_effects())
+    kit_id = storage.save_kit(
+        name, storage.list_pads(), storage.list_pad_effects(), storage.list_knob_mappings()
+    )
     await _broadcast_kits()
     return {"ok": True, "kit": {"id": kit_id, "name": name}}
 

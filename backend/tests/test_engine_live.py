@@ -318,6 +318,48 @@ class KitRoundtripTests(unittest.TestCase):
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
 
+    def test_save_and_load_kit_roundtrips_knob_mappings(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            storage.set_pad_effect_slot(1, 1, "reverb")
+            storage.set_knob_mapping(74, "global", None, "tempo")
+            storage.set_knob_mapping(71, "pad", 1, "slot1:decay")
+            kit_id = storage.save_kit(
+                "knobs", storage.list_pads(), storage.list_pad_effects(), storage.list_knob_mappings()
+            )
+
+            storage.delete_knob_mapping(74)
+            storage.set_knob_mapping(75, "global", None, "tempo")
+            loaded = storage.load_kit(kit_id)
+
+            self.assertIsNotNone(loaded)
+            mappings = {
+                m["cc_number"]: (m["scope"], m["pad_number"], m["param"])
+                for m in storage.list_knob_mappings()
+            }
+            self.assertEqual(mappings[74], ("global", None, "tempo"))
+            self.assertEqual(mappings[71], ("pad", 1, "slot1:decay"))
+            self.assertNotIn(75, mappings)  # live-only mapping was replaced
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    def test_legacy_kit_without_knobs_leaves_current_mappings_untouched(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            # Saved before knobs joined the snapshot: no knob rows captured.
+            kit_id = storage.save_kit("legacy", storage.list_pads(), storage.list_pad_effects())
+
+            storage.set_knob_mapping(74, "global", None, "tempo")
+            loaded = storage.load_kit(kit_id)
+
+            self.assertIsNotNone(loaded)
+            mappings = {m["cc_number"] for m in storage.list_knob_mappings()}
+            self.assertIn(74, mappings)
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
     def test_save_kit_overwrites_same_name(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:

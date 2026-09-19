@@ -120,6 +120,19 @@ CREATE TABLE IF NOT EXISTS kit_effects (
     FOREIGN KEY (kit_id) REFERENCES kits(id) ON DELETE CASCADE
 );
 
+-- Knob (CC) mappings captured with the kit, so switching kits also flips
+-- the physical-knob layout that was set up for it (same one-knob-per-target,
+-- one-target-per-knob semantics as the live knob_mappings table).
+CREATE TABLE IF NOT EXISTS kit_knobs (
+    kit_id INTEGER NOT NULL,
+    cc_number INTEGER NOT NULL,
+    scope TEXT NOT NULL,
+    pad_number INTEGER,
+    param TEXT NOT NULL,
+    PRIMARY KEY (kit_id, cc_number),
+    FOREIGN KEY (kit_id) REFERENCES kits(id) ON DELETE CASCADE
+);
+
 -- Binds a physical MIDI signal (note or CC) to a fixed logical action, for
 -- SMC-PAD controls that have no on-screen equivalent (the "Gravar" button,
 -- the side arrow, the "bak" pad). One action can have several bindings
@@ -779,9 +792,10 @@ def list_kits() -> list[dict]:
         conn.close()
 
 
-def save_kit(name: str, pads: list[dict], pad_effects: list[dict]) -> int:
-    """Captures the current pad state (assignment + mix, and the effect
-    chains) as a kit. Saving over an existing name replaces its contents."""
+def save_kit(name: str, pads: list[dict], pad_effects: list[dict], knob_mappings: list[dict] | None = None) -> int:
+    """Captures the current pad state (assignment + mix, the effect chains
+    and the knob mappings) as a kit. Saving over an existing name replaces
+    its contents."""
     conn = get_connection()
     try:
         kit_id = conn.execute("SELECT id FROM kits WHERE name = ?", (name,)).fetchone()
@@ -794,6 +808,7 @@ def save_kit(name: str, pads: list[dict], pad_effects: list[dict]) -> int:
             kit_id_val = kit_id["id"]
             conn.execute("DELETE FROM kit_pads WHERE kit_id = ?", (kit_id_val,))
             conn.execute("DELETE FROM kit_effects WHERE kit_id = ?", (kit_id_val,))
+            conn.execute("DELETE FROM kit_knobs WHERE kit_id = ?", (kit_id_val,))
         conn.executemany(
             "INSERT INTO kit_pads (kit_id, pad_number, sample_id, volume_db, pan, cutoff_hz) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -815,6 +830,20 @@ def save_kit(name: str, pads: list[dict], pad_effects: list[dict]) -> int:
                     json.dumps(e.get("params") or {}),
                 )
                 for e in pad_effects
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO kit_knobs (kit_id, cc_number, scope, pad_number, param) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                (
+                    kit_id_val,
+                    k["cc_number"],
+                    k["scope"],
+                    k["pad_number"],
+                    k["param"],
+                )
+                for k in (knob_mappings or [])
             ],
         )
         conn.commit()
@@ -847,12 +876,21 @@ def get_kit(kit_id: int) -> Optional[dict]:
             d = dict(r)
             d["params"] = json.loads(d["params"])
             effects_parsed.append(d)
+        knobs = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT cc_number, scope, pad_number, param FROM kit_knobs "
+                "WHERE kit_id = ? ORDER BY cc_number",
+                (kit_id,),
+            ).fetchall()
+        ]
         return {
             "id": row["id"],
             "name": row["name"],
             "created_at": row["created_at"],
             "pads": [dict(r) for r in pads],
             "effects": effects_parsed,
+            "knobs": knobs,
         }
     finally:
         conn.close()
@@ -870,8 +908,11 @@ def delete_kit(kit_id: int) -> bool:
 
 def load_kit(kit_id: int) -> Optional[dict]:
     """Copies a kit onto the live pad state (single transaction). midi_note is
-    preserved (physical controller mapping). Returns the kit dict, or None if
-    the kit doesn't exist."""
+    preserved (physical controller mapping). The kit's knob mappings replace
+    the live ones wholesale, so the physical knobs follow the kit - except a
+    kit saved before knob mappings joined the snapshot (no kit_knobs rows),
+    which leaves the current mappings untouched. Returns the kit dict, or
+    None if the kit doesn't exist."""
     kit = get_kit(kit_id)
     if kit is None:
         return None
@@ -896,6 +937,15 @@ def load_kit(kit_id: int) -> Optional[dict]:
                 for e in kit["effects"]
             ],
         )
+        if kit["knobs"]:
+            conn.execute("DELETE FROM knob_mappings")
+            conn.executemany(
+                "INSERT INTO knob_mappings (cc_number, scope, pad_number, param) VALUES (?, ?, ?, ?)",
+                [
+                    (k["cc_number"], k["scope"], k["pad_number"], k["param"])
+                    for k in kit["knobs"]
+                ],
+            )
         conn.commit()
     except Exception:
         conn.rollback()

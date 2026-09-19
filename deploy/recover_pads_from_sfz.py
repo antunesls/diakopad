@@ -12,6 +12,7 @@ artifacts and keep their defaults.
 
 Run on the Pi from backend/ with the venv python, service stopped.
 """
+import os
 import re
 import sys
 from pathlib import Path
@@ -20,7 +21,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 import storage
 
-BANK_DIR = Path("/zynthian/zynthian-my-data/soundfonts/sfz/DiakoPad")
+# Defaults to the Pi's on-device sfz bank location; override with
+# DIAKOPAD_SFZ_BANK_DIR on other setups (e.g. a laptop install, see
+# backend/sfz.py which uses the same variable for the live app).
+BANK_DIR = Path(os.environ.get(
+    "DIAKOPAD_SFZ_BANK_DIR",
+    "/zynthian/zynthian-my-data/soundfonts/sfz/DiakoPad",
+))
 SAMPLES_DIR = Path(__file__).resolve().parent.parent / "backend" / "samples"
 SUFFIX_RE = re.compile(r"-[0-9a-f]{8}$")
 

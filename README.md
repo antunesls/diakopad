@@ -60,7 +60,43 @@ scp "$env:TEMP\diakopad.tgz" diakopad-pi:/tmp/ ; ssh diakopad-pi `
 Se o banco for sobrescrito por engano, `deploy/recover_pads_from_sfz.py`
 reconstrói o catálogo de samples e as atribuições (sample, volume, pan,
 nota) a partir dos arquivos de sample e dos `padNN.sfz` gerados pelo motor —
-efeitos, knobs e sequencer não são recuperáveis.
+efeitos, knobs e sequencer não são recuperáveis. Em outra máquina (ex. o
+deploy de laptop abaixo), aponte-o para o bank certo com
+`DIAKOPAD_SFZ_BANK_DIR=... python3 deploy/recover_pads_from_sfz.py`.
+
+## Deploy num laptop (Ubuntu Studio, sem Zynthian)
+
+Mesmo motor de áudio (um `sfizz_jack` por pad + `mod-host` para efeitos),
+rodando nativo num desktop Linux em vez da imagem do Zynthian — útil pra
+não depender do Pi (que satura ~1 núcleo de CPU por pad carregado, ver
+"Performance e Kits" abaixo) ou pra desenvolver com áudio real sem estar
+perto do hardware.
+
+1. Copie o repositório para o laptop (ou rode em-place num checkout já
+   local) e execute `bash deploy/install-ubuntu-studio.sh`. Ele instala as
+   dependências via apt, compila `sfizz_jack` e `mod-host` a partir do
+   código-fonte (não costumam vir empacotados) e instala um serviço
+   `systemd --user` (`deploy/diakopad-desktop.service`).
+2. Diferenças-chave em relação ao Pi:
+   - **Sem root**: o app roda como o seu próprio usuário — no Pi o
+     `jackd` é um serviço de sistema rodando como root e a memória
+     compartilhada do JACK é isolada por UID (por isso
+     `deploy/diakopad-runtime.conf` força `User=root` lá); num laptop o
+     JACK/PipeWire já roda na sua própria sessão, então rodar como root
+     quebraria a conexão em vez de consertar. **Não reaproveite**
+     `diakopad-runtime.conf` aqui.
+   - **Sem kiosk**: pule `diakopad-kiosk.service`/`kiosk-xinitrc`, é
+     tela de toque específica do Pi — no laptop é só abrir
+     `http://localhost:8080/` no navegador.
+   - **Sem LV2_PATH/URIs conhecidos de antemão**: ao contrário do Pi
+     (documentado em "Achados da validação em hardware" abaixo), não há
+     um conjunto de URIs já validado pra copiar — refaça a descoberta com
+     `lv2ls`/`lv2info` nesta máquina (o próprio script imprime os passos
+     ao final).
+3. Garanta que um servidor compatível com JACK já esteja rodando na sua
+   sessão (jackd2 via QjackCtl/Ubuntu Studio Controls, ou pipewire-jack)
+   antes de iniciar o serviço — o unit não gerencia isso.
+4. `systemctl --user enable --now diakopad.service`
 
 ## Passo manual único: preparar o SMC-PAD
 

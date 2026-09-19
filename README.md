@@ -117,11 +117,24 @@ perto do hardware.
 * `HARDWARE_MIDI_PATTERN` (`backend/engine/orchestrator.py`) tem como padrão
   `system:midi_capture_.*`, que só existe num setup jackd2/a2jmidid puro. Sob
   PipeWire, o SMC-PAD aparece como `Midi-Bridge:SINCO SMC-PAD-Master
-  (capture)` (confirme com `jack_lsp -p | grep -i sinco`) — sem sobrescrever
-  `DIAKOPAD_HARDWARE_MIDI_PATTERN` (ver `deploy/diakopad-desktop.service`),
-  o hardware físico nunca chega em `DiakoPad-in`: knob-learn, gravação do
-  looper e o aprendizado de ações de controlador (aba Config) ficam surdos
-  ao controlador, mesmo com os pads soando normalmente pela tela.
+  (capture)` quando conectado por USB (confirme com `jack_lsp -p | grep -i
+  sinco`) — sem sobrescrever `DIAKOPAD_HARDWARE_MIDI_PATTERN` (ver
+  `deploy/diakopad-desktop.service`), o hardware físico nunca chega em
+  `DiakoPad-in`: knob-learn, gravação do looper e o aprendizado de ações de
+  controlador (aba Config) ficam surdos ao controlador, mesmo com os pads
+  soando normalmente pela tela.
+* **Pareado por Bluetooth**, o mesmo SMC-PAD aparece com um nome de porta
+  diferente: `Midi-Bridge:SMC-PAD Bluetooth (capture)` (confirme com
+  `jack_lsp -p | grep -i -E "sinco|smc-pad"` ou `pw-link -l | grep -i smc`).
+  O `DIAKOPAD_HARDWARE_MIDI_PATTERN` do `deploy/diakopad-desktop.service` já
+  cobre os dois modos (`Midi-Bridge:(SINCO|SMC-PAD Bluetooth).*`), então
+  funciona com o controlador cabeado ou pareado, inclusive trocando de um
+  pro outro sem reiniciar o serviço (a reconexão dinâmica do orchestrator
+  já cobre isso a cada poucos segundos). PipeWire também expõe o mesmo
+  fluxo Bluetooth sob outros nomes (`bluez_midi.server`,
+  `bluez_midi.<endereço>`, `SMC-PAD:out`, `BLE MIDI 1:out`) — **não**
+  adicione esses ao padrão: são representações duplicadas do mesmo stream,
+  e conectar mais de uma faz cada pad disparar mais de uma vez por toque.
 
 ## Passo manual único: preparar o SMC-PAD
 

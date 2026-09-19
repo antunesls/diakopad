@@ -25,11 +25,16 @@ Environment=DIAKOPAD_SFZ_BANK_DIR=__INSTALL_DIR__/backend/sfz_bank
 Environment=DIAKOPAD_MIDI_CHANNEL=10
 # orchestrator.py's default HARDWARE_MIDI_PATTERN ("system:midi_capture_.*")
 # only matches a plain jackd2/a2jmidid setup. Under PipeWire, the SMC-PAD's
-# hardware MIDI capture ports show up as "Midi-Bridge:SINCO ..." instead
-# (confirm with `jack_lsp -p | grep -i sinco` on THIS machine) - without this
-# override, the physical controller's Note/CC never reaches DiakoPad-in and
-# knob-learn/loop recording/controller-action learning silently see nothing.
-Environment=DIAKOPAD_HARDWARE_MIDI_PATTERN=Midi-Bridge:SINCO.*
+# hardware MIDI capture ports show up as "Midi-Bridge:SINCO ..." when wired
+# over USB, or "Midi-Bridge:SMC-PAD Bluetooth" when paired over Bluetooth
+# (confirm with `jack_lsp -p | grep -i -E "sinco|smc-pad"` on THIS machine) -
+# without this override, the physical controller's Note/CC never reaches
+# DiakoPad-in and knob-learn/loop recording/controller-action learning
+# silently see nothing. Deliberately does NOT also match the raw
+# bluez_midi.*/"SMC-PAD:out"/"BLE MIDI 1:out" ports PipeWire exposes
+# alongside the Bluetooth one - those look like duplicate representations
+# of the same stream, and wiring more than one in would double-trigger pads.
+Environment=DIAKOPAD_HARDWARE_MIDI_PATTERN=Midi-Bridge:(SINCO|SMC-PAD Bluetooth).*
 # sfizz/mod-host binaries. The effect catalog's defaults in
 # backend/engine/effects_catalog.py are the plugins validated on this very
 # target (Ubuntu Studio, set/2026: Dragonfly Hall/Plate, ZamVerb, LSP

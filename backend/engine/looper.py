@@ -108,6 +108,17 @@ def stop() -> None:
     _overdub_events = []
 
 
+async def play_start(pads: list[dict], settings: dict) -> None:
+    """Resumes playback of the recorded loop after a stop() (which keeps the
+    events); clear() is what actually erases them."""
+    global _state, _started_at, _task
+    if _state != "stopped" or not _events or not _loop_duration:
+        return
+    _state = "playing"
+    _started_at = time.time()
+    _task = asyncio.create_task(_playback_loop(pads, settings))
+
+
 def clear() -> None:
     global _events, _loop_duration
     stop()

@@ -221,6 +221,22 @@
         </div>
         <button class="secondary-btn" id="controller-learn-btn-looper_record_toggle" type="button">Aprender</button>
       </li>
+      <li class="settings-row" data-controller-action="looper_play_toggle">
+        <div class="settings-text">
+          <span class="settings-label">Play (Looper)</span>
+          <span class="settings-desc">Toca o loop gravado; se já estiver tocando, para. Não apaga a gravação — "Limpar" apaga.</span>
+          <div class="controller-bindings-chips" id="controller-bindings-looper_play_toggle"></div>
+        </div>
+        <button class="secondary-btn" id="controller-learn-btn-looper_play_toggle" type="button">Aprender</button>
+      </li>
+      <li class="settings-row" data-controller-action="looper_overdub_toggle">
+        <div class="settings-text">
+          <span class="settings-label">Sobrepor (Looper)</span>
+          <span class="settings-desc">Entra/sai da sobreposição sobre o loop que está tocando, igual ao botão "+ Sobrepor" da tela.</span>
+          <div class="controller-bindings-chips" id="controller-bindings-looper_overdub_toggle"></div>
+        </div>
+        <button class="secondary-btn" id="controller-learn-btn-looper_overdub_toggle" type="button">Aprender</button>
+      </li>
       <li class="settings-row" data-controller-action="kit_next">
         <div class="settings-text">
           <span class="settings-label">Próximo kit</span>
@@ -228,6 +244,14 @@
           <div class="controller-bindings-chips" id="controller-bindings-kit_next"></div>
         </div>
         <button class="secondary-btn" id="controller-learn-btn-kit_next" type="button">Aprender</button>
+      </li>
+      <li class="settings-row" data-controller-action="kit_prev">
+        <div class="settings-text">
+          <span class="settings-label">Kit anterior</span>
+          <span class="settings-desc">Volta para o kit anterior da aba Performance em segundo plano, sem trocar de aba. Pode vincular mais de um botão à mesma ação.</span>
+          <div class="controller-bindings-chips" id="controller-bindings-kit_prev"></div>
+        </div>
+        <button class="secondary-btn" id="controller-learn-btn-kit_prev" type="button">Aprender</button>
       </li>
     </ul>
   </main>
@@ -239,6 +263,7 @@
         <button id="modal-close" class="icon-btn" type="button">✕</button>
       </div>
       <input id="modal-search" type="search" placeholder="Buscar som...">
+      <div class="breadcrumb" id="modal-breadcrumb"></div>
       <div class="modal-actions">
         <span class="modal-note-label">Nota MIDI: <strong id="modal-note-value">--</strong></span>
         <button id="modal-learn-note-btn" class="secondary-btn" type="button">Aprender nota</button>

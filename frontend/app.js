@@ -7,6 +7,8 @@
     soundBrowserPath: [],
     soundBrowserView: { folders: [], samples: [] },
     selectedSoundIds: new Set(),
+    modalSoundPath: [],
+    modalSoundView: { folders: [], samples: [] },
     knobs: [],
     knobTargets: { global: [], pads: {} },
     pendingLearn: null,
@@ -69,6 +71,7 @@
     modalTitle: document.getElementById("modal-pad-title"),
     modalClose: document.getElementById("modal-close"),
     modalSearch: document.getElementById("modal-search"),
+    modalBreadcrumb: document.getElementById("modal-breadcrumb"),
     modalClear: document.getElementById("modal-clear"),
     modalSoundList: document.getElementById("modal-sound-list"),
     modalNoteValue: document.getElementById("modal-note-value"),
@@ -90,8 +93,14 @@
     settingVelocity: document.getElementById("setting-velocity"),
     controllerBindingsLooperRecordToggle: document.getElementById("controller-bindings-looper_record_toggle"),
     controllerLearnBtnLooperRecordToggle: document.getElementById("controller-learn-btn-looper_record_toggle"),
+    controllerBindingsLooperPlayToggle: document.getElementById("controller-bindings-looper_play_toggle"),
+    controllerLearnBtnLooperPlayToggle: document.getElementById("controller-learn-btn-looper_play_toggle"),
+    controllerBindingsLooperOverdubToggle: document.getElementById("controller-bindings-looper_overdub_toggle"),
+    controllerLearnBtnLooperOverdubToggle: document.getElementById("controller-learn-btn-looper_overdub_toggle"),
     controllerBindingsKitNext: document.getElementById("controller-bindings-kit_next"),
     controllerLearnBtnKitNext: document.getElementById("controller-learn-btn-kit_next"),
+    controllerBindingsKitPrev: document.getElementById("controller-bindings-kit_prev"),
+    controllerLearnBtnKitPrev: document.getElementById("controller-learn-btn-kit_prev"),
     sequencerPlayBtn: document.getElementById("sequencer-play-btn"),
     sequencerBpm: document.getElementById("sequencer-bpm"),
     sequencerClearBtn: document.getElementById("sequencer-clear-btn"),
@@ -420,6 +429,50 @@
       btn.textContent = segment;
       btn.addEventListener("click", () => navigateToFolder(state.soundBrowserPath.slice(0, i + 1)));
       el.soundBreadcrumb.appendChild(btn);
+    });
+  }
+
+  // Mirrors currentSoundFolder/loadSoundBrowser/navigateToFolder/
+  // renderBreadcrumb above, but for the pad-assign modal's own folder
+  // position - kept separate so browsing inside the modal never disturbs
+  // (or gets disturbed by) whatever folder the Sons tab is showing.
+  function currentModalSoundFolder() {
+    return state.modalSoundPath.join("/");
+  }
+
+  async function loadModalSoundBrowser() {
+    const res = await fetch(`/api/sounds/browse?folder=${encodeURIComponent(currentModalSoundFolder())}`);
+    state.modalSoundView = await res.json();
+    renderModalSoundList(el.modalSearch.value);
+  }
+
+  function navigateModalToFolder(path) {
+    state.modalSoundPath = path;
+    el.modalSearch.value = "";
+    loadModalSoundBrowser();
+  }
+
+  function renderModalBreadcrumb() {
+    el.modalBreadcrumb.innerHTML = "";
+    const rootBtn = document.createElement("button");
+    rootBtn.type = "button";
+    rootBtn.className = "breadcrumb-item";
+    rootBtn.textContent = "Sons";
+    rootBtn.addEventListener("click", () => navigateModalToFolder([]));
+    el.modalBreadcrumb.appendChild(rootBtn);
+
+    state.modalSoundPath.forEach((segment, i) => {
+      const sep = document.createElement("span");
+      sep.className = "breadcrumb-sep";
+      sep.textContent = "/";
+      el.modalBreadcrumb.appendChild(sep);
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "breadcrumb-item";
+      btn.textContent = segment;
+      btn.addEventListener("click", () => navigateModalToFolder(state.modalSoundPath.slice(0, i + 1)));
+      el.modalBreadcrumb.appendChild(btn);
     });
   }
 
@@ -1152,9 +1205,21 @@
       chips: el.controllerBindingsLooperRecordToggle,
       btn: el.controllerLearnBtnLooperRecordToggle,
     },
+    looper_play_toggle: {
+      chips: el.controllerBindingsLooperPlayToggle,
+      btn: el.controllerLearnBtnLooperPlayToggle,
+    },
+    looper_overdub_toggle: {
+      chips: el.controllerBindingsLooperOverdubToggle,
+      btn: el.controllerLearnBtnLooperOverdubToggle,
+    },
     kit_next: {
       chips: el.controllerBindingsKitNext,
       btn: el.controllerLearnBtnKitNext,
+    },
+    kit_prev: {
+      chips: el.controllerBindingsKitPrev,
+      btn: el.controllerLearnBtnKitPrev,
     },
   };
 
@@ -1229,7 +1294,8 @@
     el.modalTitle.textContent = `Pad ${padNumber} — escolher som`;
     el.modalSearch.value = "";
     el.modalClear.disabled = !pad || !pad.sample_id;
-    renderModalSoundList("");
+    state.modalSoundPath = [];
+    loadModalSoundBrowser();
     renderNoteLearnButton();
     el.modal.classList.remove("hidden");
     el.modalSearch.focus();
@@ -1264,22 +1330,63 @@
 
   function renderModalSoundList(filterText) {
     el.modalSoundList.innerHTML = "";
-    const filtered = state.sounds.filter(s =>
-      s.display_name.toLowerCase().includes(filterText.toLowerCase())
-    );
-    if (filtered.length === 0) {
-      el.modalSoundList.innerHTML = `<li class="sound-item"><span class="sound-name">Nenhum som encontrado.</span></li>`;
+    const query = filterText.trim().toLowerCase();
+
+    if (query) {
+      // Search mode: ignore the current folder and look across everything,
+      // matching the folder path too (so typing a folder name works) -
+      // each hit keeps its folder hint since results can span folders.
+      el.modalBreadcrumb.innerHTML = "";
+      const filtered = state.sounds.filter(s =>
+        s.display_name.toLowerCase().includes(query) || s.folder.toLowerCase().includes(query)
+      );
+      if (filtered.length === 0) {
+        el.modalSoundList.innerHTML = `<li class="sound-item"><span class="sound-name">Nenhum som encontrado.</span></li>`;
+        return;
+      }
+      for (const sound of filtered) {
+        const li = document.createElement("li");
+        li.className = "sound-item";
+        li.innerHTML = `
+          <button class="icon-btn play-btn" title="Ouvir">▶</button>
+          <span class="sound-name">
+            ${escapeHtml(sound.display_name)}
+            ${sound.folder ? `<span class="sound-folder-hint">${escapeHtml(sound.folder)}</span>` : ""}
+          </span>
+        `;
+        li.querySelector(".play-btn").addEventListener("click", (e) => {
+          e.stopPropagation();
+          playPreview(sound.id);
+        });
+        li.querySelector(".sound-name").addEventListener("click", () => assignSound(sound.id));
+        el.modalSoundList.appendChild(li);
+      }
       return;
     }
-    for (const sound of filtered) {
+
+    // Browse mode: navigate the same folder tree as the Sons tab, one
+    // level at a time, via the modal's own path (state.modalSoundPath).
+    renderModalBreadcrumb();
+    const { folders, samples } = state.modalSoundView;
+    if (folders.length === 0 && samples.length === 0) {
+      el.modalSoundList.innerHTML = `<li class="sound-item"><span class="sound-name">Pasta vazia.</span></li>`;
+      return;
+    }
+
+    for (const name of folders) {
+      const li = document.createElement("li");
+      li.className = "sound-item folder-item";
+      li.innerHTML = `<span class="sound-name">📁 ${escapeHtml(name)}</span>`;
+      li.addEventListener("click", () => navigateModalToFolder([...state.modalSoundPath, name]));
+      el.modalSoundList.appendChild(li);
+    }
+
+    for (const sound of samples) {
       const li = document.createElement("li");
       li.className = "sound-item";
       li.innerHTML = `
         <button class="icon-btn play-btn" title="Ouvir">▶</button>
-        <span class="sound-name">
-          ${escapeHtml(sound.display_name)}
-          ${sound.folder ? `<span class="sound-folder-hint">${escapeHtml(sound.folder)}</span>` : ""}
-        </span>
+        <span class="sound-name">${escapeHtml(sound.display_name)}</span>
       `;
       li.querySelector(".play-btn").addEventListener("click", (e) => {
         e.stopPropagation();

@@ -146,9 +146,14 @@ _pending_note_learn: Optional[int] = None  # pad_number waiting for a physical h
 # action instead of a pad or a knob param. Checked before pad-note-learn/
 # pad-trigger in _handle_note and before knob-learn/CC-target in _handle_cc,
 # so a dedicated control never accidentally plays a pad or tweaks a knob.
-CONTROLLER_ACTIONS = ("kit_next", "looper_record_toggle")
+CONTROLLER_ACTIONS = ("kit_next", "kit_prev", "looper_record_toggle", "looper_play_toggle", "looper_overdub_toggle")
 _pending_controller_learn: Optional[str] = None  # action waiting for a physical signal, or None
-_kit_next_lock = asyncio.Lock()
+_kit_switch_lock = asyncio.Lock()
+# Last CC value seen per CC-bound controller action. Buttons fire on the
+# rising edge (0 -> nonzero) only: a momentary button sends a burst of
+# nonzero values while held and 0 on release, and each message must NOT
+# re-trigger the action or a single press would switch kits repeatedly.
+_cc_action_last_values: dict[int, int] = {}
 
 # --- Knob MIDI-learn state -------------------------------------------------
 # The MIDI input callback fires on mido/rtmidi's own thread; everything here
@@ -254,14 +259,32 @@ async def _dispatch_controller_action(action: str) -> None:
             looper.record_start()
         await _broadcast_looper()
         await manager.broadcast({"type": "navigate", "view": "looper"})
-    elif action == "kit_next":
-        async with _kit_next_lock:
+    elif action == "looper_play_toggle":
+        if looper.get_state()["state"] in ("playing", "overdubbing"):
+            looper.stop()
+        else:
+            await looper.play_start(storage.list_pads(), storage.get_settings())
+        await _broadcast_looper()
+        await manager.broadcast({"type": "navigate", "view": "looper"})
+    elif action == "looper_overdub_toggle":
+        if looper.get_state()["state"] == "overdubbing":
+            looper.overdub_stop()
+        else:
+            looper.overdub_start()
+        await _broadcast_looper()
+        await manager.broadcast({"type": "navigate", "view": "looper"})
+    elif action in ("kit_next", "kit_prev"):
+        async with _kit_switch_lock:
             kits = storage.list_kits()
             if not kits:
                 return
             current_id = storage.get_settings().get("current_kit_id") or ""
             idx = next((i for i, k in enumerate(kits) if str(k["id"]) == current_id), -1)
-            next_kit_id = kits[(idx + 1) % len(kits)]["id"]
+            if idx == -1:
+                # No current kit: land on the first one going forward, the
+                # last one going backward.
+                idx = len(kits) if action == "kit_prev" else 0
+            next_kit_id = kits[(idx + 1) % len(kits)]["id"] if action == "kit_next" else kits[(idx - 1) % len(kits)]["id"]
             kit = storage.load_kit(next_kit_id)
             storage.set_setting("current_kit_id", str(next_kit_id))
             await _apply_kit_and_broadcast(kit)
@@ -278,7 +301,10 @@ def _handle_cc(control: int, value: int) -> None:
 
     bound_action = storage.get_action_for_signal("cc", control)
     if bound_action is not None:
-        asyncio.create_task(_dispatch_controller_action(bound_action))
+        last_value = _cc_action_last_values.get(control, 0)
+        _cc_action_last_values[control] = value
+        if value > 0 and last_value == 0:
+            asyncio.create_task(_dispatch_controller_action(bound_action))
         return
 
     if _pending_learn is not None:
@@ -585,6 +611,8 @@ async def trigger_pad(pad_number: int):
     sent = await trigger.trigger_pad(pad_number, pads, 100, storage.get_settings())
     if sent:
         _queue_pad_hit(pad_number, 100)
+        if looper.get_state()["state"] in ("recording", "overdubbing"):
+            looper.record_event(pad_number, 100)
     return {"ok": sent}
 
 

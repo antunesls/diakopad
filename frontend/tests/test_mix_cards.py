@@ -69,6 +69,19 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn('class="sound-select folder-select"', app)
         self.assertIn("toggleSoundSelection", app)
 
+    def test_modal_de_atribuicao_navega_por_pastas(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="modal-breadcrumb"', html)
+        self.assertIn("state.modalSoundPath", app)
+        self.assertIn("state.modalSoundView", app)
+        self.assertIn("function loadModalSoundBrowser", app)
+        self.assertIn("function navigateModalToFolder", app)
+        self.assertIn("function renderModalBreadcrumb", app)
+        # A busca ativa ignora a pasta atual e também casa pelo nome da pasta.
+        self.assertIn("s.folder.toLowerCase().includes(query)", app)
+
     def test_upload_ignora_arquivos_que_nao_sao_audio(self):
         app = (FRONTEND / "app.js").read_text(encoding="utf-8")
 

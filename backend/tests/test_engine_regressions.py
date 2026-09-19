@@ -3,7 +3,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import storage
 from engine import looper, metronome, metronome_sounds, sequencer, tempo, trigger
@@ -187,6 +187,37 @@ class LooperOverdubTests(unittest.TestCase):
         looper._state = "playing"
         looper.record_event(1, 100)
         self.assertEqual(looper._events, [])
+
+
+class LooperPlayToggleTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        LooperOverdubTests._reset_looper()
+
+    def tearDown(self):
+        LooperOverdubTests._reset_looper()
+
+    async def test_play_start_resumes_a_stopped_loop_with_events(self):
+        looper._state = "stopped"
+        looper._events = [{"offset": 0.1, "pad_number": 1, "velocity": 100}]
+        looper._loop_duration = 2.0
+
+        with patch("engine.looper.trigger.trigger_pad", new=AsyncMock()):
+            await looper.play_start([], {})
+
+            self.assertEqual(looper.get_state()["state"], "playing")
+            self.assertIsNotNone(looper._task)
+
+            looper._task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await looper._task
+
+    async def test_play_start_is_a_no_op_without_a_recorded_loop(self):
+        looper._state = "stopped"
+
+        await looper.play_start([], {})
+
+        self.assertEqual(looper.get_state()["state"], "stopped")
+        self.assertIsNone(looper._task)
 
 
 if __name__ == "__main__":

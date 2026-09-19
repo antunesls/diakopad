@@ -70,6 +70,20 @@ class SfizzRecoveryQueueTests(unittest.TestCase):
 
 
 class PadTriggerEndpointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_screen_trigger_while_recording_feeds_the_looper(self):
+        pads = [{"pad_number": 1, "midi_note": 36}]
+        with (
+            patch("app.storage.list_pads", return_value=pads),
+            patch("app.storage.get_settings", return_value={}),
+            patch("app.trigger.trigger_pad", new=AsyncMock(return_value=True)),
+            patch("app.looper.get_state", return_value={"state": "recording"}),
+            patch("app.looper.record_event") as record_event,
+        ):
+            result = await trigger_pad_endpoint(3)
+
+        self.assertTrue(result["ok"])
+        record_event.assert_called_once_with(3, 100)
+
     async def test_screen_trigger_sends_the_selected_pad_and_broadcasts_its_hit(self):
         pads = [{"pad_number": 1, "midi_note": 36}]
         with (
@@ -439,6 +453,31 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
 
+    async def test_handle_cc_bound_action_fires_once_per_button_press(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            storage.add_controller_binding("kit_next", "cc", 20)
+            with patch("app._dispatch_controller_action", new=AsyncMock()) as dispatch:
+                # A momentary button: a burst of nonzero values while held,
+                # then 0 on release - must dispatch exactly once.
+                diakopad_app._handle_cc(20, 127)
+                diakopad_app._handle_cc(20, 127)
+                diakopad_app._handle_cc(20, 126)
+                diakopad_app._handle_cc(20, 0)
+                await asyncio.sleep(0)
+
+                dispatch.assert_awaited_once_with("kit_next")
+
+                # Re-armed by the release: a new press dispatches again.
+                diakopad_app._handle_cc(20, 127)
+                await asyncio.sleep(0)
+
+                self.assertEqual(dispatch.await_count, 2)
+        finally:
+            diakopad_app._cc_action_last_values.clear()
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
     async def test_handle_note_captures_a_pending_learn_instead_of_dispatching(self):
         temp_ctx, original_db_path = self._with_temp_db()
         diakopad_app._pending_controller_learn = "kit_next"
@@ -490,6 +529,60 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
         record_start.assert_not_called()
         broadcast.assert_awaited_once_with({"type": "navigate", "view": "looper"})
 
+    async def test_looper_play_toggle_stops_a_running_loop(self):
+        with (
+            patch("app.looper.get_state", return_value={"state": "playing"}),
+            patch("app.looper.stop") as stop,
+            patch("app.looper.play_start", new=AsyncMock()) as play_start,
+            patch("app._broadcast_looper", new=AsyncMock()),
+            patch("app.manager.broadcast", new=AsyncMock()),
+        ):
+            await diakopad_app._dispatch_controller_action("looper_play_toggle")
+
+        stop.assert_called_once()
+        play_start.assert_not_awaited()
+
+    async def test_looper_play_toggle_resumes_a_stopped_loop(self):
+        with (
+            patch("app.looper.get_state", return_value={"state": "stopped"}),
+            patch("app.looper.stop") as stop,
+            patch("app.looper.play_start", new=AsyncMock()) as play_start,
+            patch("app.storage.list_pads", return_value=[]),
+            patch("app.storage.get_settings", return_value={}),
+            patch("app._broadcast_looper", new=AsyncMock()),
+            patch("app.manager.broadcast", new=AsyncMock()),
+        ):
+            await diakopad_app._dispatch_controller_action("looper_play_toggle")
+
+        play_start.assert_awaited_once_with([], {})
+        stop.assert_not_called()
+
+    async def test_looper_overdub_toggle_starts_overdub_when_playing(self):
+        with (
+            patch("app.looper.get_state", return_value={"state": "playing"}),
+            patch("app.looper.overdub_start") as overdub_start,
+            patch("app.looper.overdub_stop") as overdub_stop,
+            patch("app._broadcast_looper", new=AsyncMock()),
+            patch("app.manager.broadcast", new=AsyncMock()),
+        ):
+            await diakopad_app._dispatch_controller_action("looper_overdub_toggle")
+
+        overdub_start.assert_called_once()
+        overdub_stop.assert_not_called()
+
+    async def test_looper_overdub_toggle_closes_overdub_when_overdubbing(self):
+        with (
+            patch("app.looper.get_state", return_value={"state": "overdubbing"}),
+            patch("app.looper.overdub_start") as overdub_start,
+            patch("app.looper.overdub_stop") as overdub_stop,
+            patch("app._broadcast_looper", new=AsyncMock()),
+            patch("app.manager.broadcast", new=AsyncMock()),
+        ):
+            await diakopad_app._dispatch_controller_action("looper_overdub_toggle")
+
+        overdub_stop.assert_called_once()
+        overdub_start.assert_not_called()
+
     async def test_kit_next_advances_and_wraps_around_to_the_first_kit(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
@@ -502,6 +595,22 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
 
             apply_kit.assert_awaited_once()
             self.assertEqual(storage.get_settings()["current_kit_id"], str(kit_a))
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    async def test_kit_prev_moves_backwards_and_wraps_around_to_the_last_kit(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            kit_a = storage.save_kit("a", storage.list_pads(), storage.list_pad_effects())
+            kit_b = storage.save_kit("b", storage.list_pads(), storage.list_pad_effects())
+            storage.set_setting("current_kit_id", str(kit_a))
+
+            with patch("app._apply_kit_and_broadcast", new=AsyncMock()) as apply_kit:
+                await diakopad_app._dispatch_controller_action("kit_prev")
+
+            apply_kit.assert_awaited_once()
+            self.assertEqual(storage.get_settings()["current_kit_id"], str(kit_b))
         finally:
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()

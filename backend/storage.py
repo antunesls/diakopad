@@ -120,6 +120,20 @@ CREATE TABLE IF NOT EXISTS kit_effects (
     FOREIGN KEY (kit_id) REFERENCES kits(id) ON DELETE CASCADE
 );
 
+-- Binds a physical MIDI signal (note or CC) to a fixed logical action, for
+-- SMC-PAD controls that have no on-screen equivalent (the "Gravar" button,
+-- the side arrow, the "bak" pad). One action can have several bindings
+-- (e.g. both the arrow and "bak" pointing at "kit_next"); one signal can
+-- only point at one action - re-learning a signal replaces its old binding
+-- instead of adding a second one.
+CREATE TABLE IF NOT EXISTS controller_bindings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    action TEXT NOT NULL,
+    midi_type TEXT NOT NULL CHECK (midi_type IN ('note', 'cc')),
+    number INTEGER NOT NULL,
+    UNIQUE (midi_type, number)
+);
+
 -- Named snapshots of the sequencer_steps grid (same relationship as
 -- kits/kit_pads have to pads), so a set can flip between programmed
 -- patterns instead of only ever editing the one live grid.
@@ -163,6 +177,11 @@ DEFAULT_SETTINGS = {
     "metronome_signature": "4_4",
     "master_volume": "100",
     "master_muted": "0",
+    # Which kit is currently loaded in the engine. Empty string = none/
+    # unknown (fresh install, or a kit deleted while it was current) - kept
+    # server-side so a hardware-triggered "next kit" knows where to advance
+    # from without depending on any one browser tab's local state.
+    "current_kit_id": "",
 }
 
 # Default note layout: sequential from 36 (C1), matches a typical MPC-style
@@ -484,6 +503,65 @@ def get_knob_target(cc_number: int) -> Optional[dict]:
             (cc_number,),
         ).fetchone()
         return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def list_controller_bindings() -> dict[str, list[dict]]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, action, midi_type, number FROM controller_bindings ORDER BY action, midi_type, number"
+        ).fetchall()
+        grouped: dict[str, list[dict]] = {}
+        for r in rows:
+            grouped.setdefault(r["action"], []).append(
+                {"id": r["id"], "midi_type": r["midi_type"], "number": r["number"]}
+            )
+        return grouped
+    finally:
+        conn.close()
+
+
+def add_controller_binding(action: str, midi_type: str, number: int) -> int:
+    """Binds a physical signal to an action, replacing any existing binding
+    for that same signal (a signal only ever means one action) - but unlike
+    knob mappings, does NOT clear other bindings already pointing at this
+    action, since one action can have several signals (e.g. arrow + bak)."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "DELETE FROM controller_bindings WHERE midi_type = ? AND number = ?",
+            (midi_type, number),
+        )
+        cursor = conn.execute(
+            "INSERT INTO controller_bindings (action, midi_type, number) VALUES (?, ?, ?)",
+            (action, midi_type, number),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def delete_controller_binding(binding_id: int) -> bool:
+    conn = get_connection()
+    try:
+        cursor = conn.execute("DELETE FROM controller_bindings WHERE id = ?", (binding_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_action_for_signal(midi_type: str, number: int) -> Optional[str]:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT action FROM controller_bindings WHERE midi_type = ? AND number = ?",
+            (midi_type, number),
+        ).fetchone()
+        return row["action"] if row else None
     finally:
         conn.close()
 

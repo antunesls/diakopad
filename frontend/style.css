@@ -558,6 +558,35 @@ html, body {
   cursor: pointer;
 }
 
+.controller-bindings-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.controller-binding-empty {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.controller-binding-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel-alt);
+  border-radius: 20px;
+  padding: 4px 6px 4px 10px;
+  font-size: 13px;
+}
+
+.controller-binding-chip .delete-btn {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+  border-radius: 50%;
+}
+
 .danger-btn {
   background: var(--danger);
   color: white;

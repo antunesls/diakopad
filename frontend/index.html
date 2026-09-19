@@ -209,6 +209,27 @@
         </label>
       </li>
     </ul>
+
+    <h2 class="tab-note">Controles dedicados do SMC-PAD</h2>
+    <p class="tab-note">Vincule botões físicos sem tela equivalente a uma ação do app. Aperte "Aprender" e depois o botão/pad no controlador.</p>
+    <ul class="settings-list">
+      <li class="settings-row" data-controller-action="looper_record_toggle">
+        <div class="settings-text">
+          <span class="settings-label">Gravar (Looper)</span>
+          <span class="settings-desc">Abre a aba Looper e inicia/para a gravação, igual ao botão "● Gravar" da tela.</span>
+          <div class="controller-bindings-chips" id="controller-bindings-looper_record_toggle"></div>
+        </div>
+        <button class="secondary-btn" id="controller-learn-btn-looper_record_toggle" type="button">Aprender</button>
+      </li>
+      <li class="settings-row" data-controller-action="kit_next">
+        <div class="settings-text">
+          <span class="settings-label">Próximo kit</span>
+          <span class="settings-desc">Avança para o próximo kit da aba Performance em segundo plano, sem trocar de aba. Pode vincular mais de um botão (ex.: a seta e o pad "bak") à mesma ação.</span>
+          <div class="controller-bindings-chips" id="controller-bindings-kit_next"></div>
+        </div>
+        <button class="secondary-btn" id="controller-learn-btn-kit_next" type="button">Aprender</button>
+      </li>
+    </ul>
   </main>
 
   <div id="assign-modal" class="modal hidden">

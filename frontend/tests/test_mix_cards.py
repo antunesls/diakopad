@@ -37,6 +37,11 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn("font-size: clamp(64px, 14vw, 96px);", css)
         self.assertIn("width: 180px;", css)
 
+    def test_indicador_midi_exibe_a_oitava_explicitamente(self):
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("· Oitava ${Math.floor(note / 12) - 2}", app)
+
     def test_biblioteca_aceita_selecao_e_arrasto_de_pastas(self):
         html = (FRONTEND / "index.html").read_text(encoding="utf-8")
         app = (FRONTEND / "app.js").read_text(encoding="utf-8")

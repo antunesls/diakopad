@@ -27,6 +27,7 @@
     kitIndex: 0,
     patterns: [],
     patternIndex: 0,
+    controllerActions: { bindings: {}, pending_learn: null },
   };
 
   const knobPicker = { step: null, scope: null, padNumber: null };
@@ -87,6 +88,10 @@
     previewAudio: document.getElementById("preview-audio"),
     settingSustain: document.getElementById("setting-sustain"),
     settingVelocity: document.getElementById("setting-velocity"),
+    controllerBindingsLooperRecordToggle: document.getElementById("controller-bindings-looper_record_toggle"),
+    controllerLearnBtnLooperRecordToggle: document.getElementById("controller-learn-btn-looper_record_toggle"),
+    controllerBindingsKitNext: document.getElementById("controller-bindings-kit_next"),
+    controllerLearnBtnKitNext: document.getElementById("controller-learn-btn-kit_next"),
     sequencerPlayBtn: document.getElementById("sequencer-play-btn"),
     sequencerBpm: document.getElementById("sequencer-bpm"),
     sequencerClearBtn: document.getElementById("sequencer-clear-btn"),
@@ -297,7 +302,7 @@
   }
 
   function showMidiNote(note) {
-    el.midiNoteIndicator.textContent = `MIDI: ${formatMidiNote(note)} (${note})`;
+    el.midiNoteIndicator.textContent = `MIDI: ${formatMidiNote(note)} (${note}) · Oitava ${Math.floor(note / 12) - 2}`;
     clearTimeout(midiNoteHitTimer);
     el.midiNoteIndicator.classList.remove("hit");
     void el.midiNoteIndicator.offsetWidth;
@@ -1142,6 +1147,46 @@
     });
   });
 
+  const CONTROLLER_ACTION_ELS = {
+    looper_record_toggle: {
+      chips: el.controllerBindingsLooperRecordToggle,
+      btn: el.controllerLearnBtnLooperRecordToggle,
+    },
+    kit_next: {
+      chips: el.controllerBindingsKitNext,
+      btn: el.controllerLearnBtnKitNext,
+    },
+  };
+
+  function renderControllerActions() {
+    for (const [action, els] of Object.entries(CONTROLLER_ACTION_ELS)) {
+      const bindings = state.controllerActions.bindings[action] || [];
+      els.chips.innerHTML = bindings.length
+        ? ""
+        : `<span class="controller-binding-empty">Nenhum controle vinculado ainda.</span>`;
+      for (const b of bindings) {
+        const chip = document.createElement("span");
+        chip.className = "controller-binding-chip";
+        chip.innerHTML = `${b.midi_type === "note" ? "Nota" : "CC"} ${b.number} <button class="icon-btn delete-btn" title="Remover">✕</button>`;
+        chip.querySelector(".delete-btn").addEventListener("click", () => {
+          fetch(`/api/controller-actions/bindings/${b.id}`, { method: "DELETE" });
+        });
+        els.chips.appendChild(chip);
+      }
+      const waiting = state.controllerActions.pending_learn === action;
+      els.btn.textContent = waiting ? "Aperte o botão..." : "Aprender";
+      els.btn.classList.toggle("waiting", waiting);
+    }
+  }
+
+  for (const [action, els] of Object.entries(CONTROLLER_ACTION_ELS)) {
+    els.btn.addEventListener("click", () => {
+      const waiting = state.controllerActions.pending_learn === action;
+      const endpoint = waiting ? "/api/controller-actions/learn/cancel" : `/api/controller-actions/${action}/learn`;
+      fetch(endpoint, { method: "POST" });
+    });
+  }
+
   function playPreview(soundId) {
     el.previewAudio.src = `/api/sounds/${soundId}/audio`;
     el.previewAudio.play().catch(() => {});
@@ -1484,7 +1529,9 @@
         renderMetronomeBeat(msg.beat_in_bar);
       } else if (msg.type === "kits") {
         state.kits = msg.kits;
-        if (state.kitIndex >= state.kits.length) state.kitIndex = 0;
+        const currentIdx = state.kits.findIndex((k) => String(k.id) === String(msg.current_kit_id));
+        if (currentIdx >= 0) state.kitIndex = currentIdx;
+        else if (state.kitIndex >= state.kits.length) state.kitIndex = 0;
         renderKitStrip();
       } else if (msg.type === "patterns") {
         state.patterns = msg.patterns;
@@ -1499,12 +1546,17 @@
           started_at: msg.started_at,
         };
         renderLooper();
+      } else if (msg.type === "controller_actions") {
+        state.controllerActions = { bindings: msg.bindings, pending_learn: msg.pending_learn };
+        renderControllerActions();
+      } else if (msg.type === "navigate") {
+        switchView(msg.view);
       }
     });
   }
 
   async function init() {
-    const [padsRes, soundsRes, knobsRes, settingsRes, padEffectsRes, catalogRes, knobTargetsRes, sequencerRes, looperRes, tempoRes, metronomeRes, metronomeStylesRes, metronomeSignaturesRes, masterRes, engineStatusRes, kitsRes, patternsRes] =
+    const [padsRes, soundsRes, knobsRes, settingsRes, padEffectsRes, catalogRes, knobTargetsRes, sequencerRes, looperRes, tempoRes, metronomeRes, metronomeStylesRes, metronomeSignaturesRes, masterRes, engineStatusRes, kitsRes, patternsRes, controllerActionsRes] =
       await Promise.all([
         fetch("/api/pads"),
         fetch("/api/sounds"),
@@ -1523,6 +1575,7 @@
         fetch("/api/engine/status"),
         fetch("/api/kits"),
         fetch("/api/patterns"),
+        fetch("/api/controller-actions"),
       ]);
     state.pads = await padsRes.json();
     state.sounds = await soundsRes.json();
@@ -1546,10 +1599,12 @@
     if (state.kitIndex >= state.kits.length) state.kitIndex = 0;
     state.patterns = await patternsRes.json();
     if (state.patternIndex >= state.patterns.length) state.patternIndex = 0;
+    state.controllerActions = await controllerActionsRes.json();
 
     renderPads();
     renderKitStrip();
     renderPatternStrip();
+    renderControllerActions();
     await loadSoundBrowser();
     renderVolumes();
     renderSettings();

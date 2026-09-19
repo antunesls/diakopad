@@ -346,5 +346,177 @@ class KitLoadEndpointTests(unittest.IsolatedAsyncioTestCase):
             temp_ctx.cleanup()
 
 
+class ControllerBindingStorageTests(unittest.TestCase):
+    def _with_temp_db(self):
+        temp_ctx = tempfile.TemporaryDirectory()
+        original_db_path = storage.DB_PATH
+        storage.DB_PATH = Path(temp_ctx.name) / "test.db"
+        storage.init_db()
+        return temp_ctx, original_db_path
+
+    def test_relearning_a_signal_replaces_its_old_binding_only(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            storage.add_controller_binding("kit_next", "note", 45)
+            storage.add_controller_binding("kit_next", "cc", 20)
+
+            storage.add_controller_binding("looper_record_toggle", "note", 45)
+
+            self.assertEqual(storage.get_action_for_signal("note", 45), "looper_record_toggle")
+            self.assertEqual(storage.get_action_for_signal("cc", 20), "kit_next")
+            bindings = storage.list_controller_bindings()
+            self.assertEqual(len(bindings["kit_next"]), 1)
+            self.assertEqual(len(bindings["looper_record_toggle"]), 1)
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    def test_one_action_can_have_several_bindings(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            storage.add_controller_binding("kit_next", "note", 10)
+            storage.add_controller_binding("kit_next", "note", 11)
+
+            bindings = storage.list_controller_bindings()["kit_next"]
+            self.assertEqual({b["number"] for b in bindings}, {10, 11})
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    def test_delete_controller_binding(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            binding_id = storage.add_controller_binding("kit_next", "note", 10)
+
+            self.assertTrue(storage.delete_controller_binding(binding_id))
+            self.assertIsNone(storage.get_action_for_signal("note", 10))
+            self.assertFalse(storage.delete_controller_binding(binding_id))
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+
+class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
+    def _with_temp_db(self):
+        temp_ctx = tempfile.TemporaryDirectory()
+        original_db_path = storage.DB_PATH
+        storage.DB_PATH = Path(temp_ctx.name) / "test.db"
+        storage.init_db()
+        return temp_ctx, original_db_path
+
+    async def test_handle_note_dispatches_bound_action_instead_of_a_pad(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            storage.add_controller_binding("kit_next", "note", 45)
+            with (
+                patch("app._dispatch_controller_action", new=AsyncMock()) as dispatch,
+                patch("app._queue_pad_hit") as queue_hit,
+                patch("app.manager.broadcast", new=AsyncMock()),
+            ):
+                diakopad_app._handle_note(45, 100)
+                await asyncio.sleep(0)
+
+            dispatch.assert_awaited_once_with("kit_next")
+            queue_hit.assert_not_called()
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    async def test_handle_cc_dispatches_bound_action_instead_of_a_knob(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            storage.add_controller_binding("looper_record_toggle", "cc", 20)
+            with (
+                patch("app._dispatch_controller_action", new=AsyncMock()) as dispatch,
+                patch("app.storage.get_knob_target") as knob_target,
+            ):
+                diakopad_app._handle_cc(20, 127)
+                await asyncio.sleep(0)
+
+            dispatch.assert_awaited_once_with("looper_record_toggle")
+            knob_target.assert_not_called()
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    async def test_handle_note_captures_a_pending_learn_instead_of_dispatching(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        diakopad_app._pending_controller_learn = "kit_next"
+        try:
+            with patch("app.manager.broadcast", new=AsyncMock()) as broadcast:
+                diakopad_app._handle_note(77, 100)
+                await asyncio.sleep(0)
+
+            self.assertEqual(storage.get_action_for_signal("note", 77), "kit_next")
+            self.assertIsNone(diakopad_app._pending_controller_learn)
+            broadcast.assert_any_await(
+                {
+                    "type": "controller_actions",
+                    "bindings": storage.list_controller_bindings(),
+                    "pending_learn": None,
+                }
+            )
+        finally:
+            diakopad_app._pending_controller_learn = None
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    async def test_looper_record_toggle_starts_when_idle(self):
+        with (
+            patch("app.looper.get_state", return_value={"state": "stopped"}),
+            patch("app.looper.record_start") as record_start,
+            patch("app.looper.record_stop", new=AsyncMock()) as record_stop,
+            patch("app._broadcast_looper", new=AsyncMock()) as broadcast_looper,
+            patch("app.manager.broadcast", new=AsyncMock()) as broadcast,
+        ):
+            await diakopad_app._dispatch_controller_action("looper_record_toggle")
+
+        record_start.assert_called_once()
+        record_stop.assert_not_awaited()
+        broadcast_looper.assert_awaited_once()
+        broadcast.assert_awaited_once_with({"type": "navigate", "view": "looper"})
+
+    async def test_looper_record_toggle_stops_when_recording(self):
+        with (
+            patch("app.looper.get_state", return_value={"state": "recording"}),
+            patch("app.looper.record_start") as record_start,
+            patch("app.looper.record_stop", new=AsyncMock()) as record_stop,
+            patch("app._broadcast_looper", new=AsyncMock()),
+            patch("app.manager.broadcast", new=AsyncMock()) as broadcast,
+        ):
+            await diakopad_app._dispatch_controller_action("looper_record_toggle")
+
+        record_stop.assert_awaited_once()
+        record_start.assert_not_called()
+        broadcast.assert_awaited_once_with({"type": "navigate", "view": "looper"})
+
+    async def test_kit_next_advances_and_wraps_around_to_the_first_kit(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            kit_a = storage.save_kit("a", storage.list_pads(), storage.list_pad_effects())
+            kit_b = storage.save_kit("b", storage.list_pads(), storage.list_pad_effects())
+            storage.set_setting("current_kit_id", str(kit_b))
+
+            with patch("app._apply_kit_and_broadcast", new=AsyncMock()) as apply_kit:
+                await diakopad_app._dispatch_controller_action("kit_next")
+
+            apply_kit.assert_awaited_once()
+            self.assertEqual(storage.get_settings()["current_kit_id"], str(kit_a))
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    async def test_kit_next_is_a_noop_when_there_are_no_kits(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            with patch("app._apply_kit_and_broadcast", new=AsyncMock()) as apply_kit:
+                await diakopad_app._dispatch_controller_action("kit_next")
+
+            apply_kit.assert_not_awaited()
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()

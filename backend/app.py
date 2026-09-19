@@ -140,6 +140,16 @@ _pending_pad_hits: dict[int, int] = {}
 _pad_hit_task: Optional[asyncio.Task] = None
 _pending_note_learn: Optional[int] = None  # pad_number waiting for a physical hit, or None
 
+# --- Controller action bindings ---------------------------------------------
+# Dedicated SMC-PAD controls with no on-screen equivalent (the "Gravar"
+# button, the side arrow, the "bak" pad) get bound here to a fixed logical
+# action instead of a pad or a knob param. Checked before pad-note-learn/
+# pad-trigger in _handle_note and before knob-learn/CC-target in _handle_cc,
+# so a dedicated control never accidentally plays a pad or tweaks a knob.
+CONTROLLER_ACTIONS = ("kit_next", "looper_record_toggle")
+_pending_controller_learn: Optional[str] = None  # action waiting for a physical signal, or None
+_kit_next_lock = asyncio.Lock()
+
 # --- Knob MIDI-learn state -------------------------------------------------
 # The MIDI input callback fires on mido/rtmidi's own thread; everything here
 # only ever runs on the main asyncio loop, reached via call_soon_threadsafe.
@@ -177,8 +187,20 @@ def _handle_note(note: int, velocity: int) -> None:
     ever sees genuine hardware hits - sequencer/looper-triggered notes go
     out DiakoPad-trigger-out straight into each pad's sfizz instance, never
     back through this input port."""
-    global _pending_note_learn
+    global _pending_note_learn, _pending_controller_learn
     asyncio.create_task(_broadcast_midi_note(note, velocity))
+
+    if _pending_controller_learn is not None:
+        action = _pending_controller_learn
+        _pending_controller_learn = None
+        asyncio.create_task(_apply_controller_learn(action, "note", note))
+        return
+
+    bound_action = storage.get_action_for_signal("note", note)
+    if bound_action is not None:
+        asyncio.create_task(_dispatch_controller_action(bound_action))
+        return
+
     if _pending_note_learn is not None:
         pad_number = _pending_note_learn
         _pending_note_learn = None
@@ -209,8 +231,56 @@ async def _broadcast_note_learn() -> None:
     await manager.broadcast({"type": "note_learn", "pending_pad": _pending_note_learn})
 
 
+async def _apply_controller_learn(action: str, midi_type: str, number: int) -> None:
+    storage.add_controller_binding(action, midi_type, number)
+    await _broadcast_controller_actions()
+
+
+async def _broadcast_controller_actions() -> None:
+    await manager.broadcast(
+        {
+            "type": "controller_actions",
+            "bindings": storage.list_controller_bindings(),
+            "pending_learn": _pending_controller_learn,
+        }
+    )
+
+
+async def _dispatch_controller_action(action: str) -> None:
+    if action == "looper_record_toggle":
+        if looper.get_state()["state"] == "recording":
+            await looper.record_stop(storage.list_pads(), storage.get_settings())
+        else:
+            looper.record_start()
+        await _broadcast_looper()
+        await manager.broadcast({"type": "navigate", "view": "looper"})
+    elif action == "kit_next":
+        async with _kit_next_lock:
+            kits = storage.list_kits()
+            if not kits:
+                return
+            current_id = storage.get_settings().get("current_kit_id") or ""
+            idx = next((i for i, k in enumerate(kits) if str(k["id"]) == current_id), -1)
+            next_kit_id = kits[(idx + 1) % len(kits)]["id"]
+            kit = storage.load_kit(next_kit_id)
+            storage.set_setting("current_kit_id", str(next_kit_id))
+            await _apply_kit_and_broadcast(kit)
+            await _broadcast_kits()
+
+
 def _handle_cc(control: int, value: int) -> None:
-    global _pending_learn
+    global _pending_learn, _pending_controller_learn
+    if _pending_controller_learn is not None:
+        action = _pending_controller_learn
+        _pending_controller_learn = None
+        asyncio.create_task(_apply_controller_learn(action, "cc", control))
+        return
+
+    bound_action = storage.get_action_for_signal("cc", control)
+    if bound_action is not None:
+        asyncio.create_task(_dispatch_controller_action(bound_action))
+        return
+
     if _pending_learn is not None:
         storage.set_knob_mapping(
             control, _pending_learn["scope"], _pending_learn["pad_number"], _pending_learn["param"]
@@ -763,6 +833,30 @@ async def set_pad_effect_param(pad_number: int, slot_index: int, body: EffectPar
 # ── Performance kits ─────────────────────────────────────────────────────────
 
 
+async def _apply_kit_and_broadcast(kit: dict) -> None:
+    """Reapplies an already-loaded (storage.load_kit) kit onto the engine
+    and broadcasts pads/pad_effects - shared by the REST load endpoint and
+    the hardware-triggered kit_next dispatch, so neither duplicates the
+    other's engine-reload logic."""
+    global _pad_notes
+    _pad_notes = _build_pad_note_map(storage.list_pads())
+    await orchestrator.apply_all_pads(
+        storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
+    )
+    await _broadcast_pads()
+    await _broadcast_pad_effects()
+
+
+async def _broadcast_kits() -> None:
+    await manager.broadcast(
+        {
+            "type": "kits",
+            "kits": storage.list_kits(),
+            "current_kit_id": storage.get_settings().get("current_kit_id"),
+        }
+    )
+
+
 @app.get("/api/kits")
 def list_kits():
     return storage.list_kits()
@@ -774,7 +868,7 @@ async def save_kit(body: KitRequest):
     if not name:
         raise HTTPException(400, "name must not be empty")
     kit_id = storage.save_kit(name, storage.list_pads(), storage.list_pad_effects())
-    await manager.broadcast({"type": "kits", "kits": storage.list_kits()})
+    await _broadcast_kits()
     return {"ok": True, "kit": {"id": kit_id, "name": name}}
 
 
@@ -782,24 +876,54 @@ async def save_kit(body: KitRequest):
 async def delete_kit(kit_id: int):
     if not storage.delete_kit(kit_id):
         raise HTTPException(404, "kit not found")
-    await manager.broadcast({"type": "kits", "kits": storage.list_kits()})
+    await _broadcast_kits()
     return {"ok": True}
 
 
 @app.post("/api/kits/{kit_id}/load")
 async def load_kit(kit_id: int):
-    global _pad_notes
     kit = storage.load_kit(kit_id)
     if kit is None:
         raise HTTPException(404, "kit not found")
 
-    _pad_notes = _build_pad_note_map(storage.list_pads())
-    await orchestrator.apply_all_pads(
-        storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
-    )
-    await _broadcast_pads()
-    await _broadcast_pad_effects()
+    storage.set_setting("current_kit_id", str(kit_id))
+    await _apply_kit_and_broadcast(kit)
+    await _broadcast_kits()
     return {"ok": True, "kit": {"id": kit["id"], "name": kit["name"]}}
+
+
+# ── Controller actions (dedicated SMC-PAD controls) ──────────────────────────
+
+
+@app.get("/api/controller-actions")
+def get_controller_actions():
+    return {"bindings": storage.list_controller_bindings(), "pending_learn": _pending_controller_learn}
+
+
+@app.post("/api/controller-actions/{action}/learn")
+async def start_controller_learn(action: str):
+    global _pending_controller_learn
+    if action not in CONTROLLER_ACTIONS:
+        raise HTTPException(400, "unknown action")
+    _pending_controller_learn = action
+    await _broadcast_controller_actions()
+    return {"ok": True}
+
+
+@app.post("/api/controller-actions/learn/cancel")
+async def cancel_controller_learn():
+    global _pending_controller_learn
+    _pending_controller_learn = None
+    await _broadcast_controller_actions()
+    return {"ok": True}
+
+
+@app.delete("/api/controller-actions/bindings/{binding_id}")
+async def remove_controller_binding(binding_id: int):
+    if not storage.delete_controller_binding(binding_id):
+        raise HTTPException(404, "binding not found")
+    await _broadcast_controller_actions()
+    return {"ok": True}
 
 
 @app.get("/api/sequencer")
@@ -995,9 +1119,22 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.send_json({"type": "tempo", "bpm": tempo.get()})
         await ws.send_json({"type": "master", **orchestrator.master_state()})
         await ws.send_json({"type": "engine_status", **(await asyncio.to_thread(orchestrator.engine_status))})
-        await ws.send_json({"type": "kits", "kits": storage.list_kits()})
+        await ws.send_json(
+            {
+                "type": "kits",
+                "kits": storage.list_kits(),
+                "current_kit_id": storage.get_settings().get("current_kit_id"),
+            }
+        )
         await ws.send_json({"type": "patterns", "patterns": storage.list_patterns()})
         await ws.send_json({"type": "note_learn", "pending_pad": _pending_note_learn})
+        await ws.send_json(
+            {
+                "type": "controller_actions",
+                "bindings": storage.list_controller_bindings(),
+                "pending_learn": _pending_controller_learn,
+            }
+        )
         await ws.send_json(
             {
                 "type": "metronome",

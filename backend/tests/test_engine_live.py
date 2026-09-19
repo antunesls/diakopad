@@ -57,6 +57,29 @@ class PadApplyResponsivenessTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(elapsed, 0.1)
 
 
+class ApplyAllPadsClearsEmptyPadsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_apply_all_pads_stops_a_pad_that_lost_its_sample(self):
+        """Regression: apply_all_pads used to only call apply_pad() for pads
+        that currently have a filename, so a pad cleared by a kit switch
+        (had a sample in the old kit, none in the new one) was never told
+        to stop - its old sfizz instance kept running, still wired to
+        hardware MIDI, and kept playing the previous kit's sample forever."""
+        pads = [
+            {"pad_number": 1, "filename": "kick.wav"},
+            {"pad_number": 16, "filename": None},
+        ]
+        with (
+            patch("engine.orchestrator.sfz.write_pad_kit", return_value="pad01.sfz"),
+            patch("engine.orchestrator.sfizz_proc.spawn", return_value=True),
+            patch("engine.orchestrator.sfizz_proc.stop") as stop,
+            patch("engine.orchestrator.jackgraph.wait_for_port_async", new=AsyncMock(return_value=True)),
+            patch("engine.orchestrator.jackgraph.connect_pattern_to_all", return_value=True),
+        ):
+            await orchestrator.apply_all_pads(pads, {}, [])
+
+        stop.assert_called_once_with("diakopad_pad16")
+
+
 class SfizzRecoveryQueueTests(unittest.TestCase):
     def test_schedule_recovery_does_not_override_an_existing_backoff(self):
         original_queue = sfizz_proc._next_recovery_at.copy()

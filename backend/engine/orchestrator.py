@@ -287,13 +287,20 @@ async def apply_pad(pad_number: int, pads: list[dict], settings: dict, pad_effec
 
 
 async def apply_all_pads(pads: list[dict], settings: dict, pad_effects: list[dict]) -> None:
-    """Used after a global settings change (sustain/velocity) since that
-    affects every pad's rendered .sfz, not just one."""
+    """Used after a global settings change (sustain/velocity, affects every
+    pad's rendered .sfz) and after a kit switch (which can also CLEAR a
+    pad's sample). Must call apply_pad() for every pad, not just the ones
+    that currently have a filename - apply_pad() is what actually stops a
+    pad's sfizz instance when it has none, and skipping that call for an
+    empty pad here used to leave a just-cleared pad's old instance running
+    (and still wired to hardware MIDI), silently playing the previous kit's
+    sample forever. apply_pad() no-ops cheaply for a pad that's already
+    stopped, so calling it for all 16 costs nothing extra."""
     async def apply_one(pad: dict) -> None:
         async with _apply_semaphore:
             await apply_pad(pad["pad_number"], pads, settings, pad_effects)
 
-    await asyncio.gather(*(apply_one(pad) for pad in pads if pad.get("filename")))
+    await asyncio.gather(*(apply_one(pad) for pad in pads))
 
 
 async def apply_pad_effects(pad_number: int, pad_effects: list[dict]) -> None:

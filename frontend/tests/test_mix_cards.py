@@ -57,6 +57,13 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn("deleteSelectedSounds", app)
         self.assertIn('window.confirm(`Excluir ${selectedIds.length}', app)
 
+    def test_biblioteca_permite_selecionar_pasta_com_seus_sons_removiveis(self):
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("selectableSoundIdsInFolder", app)
+        self.assertIn('class="sound-select folder-select"', app)
+        self.assertIn("toggleSoundSelection", app)
+
     def test_upload_ignora_arquivos_que_nao_sao_audio(self):
         app = (FRONTEND / "app.js").read_text(encoding="utf-8")
 

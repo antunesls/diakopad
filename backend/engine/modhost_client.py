@@ -96,12 +96,23 @@ def start() -> bool:
     logger.info("spawned mod-host (pid %d, control port %d)", _proc.pid, CONTROL_PORT)
     # The parent forks a daemon child and exits immediately; give the child
     # a moment to bind the control port before callers start connecting.
+    opened = False
     for _ in range(25):
         if _port_accepts(0.2):
-            return True
+            opened = True
+            break
         time.sleep(0.2)
-    logger.warning("mod-host daemon did not open control port %d in time", CONTROL_PORT)
-    return False
+    if not opened:
+        logger.warning("mod-host daemon did not open control port %d in time", CONTROL_PORT)
+    # Reap the short-lived forking parent so it doesn't sit as a zombie for
+    # the rest of the daemon's (long) lifetime - it has already exited by
+    # now, win or lose, since forking+exiting is what makes the port
+    # available (or not) in the first place.
+    try:
+        _proc.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        logger.warning("mod-host spawn process (pid %d) did not exit as expected", _proc.pid)
+    return opened
 
 
 def is_configured() -> bool:

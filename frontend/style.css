@@ -61,6 +61,7 @@ html, body {
   border: none;
   color: var(--text-dim);
   padding: 10px 20px;
+  min-height: 44px;
   border-radius: 8px;
   font-size: 15px;
   cursor: pointer;
@@ -1072,6 +1073,7 @@ html, body {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  flex-shrink: 0;
   background: #111319;
   border: 1px solid #353a47;
   border-radius: 14px;
@@ -1079,7 +1081,8 @@ html, body {
 }
 
 .metronome-bpm-control input {
-  width: 180px;
+  width: 4ch;
+  min-width: 4ch;
   padding: 0;
   border: 0;
   outline: 0;
@@ -1101,6 +1104,7 @@ html, body {
 
 .metronome-tap-btn {
   min-width: 92px;
+  flex-shrink: 0;
   border: 1px solid var(--accent-dim);
   border-radius: 14px;
   background: rgba(255, 122, 61, 0.12);
@@ -1171,7 +1175,7 @@ html, body {
   align-items: flex-start;
   gap: 6px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.8px;
   text-transform: uppercase;
@@ -1237,7 +1241,6 @@ html, body {
   .tab { padding: 9px 13px; font-size: 13px; }
   .view { padding: 10px; }
   .metronome-panel { border-radius: 18px; }
-  .metronome-bpm-control input { width: 180px; }
   .metronome-tap-btn { min-width: 76px; }
   .master-control span { display: none; }
   .master-control input { width: 48px; }

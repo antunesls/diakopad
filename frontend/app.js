@@ -375,7 +375,6 @@
 
   function navigateToFolder(path) {
     state.soundBrowserPath = path;
-    state.selectedSoundIds.clear();
     loadSoundBrowser();
   }
 
@@ -408,16 +407,33 @@
     el.soundList.innerHTML = "";
     const { folders, samples } = state.soundBrowserView;
     const inUse = new Set(state.pads.filter(p => p.sample_id).map(p => p.sample_id));
-    const selectableIds = new Set(samples.filter(sound => !inUse.has(sound.id)).map(sound => sound.id));
+    const selectableIds = selectableSoundIdsInFolder(currentSoundFolder(), inUse);
+    const availableIds = new Set(state.sounds.filter(sound => !inUse.has(sound.id)).map(sound => sound.id));
     for (const id of state.selectedSoundIds) {
-      if (!selectableIds.has(id)) state.selectedSoundIds.delete(id);
+      if (!availableIds.has(id)) state.selectedSoundIds.delete(id);
     }
     renderSoundSelectionControls(selectableIds);
 
     for (const name of folders) {
       const li = document.createElement("li");
       li.className = "sound-item folder-item";
-      li.innerHTML = `<span class="sound-name">📁 ${escapeHtml(name)}</span>`;
+      const folderPath = [...state.soundBrowserPath, name].join("/");
+      const folderSelectableIds = selectableSoundIdsInFolder(folderPath, inUse);
+      const folderSelectedCount = [...folderSelectableIds].filter(id => state.selectedSoundIds.has(id)).length;
+      li.innerHTML = `
+        <label class="sound-select folder-select">
+          <input type="checkbox" aria-label="Selecionar pasta ${escapeHtml(name)}" ${folderSelectableIds.size ? "" : "disabled"} ${folderSelectedCount === folderSelectableIds.size && folderSelectableIds.size ? "checked" : ""}>
+        </label>
+        <span class="sound-name">📁 ${escapeHtml(name)}</span>
+      `;
+      const folderCheckbox = li.querySelector(".folder-select input");
+      folderCheckbox.indeterminate = folderSelectedCount > 0 && folderSelectedCount < folderSelectableIds.size;
+      li.querySelector(".folder-select").addEventListener("click", (event) => event.stopPropagation());
+      folderCheckbox.addEventListener("click", (event) => event.stopPropagation());
+      folderCheckbox.addEventListener("change", () => {
+        toggleSoundSelection(folderSelectableIds, folderCheckbox.checked);
+        renderSoundList();
+      });
       li.addEventListener("click", () => navigateToFolder([...state.soundBrowserPath, name]));
       el.soundList.appendChild(li);
     }
@@ -440,8 +456,7 @@
         <button class="icon-btn delete-btn" title="${used ? "Em uso, não pode remover" : "Remover"}" ${used ? "disabled" : ""}>🗑</button>
       `;
       li.querySelector(".sound-select input").addEventListener("change", (event) => {
-        if (event.target.checked) state.selectedSoundIds.add(sound.id);
-        else state.selectedSoundIds.delete(sound.id);
+        toggleSoundSelection([sound.id], event.target.checked);
         renderSoundList();
       });
       li.querySelector(".play-btn").addEventListener("click", () => playPreview(sound.id));
@@ -450,10 +465,27 @@
     }
   }
 
+  function selectableSoundIdsInFolder(folder, inUse) {
+    const prefix = folder ? `${folder}/` : "";
+    return new Set(
+      state.sounds
+        .filter(sound => !inUse.has(sound.id) && (sound.folder === folder || sound.folder.startsWith(prefix)))
+        .map(sound => sound.id)
+    );
+  }
+
+  function toggleSoundSelection(soundIds, selected) {
+    for (const soundId of soundIds) {
+      if (selected) state.selectedSoundIds.add(soundId);
+      else state.selectedSoundIds.delete(soundId);
+    }
+  }
+
   function renderSoundSelectionControls(selectableIds) {
     const selectedCount = state.selectedSoundIds.size;
-    el.selectAllSounds.checked = selectableIds.size > 0 && selectedCount === selectableIds.size;
-    el.selectAllSounds.indeterminate = selectedCount > 0 && selectedCount < selectableIds.size;
+    const selectedInFolder = [...selectableIds].filter(id => state.selectedSoundIds.has(id)).length;
+    el.selectAllSounds.checked = selectableIds.size > 0 && selectedInFolder === selectableIds.size;
+    el.selectAllSounds.indeterminate = selectedInFolder > 0 && selectedInFolder < selectableIds.size;
     el.selectAllSounds.disabled = selectableIds.size === 0;
     el.selectedSoundsCount.textContent = selectedCount === 1 ? "1 selecionado" : `${selectedCount} selecionados`;
     el.deleteSelectedSounds.disabled = selectedCount === 0;
@@ -1124,13 +1156,8 @@
   }
 
   el.selectAllSounds.addEventListener("change", () => {
-    const { samples } = state.soundBrowserView;
     const inUse = new Set(state.pads.filter(p => p.sample_id).map(p => p.sample_id));
-    for (const sound of samples) {
-      if (inUse.has(sound.id)) continue;
-      if (el.selectAllSounds.checked) state.selectedSoundIds.add(sound.id);
-      else state.selectedSoundIds.delete(sound.id);
-    }
+    toggleSoundSelection(selectableSoundIdsInFolder(currentSoundFolder(), inUse), el.selectAllSounds.checked);
     renderSoundList();
   });
   el.deleteSelectedSounds.addEventListener("click", deleteSelectedSounds);

@@ -60,39 +60,44 @@
       <button id="kit-save" class="kit-action" type="button">Salvar</button>
       <button id="kit-delete" class="kit-action danger" type="button">Excluir</button>
     </div>
-    <div class="scene-manager">
-      <input id="scene-search" class="scene-search" type="search" placeholder="Buscar cena...">
-      <ul id="scene-list" class="scene-list"></ul>
-    </div>
     <p class="pad-live-hint">Toque para tocar, segure para trocar o som. ◀ ▶ troca a cena ao vivo (só as ativas).</p>
     <div id="perf-pad-grid" class="pad-grid perf-grid"></div>
   </main>
 
   <main id="view-sounds" class="view hidden">
-    <nav id="sound-breadcrumb" class="breadcrumb"></nav>
-    <div class="sound-selection-toolbar">
-      <label class="sound-select-all">
-        <input id="select-all-sounds" type="checkbox">
-        Selecionar todos
-      </label>
-      <span id="selected-sounds-count" class="selected-sounds-count">Nenhum selecionado</span>
-      <button id="delete-selected-sounds" class="danger-btn" type="button" disabled>Excluir selecionados</button>
+    <div class="library-layout">
+      <section class="library-sounds">
+        <nav id="sound-breadcrumb" class="breadcrumb"></nav>
+        <div class="sound-selection-toolbar">
+          <label class="sound-select-all">
+            <input id="select-all-sounds" type="checkbox">
+            Selecionar todos
+          </label>
+          <span id="selected-sounds-count" class="selected-sounds-count">Nenhum selecionado</span>
+          <button id="delete-selected-sounds" class="danger-btn" type="button" disabled>Excluir selecionados</button>
+        </div>
+        <section class="upload-zone" id="upload-zone">
+          <p>Arraste arquivos ou pastas de som aqui, ou</p>
+          <div class="upload-actions">
+            <label class="upload-btn">
+              Escolher arquivos
+              <input type="file" id="file-input" accept=".wav,.mp3,.ogg,.flac,.aiff,.aif" multiple hidden>
+            </label>
+            <label class="upload-btn upload-folder-btn">
+              Escolher pasta
+              <input type="file" id="folder-input" accept=".wav,.mp3,.ogg,.flac,.aiff,.aif" webkitdirectory directory multiple hidden>
+            </label>
+          </div>
+          <p class="hint">Arquivos vão para a pasta atual. Pastas preservam toda a árvore.</p>
+        </section>
+        <ul id="sound-list" class="sound-list"></ul>
+      </section>
+      <aside class="library-scenes">
+        <h2 class="library-scenes-title">Cenas</h2>
+        <input id="scene-search" class="scene-search" type="search" placeholder="Buscar cena...">
+        <ul id="scene-list" class="scene-list"></ul>
+      </aside>
     </div>
-    <section class="upload-zone" id="upload-zone">
-      <p>Arraste arquivos ou pastas de som aqui, ou</p>
-      <div class="upload-actions">
-        <label class="upload-btn">
-          Escolher arquivos
-          <input type="file" id="file-input" accept=".wav,.mp3,.ogg,.flac,.aiff,.aif" multiple hidden>
-        </label>
-        <label class="upload-btn upload-folder-btn">
-          Escolher pasta
-          <input type="file" id="folder-input" accept=".wav,.mp3,.ogg,.flac,.aiff,.aif" webkitdirectory directory multiple hidden>
-        </label>
-      </div>
-      <p class="hint">Arquivos vão para a pasta atual. Pastas preservam toda a árvore.</p>
-    </section>
-    <ul id="sound-list" class="sound-list"></ul>
   </main>
 
   <main id="view-volumes" class="view hidden">
@@ -257,6 +262,14 @@
           <div class="controller-bindings-chips" id="controller-bindings-panic"></div>
         </div>
         <button class="secondary-btn" id="controller-learn-btn-panic" type="button">Aprender</button>
+      </li>
+      <li class="settings-row" data-controller-action="tap_tempo">
+        <div class="settings-text">
+          <span class="settings-label">Tap do metrônomo</span>
+          <span class="settings-desc">Bata no botão físico no tempo da música para ajustar o BPM global, igual ao botão TAP da tela.</span>
+          <div class="controller-bindings-chips" id="controller-bindings-tap_tempo"></div>
+        </div>
+        <button class="secondary-btn" id="controller-learn-btn-tap_tempo" type="button">Aprender</button>
       </li>
       <li class="settings-row" data-controller-action="looper_record_toggle">
         <div class="settings-text">

@@ -107,6 +107,8 @@
     controllerLearnBtnLooperRecordToggle: document.getElementById("controller-learn-btn-looper_record_toggle"),
     controllerBindingsPanic: document.getElementById("controller-bindings-panic"),
     controllerLearnBtnPanic: document.getElementById("controller-learn-btn-panic"),
+    controllerBindingsTapTempo: document.getElementById("controller-bindings-tap_tempo"),
+    controllerLearnBtnTapTempo: document.getElementById("controller-learn-btn-tap_tempo"),
     controllerBindingsLooperPlayToggle: document.getElementById("controller-bindings-looper_play_toggle"),
     controllerLearnBtnLooperPlayToggle: document.getElementById("controller-learn-btn-looper_play_toggle"),
     controllerBindingsLooperOverdubToggle: document.getElementById("controller-bindings-looper_overdub_toggle"),
@@ -1331,6 +1333,10 @@
     panic: {
       chips: el.controllerBindingsPanic,
       btn: el.controllerLearnBtnPanic,
+    },
+    tap_tempo: {
+      chips: el.controllerBindingsTapTempo,
+      btn: el.controllerLearnBtnTapTempo,
     },
     looper_record_toggle: {
       chips: el.controllerBindingsLooperRecordToggle,

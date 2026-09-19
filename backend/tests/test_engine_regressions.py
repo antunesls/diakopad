@@ -63,6 +63,38 @@ class TempoTests(unittest.TestCase):
             finally:
                 storage.DB_PATH = original_db_path
 
+    def test_register_tap_derives_bpm_from_the_average_interval(self):
+        original_taps = list(tempo._tap_times)
+        try:
+            tempo._tap_times = []
+            self.assertIsNone(tempo.register_tap(now=0.0))
+            self.assertEqual(tempo.register_tap(now=0.5), 120.0)
+            self.assertEqual(tempo.register_tap(now=1.0), 120.0)
+        finally:
+            tempo._tap_times = original_taps
+
+    def test_register_tap_restarts_after_a_pause_longer_than_the_window(self):
+        original_taps = list(tempo._tap_times)
+        try:
+            tempo._tap_times = []
+            tempo.register_tap(now=0.0)
+            tempo.register_tap(now=0.5)
+
+            self.assertIsNone(tempo.register_tap(now=5.0))
+            self.assertEqual(tempo._tap_times, [5.0])
+        finally:
+            tempo._tap_times = original_taps
+
+    def test_register_tap_clamps_to_the_supported_bpm_range(self):
+        original_taps = list(tempo._tap_times)
+        try:
+            tempo._tap_times = []
+            tempo.register_tap(now=0.0)
+
+            self.assertEqual(tempo.register_tap(now=0.01), tempo.MAX_BPM)
+        finally:
+            tempo._tap_times = original_taps
+
 
 class MetronomeTests(unittest.IsolatedAsyncioTestCase):
     async def test_first_beat_uses_the_accent_note_on_the_dedicated_output(self):

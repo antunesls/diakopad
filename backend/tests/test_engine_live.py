@@ -812,6 +812,29 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
         panic.assert_awaited_once_with([{"pad_number": 1}])
         broadcast_master.assert_awaited_once()
 
+    async def test_tap_tempo_controller_action_sets_the_tapped_bpm(self):
+        with (
+            patch("app.tempo.register_tap", return_value=128.0) as register_tap,
+            patch("app.tempo.set") as tempo_set,
+            patch("app._broadcast_tempo", new=AsyncMock()) as broadcast_tempo,
+        ):
+            await diakopad_app._dispatch_controller_action("tap_tempo")
+
+        register_tap.assert_called_once()
+        tempo_set.assert_called_once_with(128.0)
+        broadcast_tempo.assert_awaited_once()
+
+    async def test_tap_tempo_controller_action_waits_for_the_second_tap(self):
+        with (
+            patch("app.tempo.register_tap", return_value=None),
+            patch("app.tempo.set") as tempo_set,
+            patch("app._broadcast_tempo", new=AsyncMock()) as broadcast_tempo,
+        ):
+            await diakopad_app._dispatch_controller_action("tap_tempo")
+
+        tempo_set.assert_not_called()
+        broadcast_tempo.assert_not_awaited()
+
     async def test_apply_scene_restores_global_state_and_transports(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:

@@ -143,12 +143,27 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn('id="controller-learn-btn-panic"', html)
         self.assertIn("panic:", app)
 
-    def test_performance_tem_lista_pesquisavel_de_cenas_com_ativacao(self):
+    def test_config_expoe_midi_learn_para_o_tap_do_metronomo(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('data-controller-action="tap_tempo"', html)
+        self.assertIn('id="controller-learn-btn-tap_tempo"', html)
+        self.assertIn("tap_tempo:", app)
+
+    def test_biblioteca_divide_a_tela_entre_sons_e_lista_de_cenas(self):
         html = (FRONTEND / "index.html").read_text(encoding="utf-8")
         app = (FRONTEND / "app.js").read_text(encoding="utf-8")
 
         self.assertIn('id="scene-search"', html)
         self.assertIn('id="scene-list"', html)
+        self.assertIn('class="library-layout"', html)
+        self.assertIn('class="library-scenes"', html)
+        # The scene list lives inside the Biblioteca view, not Performance.
+        sounds_view = html.split('<main id="view-sounds"', 1)[1].split("</main>", 1)[0]
+        self.assertIn('id="scene-list"', sounds_view)
+        performance_view = html.split('<main id="view-performance"', 1)[1].split("</main>", 1)[0]
+        self.assertNotIn('id="scene-list"', performance_view)
         self.assertIn("function activeKits()", app)
         self.assertIn("function renderSceneList()", app)
         self.assertIn("/active`, {", app)

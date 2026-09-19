@@ -334,11 +334,39 @@ html, body {
 .kit-action:disabled,
 .kit-nav:disabled { opacity: 0.35; cursor: default; }
 
-.scene-manager {
+/* Biblioteca: sounds and the scene list share the screen, each pane with
+   its own scroll (the view itself doesn't scroll). */
+#view-sounds { overflow: hidden; }
+
+.library-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+  gap: 14px;
+  height: 100%;
+}
+
+.library-sounds {
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.library-scenes {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin: 0 0 8px;
+  min-height: 0;
+  padding-left: 14px;
+  border-left: 1px solid #2c313d;
+}
+
+.library-scenes-title {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 
 .scene-search {
@@ -356,9 +384,10 @@ html, body {
   margin: 0;
   padding: 0;
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 6px;
-  max-height: 160px;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -406,7 +435,7 @@ html, body {
 }
 
 .perf-grid {
-  height: calc(100% - 300px);
+  height: calc(100% - 128px);
 }
 
 .perf-grid .pad {
@@ -1440,6 +1469,18 @@ html, body {
   .mix-card .pad-label { font-size: 13px; }
   .mix-card-chevron { margin-left: auto; font-size: 16px; }
   .mix-card-body { padding: 0 8px 8px; }
+  /* Narrow screens: stack the scene list under the sounds and let the view
+     scroll again, instead of two cramped independent panes. */
+  #view-sounds { overflow-y: auto; }
+  .library-layout { grid-template-columns: 1fr; height: auto; }
+  .library-sounds { overflow: visible; padding-right: 0; }
+  .library-scenes {
+    padding-left: 0;
+    border-left: 0;
+    border-top: 1px solid #2c313d;
+    padding-top: 12px;
+  }
+  .scene-list { max-height: 260px; }
 }
 
 @media (max-width: 420px) {

@@ -150,7 +150,7 @@ _pending_note_learn: Optional[int] = None  # pad_number waiting for a physical h
 # pad-note-learn/pad-trigger in _handle_note and before knob-learn/CC-target
 # in _handle_cc, so a dedicated control never accidentally plays a pad or
 # tweaks a knob.
-CONTROLLER_ACTIONS = ("kit_next", "kit_prev", "looper_record_toggle", "looper_play_toggle", "looper_overdub_toggle", "panic")
+CONTROLLER_ACTIONS = ("kit_next", "kit_prev", "looper_record_toggle", "looper_play_toggle", "looper_overdub_toggle", "panic", "tap_tempo")
 _pending_controller_learn: Optional[str] = None  # action waiting for a physical signal, or None
 _kit_switch_lock = asyncio.Lock()
 # Last CC value seen per CC-bound controller action. Buttons fire on the
@@ -262,6 +262,11 @@ async def _dispatch_controller_action(action: str) -> None:
         await _broadcast_looper()
         await _broadcast_sequencer()
         await _broadcast_metronome()
+    elif action == "tap_tempo":
+        bpm = tempo.register_tap()
+        if bpm is not None:
+            tempo.set(bpm)
+            await _broadcast_tempo()
     elif action == "looper_record_toggle":
         if looper.get_state()["state"] == "recording":
             await looper.record_stop(storage.list_pads(), storage.get_settings())

@@ -34,7 +34,10 @@ Environment=DIAKOPAD_MIDI_CHANNEL=10
 # bluez_midi.*/"SMC-PAD:out"/"BLE MIDI 1:out" ports PipeWire exposes
 # alongside the Bluetooth one - those look like duplicate representations
 # of the same stream, and wiring more than one in would double-trigger pads.
-Environment=DIAKOPAD_HARDWARE_MIDI_PATTERN=Midi-Bridge:(SINCO|SMC-PAD Bluetooth).*
+# Quoted (unlike the other Environment= lines here) because systemd splits
+# an unquoted Environment= value on whitespace - without the quotes it
+# silently truncates this to "...SMC-PAD" at the space before "Bluetooth".
+Environment="DIAKOPAD_HARDWARE_MIDI_PATTERN=Midi-Bridge:(SINCO|SMC-PAD Bluetooth).*"
 # sfizz/mod-host binaries. The effect catalog's defaults in
 # backend/engine/effects_catalog.py are the plugins validated on this very
 # target (Ubuntu Studio, set/2026: Dragonfly Hall/Plate, ZamVerb, LSP

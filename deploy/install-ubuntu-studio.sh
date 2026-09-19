@@ -44,7 +44,7 @@ sudo apt-get update
 sudo apt-get install -y \
   python3-venv python3-pip \
   build-essential cmake git pkg-config \
-  libjack-jackd2-dev liblilv-dev lv2-dev \
+  libjack-jackd2-dev liblilv-dev lv2-dev libreadline-dev \
   mda-lv2 x42-plugins
 
 echo "==> Setting up Python venv"

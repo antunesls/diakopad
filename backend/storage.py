@@ -190,6 +190,8 @@ DEFAULT_SETTINGS = {
     "metronome_signature": "4_4",
     "master_volume": "100",
     "master_muted": "0",
+    "master_limiter_enabled": "1",
+    "master_limiter_threshold_db": "-1",
     # Which kit is currently loaded in the engine. Empty string = none/
     # unknown (fresh install, or a kit deleted while it was current) - kept
     # server-side so a hardware-triggered "next kit" knows where to advance

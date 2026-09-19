@@ -96,6 +96,8 @@ class MetronomeSignatureRequest(BaseModel):
 class MasterRequest(BaseModel):
     volume: Optional[float] = None
     muted: Optional[bool] = None
+    limiter_enabled: Optional[bool] = None
+    limiter_threshold_db: Optional[float] = None
 
 
 class KitRequest(BaseModel):
@@ -376,7 +378,12 @@ async def on_startup() -> None:
     await orchestrator.startup()
     settings = storage.get_settings()
     _pad_notes = _build_pad_note_map(storage.list_pads())
-    await orchestrator.apply_master(float(settings.get("master_volume", 100)), settings.get("master_muted") == "1")
+    await orchestrator.apply_master(
+        float(settings.get("master_volume", 100)),
+        settings.get("master_muted") == "1",
+        settings.get("master_limiter_enabled", "1") == "1",
+        float(settings.get("master_limiter_threshold_db", -1)),
+    )
     await orchestrator.apply_all_pads(storage.list_pads(), settings, storage.list_pad_effects())
     sequencer.load_pattern(storage.list_sequencer_steps())
     tempo.load()
@@ -717,11 +724,17 @@ async def set_master(body: MasterRequest):
     settings = storage.get_settings()
     volume = float(settings.get("master_volume", 100)) if body.volume is None else body.volume
     muted = settings.get("master_muted") == "1" if body.muted is None else body.muted
+    limiter_enabled = settings.get("master_limiter_enabled", "1") == "1" if body.limiter_enabled is None else body.limiter_enabled
+    limiter_threshold_db = float(settings.get("master_limiter_threshold_db", -1)) if body.limiter_threshold_db is None else body.limiter_threshold_db
     if not 0 <= volume <= 100:
         raise HTTPException(400, "volume must be between 0 and 100")
+    if not -12 <= limiter_threshold_db <= 0:
+        raise HTTPException(400, "limiter_threshold_db must be between -12 and 0")
     storage.set_setting("master_volume", str(volume))
     storage.set_setting("master_muted", "1" if muted else "0")
-    engine_applied = await orchestrator.apply_master(volume, muted)
+    storage.set_setting("master_limiter_enabled", "1" if limiter_enabled else "0")
+    storage.set_setting("master_limiter_threshold_db", str(limiter_threshold_db))
+    engine_applied = await orchestrator.apply_master(volume, muted, limiter_enabled, limiter_threshold_db)
     await _broadcast_master()
     await _broadcast_engine_status()
     return {"ok": True, "engine_applied": engine_applied}

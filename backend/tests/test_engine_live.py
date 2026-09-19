@@ -232,6 +232,45 @@ class EngineStatusTests(unittest.TestCase):
 
 
 class MasterGainTests(unittest.IsolatedAsyncioTestCase):
+    def test_master_limiter_config_uses_the_validated_lsp_stereo_plugin(self):
+        config = effects_catalog.master_limiter_config()
+
+        self.assertEqual(config["lv2_uri"], "http://lsp-plug.in/plugins/lv2/limiter_stereo")
+        self.assertEqual(config["in_ports"], ("in_l", "in_r"))
+        self.assertEqual(config["out_ports"], ("out_l", "out_r"))
+        self.assertEqual(config["symbol"], "th")
+
+    async def test_master_inserts_limiter_before_the_gain_stage(self):
+        original_available = orchestrator._master_available
+        original_limiter_available = orchestrator._master_limiter_available
+        try:
+            orchestrator._master_available = False
+            orchestrator._master_limiter_available = False
+            with (
+                patch("engine.orchestrator.effects_catalog.master_gain_config", return_value={
+                    "lv2_uri": "gain", "in_ports": ("gain_l", "gain_r"), "out_ports": ("out_l", "out_r"),
+                    "symbol": "trim", "min": -20, "max": 0,
+                }),
+                patch("engine.orchestrator.effects_catalog.master_limiter_config", return_value={
+                    "lv2_uri": "limiter", "in_ports": ("in_l", "in_r"), "out_ports": ("out_l", "out_r"),
+                    "symbol": "th", "enabled_symbol": "enabled",
+                }),
+                patch("engine.orchestrator.modhost_client.add", new=AsyncMock(return_value=True)) as add,
+                patch("engine.orchestrator.modhost_client.param_set", new=AsyncMock(return_value=True)) as param_set,
+                patch("engine.orchestrator._wire_master_output"),
+                patch("engine.orchestrator.rewire_audio_routes", new=AsyncMock()) as rewire,
+            ):
+                applied = await orchestrator.apply_master(100, False, True, -1)
+
+            self.assertTrue(applied)
+            self.assertEqual(add.await_args_list[0].args, ("gain", orchestrator.MASTER_INSTANCE))
+            self.assertEqual(add.await_args_list[1].args, ("limiter", orchestrator.MASTER_LIMITER_INSTANCE))
+            param_set.assert_any_await(orchestrator.MASTER_LIMITER_INSTANCE, "enabled", 1.0)
+            rewire.assert_awaited_once()
+        finally:
+            orchestrator._master_available = original_available
+            orchestrator._master_limiter_available = original_limiter_available
+
     async def test_master_gain_falls_back_when_no_lv2_uri_is_configured(self):
         with patch(
             "engine.orchestrator.effects_catalog.master_gain_config",
@@ -262,7 +301,12 @@ class PanicTests(unittest.IsolatedAsyncioTestCase):
         looper_stop.assert_called_once()
         all_notes_off.assert_called_once_with(orchestrator.midi.MIDI_CHANNEL)
         self.assertEqual(note_off.call_count, 2)
-        apply_master.assert_awaited_once_with(orchestrator.master_state()["volume"], True)
+        apply_master.assert_awaited_once_with(
+            orchestrator.master_state()["volume"],
+            True,
+            orchestrator.master_state()["limiter_enabled"],
+            orchestrator.master_state()["limiter_threshold_db"],
+        )
         emergency_stop_all.assert_called_once()
 
     async def test_panic_terminates_players_when_master_mute_is_unavailable(self):

@@ -23,7 +23,7 @@
     metronome: { running: false, beat_in_bar: 0, signature: "4_4", style: "digital" },
     metronomeStyles: [],
     timeSignatures: [],
-    master: { available: false, volume: 100, muted: false },
+    master: { available: false, volume: 100, muted: false, limiter_available: false, limiter_enabled: true, limiter_threshold_db: -1 },
     engineStatus: { jack: false, modhost: false, pads: {}, metronome: false, last_error: null },
     kits: [],
     kitIndex: 0,
@@ -83,6 +83,13 @@
     globalSequencerBtn: document.getElementById("global-sequencer-btn"),
     masterVolume: document.getElementById("master-volume"),
     masterMuteBtn: document.getElementById("master-mute-btn"),
+    masterVolumeLarge: document.getElementById("master-volume-large"),
+    masterVolumeValue: document.getElementById("master-volume-value"),
+    masterMuteLargeBtn: document.getElementById("master-mute-large-btn"),
+    masterLimiterEnabled: document.getElementById("master-limiter-enabled"),
+    masterLimiterThreshold: document.getElementById("master-limiter-threshold"),
+    masterLimiterThresholdValue: document.getElementById("master-limiter-threshold-value"),
+    masterLimiterWarning: document.getElementById("master-limiter-warning"),
     engineStatus: document.getElementById("engine-status"),
     engineStatusDetail: document.getElementById("engine-status-detail"),
     engineStatusText: document.getElementById("engine-status-text"),
@@ -130,7 +137,7 @@
     knobModalWaiting: document.getElementById("knob-modal-waiting"),
   };
 
-  const VIEWS = ["pads", "performance", "sounds", "volumes", "effects", "sequencer", "metronome", "looper", "knobs", "config"];
+  const VIEWS = ["pads", "performance", "sounds", "volumes", "master", "effects", "sequencer", "metronome", "looper", "knobs", "config"];
   const SUPPORTED_AUDIO_EXTENSIONS = new Set([".wav", ".mp3", ".ogg", ".flac", ".aiff", ".aif"]);
   // Uploading a big folder (or several dropped together) can mean hundreds
   // of files - firing every XHR at once used to overwhelm the connection
@@ -157,6 +164,20 @@
     el.masterMuteBtn.classList.toggle("active", state.master.muted);
     el.masterVolume.disabled = !state.master.available;
     el.masterMuteBtn.disabled = !state.master.available;
+    el.masterVolumeLarge.value = Math.round(state.master.volume);
+    el.masterVolumeLarge.disabled = !state.master.available;
+    el.masterVolumeValue.textContent = `${Math.round(state.master.volume)}%`;
+    el.masterMuteLargeBtn.textContent = state.master.muted ? "Ativar saída" : "Mute";
+    el.masterMuteLargeBtn.classList.toggle("active", state.master.muted);
+    el.masterMuteLargeBtn.disabled = !state.master.available;
+    el.masterLimiterEnabled.checked = state.master.limiter_enabled;
+    el.masterLimiterEnabled.disabled = !state.master.limiter_available;
+    el.masterLimiterThreshold.value = state.master.limiter_threshold_db;
+    el.masterLimiterThreshold.disabled = !state.master.limiter_available || !state.master.limiter_enabled;
+    el.masterLimiterThresholdValue.textContent = `${state.master.limiter_threshold_db} dB`;
+    el.masterLimiterWarning.textContent = state.master.limiter_available
+      ? "Protege contra clipping quando vários pads tocam ao mesmo tempo."
+      : "Limiter indisponível neste motor.";
   }
 
   function renderEngineStatus() {
@@ -215,6 +236,10 @@
 
   el.masterVolume.addEventListener("change", () => setMaster({ volume: Number(el.masterVolume.value) }));
   el.masterMuteBtn.addEventListener("click", () => setMaster({ muted: !state.master.muted }));
+  el.masterVolumeLarge.addEventListener("change", () => setMaster({ volume: Number(el.masterVolumeLarge.value) }));
+  el.masterMuteLargeBtn.addEventListener("click", () => setMaster({ muted: !state.master.muted }));
+  el.masterLimiterEnabled.addEventListener("change", () => setMaster({ limiter_enabled: el.masterLimiterEnabled.checked }));
+  el.masterLimiterThreshold.addEventListener("change", () => setMaster({ limiter_threshold_db: Number(el.masterLimiterThreshold.value) }));
   el.engineStatus.addEventListener("click", () => {
     const hidden = el.engineStatusDetail.classList.toggle("hidden");
     el.engineStatus.setAttribute("aria-expanded", String(!hidden));

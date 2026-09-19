@@ -121,6 +121,14 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn('window.confirm("Reiniciar o DiakoPad e o áudio do laptop?")', app)
         self.assertIn('fetch("/api/system/restart", { method: "POST" })', app)
 
+    def test_aba_master_expoe_volume_mute_e_limiter(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="tab-master"', html)
+        self.assertIn('id="master-limiter-threshold"', html)
+        self.assertIn("masterLimiterThreshold", app)
+
 
 if __name__ == "__main__":
     unittest.main()

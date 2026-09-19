@@ -14,6 +14,7 @@
       <button id="tab-performance" class="tab" type="button">Performance</button>
       <button id="tab-sounds" class="tab" type="button">Biblioteca</button>
       <button id="tab-volumes" class="tab" type="button">Volumes</button>
+      <button id="tab-master" class="tab" type="button">Master</button>
       <button id="tab-effects" class="tab" type="button">Efeitos</button>
       <button id="tab-sequencer" class="tab" type="button">Sequencer</button>
       <button id="tab-metronome" class="tab" type="button">Metrônomo</button>
@@ -91,6 +92,26 @@
 
   <main id="view-volumes" class="view hidden">
     <ul id="volume-list" class="mix-list mix-card-grid"></ul>
+  </main>
+
+  <main id="view-master" class="view hidden">
+    <section class="master-panel">
+      <p class="metronome-kicker">SAÍDA GERAL</p>
+      <label class="master-large-control">
+        <span>Volume master <strong id="master-volume-value">100%</strong></span>
+        <input id="master-volume-large" type="range" min="0" max="100" step="1" value="100">
+      </label>
+      <button id="master-mute-large-btn" class="master-large-mute-btn" type="button">Mute</button>
+      <label class="master-limiter-toggle">
+        <input id="master-limiter-enabled" type="checkbox" checked>
+        <span>Limiter de picos ativo</span>
+      </label>
+      <label class="master-large-control">
+        <span>Limite <strong id="master-limiter-threshold-value">-1 dB</strong></span>
+        <input id="master-limiter-threshold" type="range" min="-12" max="0" step="1" value="-1">
+      </label>
+      <p id="master-limiter-warning" class="tab-note">Protege contra clipping quando vários pads tocam ao mesmo tempo.</p>
+    </section>
   </main>
 
   <main id="view-effects" class="view hidden">

@@ -220,6 +220,12 @@ Sem esse plugin, o app mantém o roteamento direto para a saída JACK e exibe o
 motor como degradado. Nesse modo, PANIC encerra os players sfizz como fallback
 para cortar one-shots e o watchdog os reconstrói em seguida.
 
+No deploy de laptop, a aba **Master** também usa o `LSP Limiter Stereo`
+(`http://lsp-plug.in/plugins/lv2/limiter_stereo`) antes do ganho master. O
+limite inicial é -1 dB e protege a saída quando vários one-shots se sobrepõem;
+o limiter pode ser desligado ou ajustado entre -12 dB e 0 dB. Se o plugin não
+estiver disponível, o ganho/mute master continua funcionando sem limiter.
+
 ### Achados da validação em hardware (set/2026, imagem bookworm/kernel 6.12)
 
 * **Master LV2**: use o plugin lvtk "Volume" (`http://lvtk.org/plugins/volume`,

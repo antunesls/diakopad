@@ -54,6 +54,8 @@ HARDWARE_MIDI_PATTERN = os.environ.get("DIAKOPAD_HARDWARE_MIDI_PATTERN", "system
 _SLOT_INSTANCE_BASE = 1000
 MASTER_INSTANCE = 1
 MASTER_CLIENT = f"effect_{MASTER_INSTANCE}"
+MASTER_LIMITER_INSTANCE = 2
+MASTER_LIMITER_CLIENT = f"effect_{MASTER_LIMITER_INSTANCE}"
 
 # (pad_number, slot_index) -> plugin_id currently live in mod-host for that
 # slot, so apply_pad_effects only remove+add when the plugin actually
@@ -67,6 +69,9 @@ _last_engine_error = ""
 _master_available = False
 _master_volume = 100.0
 _master_muted = False
+_master_limiter_available = False
+_master_limiter_enabled = True
+_master_limiter_threshold_db = -1.0
 
 
 def _slot_instance(pad_number: int, slot_index: int) -> int:
@@ -130,7 +135,7 @@ def _schedule_players_without_ports() -> None:
 
 
 async def _supervise_engine(interval: float = 3.0) -> None:
-    global _last_engine_error, _live_slot_plugin, _master_available
+    global _last_engine_error, _live_slot_plugin, _master_available, _master_limiter_available
     jack_was_available = False
     while True:
         await asyncio.sleep(interval)
@@ -146,14 +151,24 @@ async def _supervise_engine(interval: float = 3.0) -> None:
                 _last_engine_error = "mod-host não reiniciou; rotas diretas restauradas"
                 _live_slot_plugin.clear()
                 _master_available = False
+                _master_limiter_available = False
                 await rewire_audio_routes(effects)
             else:
                 _live_slot_plugin.clear()
                 _master_available = False
-                await apply_master(float(settings.get("master_volume", 100)), settings.get("master_muted") == "1")
+                _master_limiter_available = False
+                await apply_master(
+                    float(settings.get("master_volume", 100)), settings.get("master_muted") == "1",
+                    settings.get("master_limiter_enabled", "1") == "1",
+                    float(settings.get("master_limiter_threshold_db", -1)),
+                )
                 await rewire_audio_routes(effects)
         elif jack_is_available and not jack_was_available:
-            await apply_master(float(settings.get("master_volume", 100)), settings.get("master_muted") == "1")
+            await apply_master(
+                float(settings.get("master_volume", 100)), settings.get("master_muted") == "1",
+                settings.get("master_limiter_enabled", "1") == "1",
+                float(settings.get("master_limiter_threshold_db", -1)),
+            )
             await rewire_audio_routes(effects)
         jack_was_available = jack_is_available
 
@@ -170,49 +185,85 @@ def engine_status() -> dict:
 
 
 def master_state() -> dict:
-    return {"available": _master_available, "volume": _master_volume, "muted": _master_muted}
+    return {
+        "available": _master_available,
+        "volume": _master_volume,
+        "muted": _master_muted,
+        "limiter_available": _master_limiter_available,
+        "limiter_enabled": _master_limiter_enabled,
+        "limiter_threshold_db": _master_limiter_threshold_db,
+    }
 
 
 def _master_destinations() -> tuple[str, str]:
     if _master_available:
+        if _master_limiter_available:
+            config = effects_catalog.master_limiter_config()
+            return f"{MASTER_LIMITER_CLIENT}:{config['in_ports'][0]}", f"{MASTER_LIMITER_CLIENT}:{config['in_ports'][1]}"
         config = effects_catalog.master_gain_config()
         return f"{MASTER_CLIENT}:{config['in_ports'][0]}", f"{MASTER_CLIENT}:{config['in_ports'][1]}"
     return MASTER_L, MASTER_R
 
 
-def _wire_master_output(config: dict) -> None:
+def _wire_master_output(config: dict, limiter_config: dict | None = None) -> None:
     jackgraph.disconnect_all(rf"^{re.escape(MASTER_CLIENT)}:output_.$")
     jackgraph.connect(f"{MASTER_CLIENT}:{config['out_ports'][0]}", MASTER_L)
     jackgraph.connect(f"{MASTER_CLIENT}:{config['out_ports'][1]}", MASTER_R)
+    if limiter_config is not None:
+        jackgraph.disconnect_all(rf"^{re.escape(MASTER_LIMITER_CLIENT)}:output_.$")
+        jackgraph.connect(f"{MASTER_LIMITER_CLIENT}:{limiter_config['out_ports'][0]}", f"{MASTER_CLIENT}:{config['in_ports'][0]}")
+        jackgraph.connect(f"{MASTER_LIMITER_CLIENT}:{limiter_config['out_ports'][1]}", f"{MASTER_CLIENT}:{config['in_ports'][1]}")
 
 
-async def apply_master(volume: float, muted: bool) -> bool:
-    global _master_available, _master_volume, _master_muted
+async def apply_master(
+    volume: float, muted: bool, limiter_enabled: bool = True, limiter_threshold_db: float = -1.0
+) -> bool:
+    global _master_available, _master_volume, _master_muted, _master_limiter_available, _master_limiter_enabled, _master_limiter_threshold_db
     _master_volume = max(0.0, min(100.0, volume))
     _master_muted = muted
+    _master_limiter_enabled = limiter_enabled
+    _master_limiter_threshold_db = max(-12.0, min(0.0, limiter_threshold_db))
     config = effects_catalog.master_gain_config()
+    limiter_config = effects_catalog.master_limiter_config()
     had_master = _master_available
     if not config.get("lv2_uri"):
         _master_available = False
+        _master_limiter_available = False
         if had_master:
             await rewire_audio_routes(await asyncio.to_thread(storage.list_pad_effects))
         return False
-    needs_fallback_rewire = False
+    needs_route_rewire = False
     async with _graph_lock:
         if not _master_available:
             if not await modhost_client.add(config["lv2_uri"], MASTER_INSTANCE):
                 _master_available = False
+                _master_limiter_available = False
                 return False
             _master_available = True
-        await asyncio.to_thread(_wire_master_output, config)
+        if limiter_config.get("lv2_uri") and not _master_limiter_available:
+            _master_limiter_available = await modhost_client.add(limiter_config["lv2_uri"], MASTER_LIMITER_INSTANCE)
+            needs_route_rewire = _master_limiter_available
+        await asyncio.to_thread(_wire_master_output, config, limiter_config if _master_limiter_available else None)
+        if _master_limiter_available:
+            threshold = 10 ** (_master_limiter_threshold_db / 20.0)
+            limiter_applied = await modhost_client.param_set(
+                MASTER_LIMITER_INSTANCE, limiter_config["symbol"], threshold
+            )
+            limiter_applied = await modhost_client.param_set(
+                MASTER_LIMITER_INSTANCE, limiter_config["enabled_symbol"], 1.0 if limiter_enabled else 0.0
+            ) and limiter_applied
+            if not limiter_applied:
+                _master_limiter_available = False
+                await asyncio.to_thread(_wire_master_output, config)
+                needs_route_rewire = True
         gain = config["min"]
         if not muted:
             gain += (config["max"] - config["min"]) * (_master_volume / 100.0)
         applied = await modhost_client.param_set(MASTER_INSTANCE, config["symbol"], gain)
         if not applied:
             _master_available = False
-            needs_fallback_rewire = True
-    if needs_fallback_rewire:
+            needs_route_rewire = True
+    if needs_route_rewire:
         await rewire_audio_routes(await asyncio.to_thread(storage.list_pad_effects))
     return applied
 
@@ -230,18 +281,23 @@ async def panic(pads: list[dict]) -> bool:
     for pad in pads:
         await asyncio.to_thread(midi.note_off, midi.MIDI_CHANNEL, pad["midi_note"])
     await asyncio.to_thread(sfizz_proc.emergency_stop_all)
-    applied = await apply_master(_master_volume, True)
+    applied = await apply_master(_master_volume, True, _master_limiter_enabled, _master_limiter_threshold_db)
     return applied
 
 
 async def restart_engine(pads: list[dict], settings: dict, pad_effects: list[dict]) -> dict:
     """Rebuilds the controllable engine graph without restarting FastAPI."""
-    global _live_slot_plugin, _master_available
+    global _live_slot_plugin, _master_available, _master_limiter_available
     if modhost_client.is_configured():
         await asyncio.to_thread(modhost_client.restart)
     _live_slot_plugin.clear()
     _master_available = False
-    await apply_master(float(settings.get("master_volume", 100)), settings.get("master_muted") == "1")
+    _master_limiter_available = False
+    await apply_master(
+        float(settings.get("master_volume", 100)), settings.get("master_muted") == "1",
+        settings.get("master_limiter_enabled", "1") == "1",
+        float(settings.get("master_limiter_threshold_db", -1)),
+    )
     await apply_all_pads(pads, settings, pad_effects)
     await apply_metronome_style(settings.get("metronome_style", metronome_sounds.DEFAULT_STYLE))
     return engine_status()

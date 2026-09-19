@@ -69,6 +69,20 @@ def master_gain_config() -> dict:
     }
 
 
+def master_limiter_config() -> dict:
+    """Validated LSP limiter configuration for the Ubuntu Studio target."""
+    in_ports, out_ports = _ports("DIAKOPAD_FX_MASTER_LIMITER", "in_l,in_r", "out_l,out_r")
+    return {
+        "lv2_uri": os.environ.get(
+            "DIAKOPAD_FX_MASTER_LIMITER_LV2_URI", "http://lsp-plug.in/plugins/lv2/limiter_stereo"
+        ),
+        "in_ports": in_ports,
+        "out_ports": out_ports,
+        "symbol": os.environ.get("DIAKOPAD_FX_MASTER_LIMITER_SYMBOL", "th"),
+        "enabled_symbol": os.environ.get("DIAKOPAD_FX_MASTER_LIMITER_ENABLED_SYMBOL", "enabled"),
+    }
+
+
 # Dragonfly's DPF-generated bundles expose generic audio port symbols
 # (confirmed via lv2info) shared by every Dragonfly variant and ZamVerb.
 DRAGONFLY_IN = "lv2_audio_in_1,lv2_audio_in_2"

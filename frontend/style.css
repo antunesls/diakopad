@@ -197,6 +197,40 @@ html, body {
 }
 .view.hidden { display: none; }
 
+#view-master {
+  display: grid;
+  place-items: center;
+}
+
+.master-panel {
+  width: min(620px, 100%);
+  padding: clamp(24px, 6vw, 48px);
+  border: 1px solid #323743;
+  border-radius: 24px;
+  background: linear-gradient(145deg, #232731, #191c24);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+.master-large-control,
+.master-limiter-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 20px;
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.master-large-control span { display: flex; justify-content: space-between; }
+.master-large-control strong { color: var(--accent); font-size: 18px; }
+.master-large-control input { width: 100%; accent-color: var(--accent); }
+.master-limiter-toggle { flex-direction: row; align-items: center; }
+.master-limiter-toggle input { width: 22px; height: 22px; accent-color: var(--accent); }
+.master-large-mute-btn { width: 100%; margin-top: 20px; padding: 15px; border: 0; border-radius: 12px; background: #9c6b22; color: #18130b; font-size: 17px; font-weight: 800; cursor: pointer; }
+.master-large-mute-btn.active { background: var(--danger); color: white; }
+.master-large-mute-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
 .pad-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

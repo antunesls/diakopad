@@ -28,6 +28,9 @@ logger = logging.getLogger("diakopad.midi")
 
 INPUT_PORT_NAME = os.environ.get("DIAKOPAD_MIDI_INPUT_PORT_NAME", "DiakoPad-in")
 OUTPUT_PORT_NAME = os.environ.get("DIAKOPAD_MIDI_OUTPUT_PORT_NAME", "DiakoPad-trigger-out")
+HARDWARE_OUTPUT_PORT_NAME = os.environ.get(
+    "DIAKOPAD_HARDWARE_MIDI_OUTPUT_PORT_NAME", "DiakoPad-hardware-out"
+)
 METRONOME_OUTPUT_PORT_NAME = os.environ.get(
     "DIAKOPAD_METRONOME_MIDI_OUTPUT_PORT_NAME", "DiakoPad-metronome-out"
 )
@@ -35,6 +38,7 @@ MIDI_CHANNEL = int(os.environ.get("DIAKOPAD_MIDI_CHANNEL", "10")) - 1  # 0-index
 
 _input_port = None
 _output_port = None
+_hardware_output_port = None
 _metronome_output_port = None
 _output_unavailable_logged = False
 
@@ -46,17 +50,20 @@ def open_input(on_cc: Callable[[int, int], None], on_note: Optional[Callable[[in
     forwarded to it). Both fire on mido/rtmidi's own thread, not the asyncio
     loop - callers that touch asyncio state must hop back with
     loop.call_soon_threadsafe."""
-    global _input_port
+    global _input_port, _hardware_output_port
     try:
         import mido
 
         def _callback(msg) -> None:
+            if msg.type not in {"aftertouch", "polytouch"} and _hardware_output_port is not None:
+                _hardware_output_port.send(msg)
             if msg.type == "control_change":
                 on_cc(msg.control, msg.value)
             elif msg.type == "note_on" and msg.velocity > 0 and on_note is not None:
                 on_note(msg.note, msg.velocity)
 
         _input_port = mido.open_input(INPUT_PORT_NAME, virtual=True, callback=_callback)
+        _hardware_output_port = mido.open_output(HARDWARE_OUTPUT_PORT_NAME, virtual=True)
         logger.info("Opened virtual MIDI input port %r", INPUT_PORT_NAME)
         return True
     except Exception as exc:  # pragma: no cover - environment dependent

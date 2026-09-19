@@ -7,9 +7,8 @@ process directly - a pad reload is just "respawn this one instance", and an
 effect param change is just a mod-host param_set with no restart at all.
 
 JACK topology per pad:
-  SMC-PAD hardware ------------------> diakopad_padNN:input (MIDI; each
-  DiakoPad-trigger-out (sequencer/     pad's .sfz only reacts to its own
-    looper, see engine/trigger.py) --> key=note, so no filtering needed)
+  SMC-PAD hardware -> DiakoPad-in -> DiakoPad-hardware-out -> diakopad_padNN:input
+  DiakoPad-trigger-out (sequencer/looper, see engine/trigger.py) --> same inputs
   diakopad_padNN:output_1/2 --> slot1 (if any) --> slot2 (if any) -->
                                  slot3 (if any) --> system:playback
   (skips straight to system:playback when every slot is empty)
@@ -119,7 +118,9 @@ async def _recover_sfizz(client: str) -> bool:
 
 def _refresh_hardware_connections() -> None:
     jackgraph.connect_pattern_to_all(HARDWARE_MIDI_PATTERN, rf".*:{re.escape(midi.INPUT_PORT_NAME)}$")
-    jackgraph.connect_pattern_to_all(HARDWARE_MIDI_PATTERN, r"^diakopad_pad\d\d:input$")
+    jackgraph.connect_pattern_to_all(
+        rf"{re.escape(midi.HARDWARE_OUTPUT_PORT_NAME)}$", r"^diakopad_pad\d\d:input$"
+    )
     jackgraph.connect_pattern_to_all(rf"{re.escape(midi.OUTPUT_PORT_NAME)}$", r"^diakopad_pad\d\d:input$")
     jackgraph.connect_pattern_to_all(
         rf"{re.escape(midi.METRONOME_OUTPUT_PORT_NAME)}$", rf"^{re.escape(METRONOME_CLIENT)}:input$"
@@ -330,7 +331,9 @@ async def apply_pad(pad_number: int, pads: list[dict], settings: dict, pad_effec
                 return False
 
             await asyncio.to_thread(
-                jackgraph.connect_pattern_to_all, HARDWARE_MIDI_PATTERN, f"^{re.escape(client)}:input$"
+                jackgraph.connect_pattern_to_all,
+                rf"{re.escape(midi.HARDWARE_OUTPUT_PORT_NAME)}$",
+                f"^{re.escape(client)}:input$",
             )
             await asyncio.to_thread(
                 jackgraph.connect_pattern_to_all,

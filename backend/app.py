@@ -657,11 +657,18 @@ def get_sounds():
 
 @app.get("/api/sounds/browse")
 def browse_sounds(folder: str = ""):
-    return storage.browse_samples(folder)
+    try:
+        return storage.browse_samples(folder)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 
 @app.post("/api/sounds/upload")
 async def upload_sound(file: UploadFile, folder: str = Form("")):
+    try:
+        folder = storage.normalize_folder(folder)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
     original_name = Path(file.filename or "sample").name
     ext = Path(original_name).suffix.lower()
     if ext not in storage.ALLOWED_SAMPLE_EXTENSIONS:

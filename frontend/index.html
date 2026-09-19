@@ -12,7 +12,7 @@
     <nav>
       <button id="tab-pads" class="tab active" type="button">Pads</button>
       <button id="tab-performance" class="tab" type="button">Performance</button>
-      <button id="tab-sounds" class="tab" type="button">Sons</button>
+      <button id="tab-sounds" class="tab" type="button">Biblioteca</button>
       <button id="tab-volumes" class="tab" type="button">Volumes</button>
       <button id="tab-effects" class="tab" type="button">Efeitos</button>
       <button id="tab-sequencer" class="tab" type="button">Sequencer</button>
@@ -63,13 +63,27 @@
 
   <main id="view-sounds" class="view hidden">
     <nav id="sound-breadcrumb" class="breadcrumb"></nav>
-    <section class="upload-zone" id="upload-zone">
-      <p>Arraste arquivos de som aqui ou</p>
-      <label class="upload-btn">
-        Escolher arquivos
-        <input type="file" id="file-input" accept=".wav,.mp3,.ogg,.flac,.aiff,.aif" multiple hidden>
+    <div class="sound-selection-toolbar">
+      <label class="sound-select-all">
+        <input id="select-all-sounds" type="checkbox">
+        Selecionar todos
       </label>
-      <p class="hint">wav, mp3, ogg, flac, aiff — vai pra pasta atual</p>
+      <span id="selected-sounds-count" class="selected-sounds-count">Nenhum selecionado</span>
+      <button id="delete-selected-sounds" class="danger-btn" type="button" disabled>Excluir selecionados</button>
+    </div>
+    <section class="upload-zone" id="upload-zone">
+      <p>Arraste arquivos ou pastas de som aqui, ou</p>
+      <div class="upload-actions">
+        <label class="upload-btn">
+          Escolher arquivos
+          <input type="file" id="file-input" accept=".wav,.mp3,.ogg,.flac,.aiff,.aif" multiple hidden>
+        </label>
+        <label class="upload-btn upload-folder-btn">
+          Escolher pasta
+          <input type="file" id="folder-input" accept=".wav,.mp3,.ogg,.flac,.aiff,.aif" webkitdirectory directory multiple hidden>
+        </label>
+      </div>
+      <p class="hint">Arquivos vão para a pasta atual. Pastas preservam toda a árvore.</p>
     </section>
     <ul id="sound-list" class="sound-list"></ul>
   </main>
@@ -220,6 +234,16 @@
       </div>
       <ul id="knob-modal-list" class="sound-list modal-sound-list"></ul>
       <p id="knob-modal-waiting" class="tab-note hidden">Gire o knob físico que você quer atribuir a esse controle...</p>
+    </div>
+  </div>
+
+  <div id="upload-progress" class="upload-progress hidden" role="status" aria-live="polite">
+    <div class="upload-progress-card">
+      <span id="upload-progress-label">Enviando sons...</span>
+      <strong id="upload-progress-percent">0%</strong>
+      <div class="upload-progress-track">
+        <div id="upload-progress-bar" class="upload-progress-bar"></div>
+      </div>
     </div>
   </div>
 

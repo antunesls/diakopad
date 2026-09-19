@@ -130,6 +130,15 @@ class MetronomeTests(unittest.IsolatedAsyncioTestCase):
                 metronome_sounds.GENERATED_DIR = original_generated_dir
 
 
+class SampleFolderTests(unittest.TestCase):
+    def test_normalize_folder_preserves_a_nested_relative_path(self):
+        self.assertEqual(storage.normalize_folder("Pack/Drums/Kicks"), "Pack/Drums/Kicks")
+
+    def test_normalize_folder_rejects_directory_traversal(self):
+        with self.assertRaises(ValueError):
+            storage.normalize_folder("Pack/../outside")
+
+
 class LooperOverdubTests(unittest.TestCase):
     def setUp(self):
         self._reset_looper()

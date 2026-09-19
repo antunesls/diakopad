@@ -15,6 +15,18 @@ DB_PATH = Path(__file__).parent / "diakopad.db"
 ALLOWED_SAMPLE_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".aiff", ".aif"}
 SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
+
+def normalize_folder(folder: str) -> str:
+    """Returns a safe logical sample-library path, never a disk path."""
+    if not isinstance(folder, str):
+        raise ValueError("folder must be a string")
+    if folder.startswith(("/", "\\")):
+        raise ValueError("folder must be relative")
+    parts = folder.replace("\\", "/").split("/") if folder else []
+    if any(not part or part in {".", ".."} for part in parts):
+        raise ValueError("invalid folder path")
+    return "/".join(parts)
+
 SCHEMA = """
 -- folder is a '/'-separated relative path ("" = root) purely for browsing/
 -- organization in the Sons tab - the actual file always lives flat in
@@ -340,6 +352,7 @@ def browse_samples(folder: str = "") -> dict:
     (root = "") plus the samples stored directly in `folder` itself. Cheap
     to compute in Python even at a few thousand distinct folders - no
     dedicated folders table needed."""
+    folder = normalize_folder(folder)
     conn = get_connection()
     try:
         rows = conn.execute("SELECT DISTINCT folder FROM samples WHERE folder != ''").fetchall()
@@ -366,6 +379,7 @@ def browse_samples(folder: str = "") -> dict:
 
 
 def add_sample(filename: str, display_name: str, folder: str = "") -> int:
+    folder = normalize_folder(folder)
     conn = get_connection()
     try:
         cur = conn.execute(

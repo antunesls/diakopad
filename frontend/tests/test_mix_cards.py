@@ -17,8 +17,62 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn('class="mix-card-summary"', app)
         self.assertIn('effect-summary', app)
         self.assertIn('.mix-card.open .mix-card-body', css)
+        self.assertIn('.mix-card.open {\n  grid-column: 1 / -1;', css)
         self.assertIn('.mix-card-grid', css)
+        self.assertIn('grid-template-columns: repeat(4, minmax(0, 1fr));', css)
+        self.assertNotIn('.mix-card-grid { grid-template-columns: 1fr; }', css)
         self.assertIn('@media (max-width: 700px)', css)
+
+    def test_metronomo_carrega_e_persiste_assinatura_de_compasso(self):
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('fetch("/api/metronome/time-signatures")', app)
+        self.assertIn('el.metronomeSignatureSelect.addEventListener("change"', app)
+        self.assertIn('fetch("/api/metronome/signature"', app)
+        self.assertIn('signature: msg.signature', app)
+
+    def test_metronomo_usa_digitos_bpm_ampliados(self):
+        css = (FRONTEND / "style.css").read_text(encoding="utf-8")
+
+        self.assertIn("font-size: clamp(64px, 14vw, 96px);", css)
+        self.assertIn("width: 180px;", css)
+
+    def test_biblioteca_aceita_selecao_e_arrasto_de_pastas(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="folder-input"', html)
+        self.assertIn("webkitdirectory", html)
+        self.assertIn("webkitGetAsEntry", app)
+        self.assertIn("webkitRelativePath", app)
+
+    def test_biblioteca_permite_selecao_e_exclusao_em_lote_de_sons_livres(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="tab-sounds" class="tab" type="button">Biblioteca</button>', html)
+        self.assertIn('id="select-all-sounds"', html)
+        self.assertIn('id="delete-selected-sounds"', html)
+        self.assertIn("selectedSoundIds", app)
+        self.assertIn("deleteSelectedSounds", app)
+        self.assertIn('window.confirm(`Excluir ${selectedIds.length}', app)
+
+    def test_upload_ignora_arquivos_que_nao_sao_audio(self):
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("SUPPORTED_AUDIO_EXTENSIONS", app)
+        self.assertIn("filter(isSupportedAudioFile)", app)
+
+    def test_upload_exibe_progresso_percentual(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+        css = (FRONTEND / "style.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="upload-progress"', html)
+        self.assertIn('id="upload-progress-percent"', html)
+        self.assertIn("XMLHttpRequest", app)
+        self.assertIn('request.upload.addEventListener("progress"', app)
+        self.assertIn(".upload-progress", css)
 
 
 if __name__ == "__main__":

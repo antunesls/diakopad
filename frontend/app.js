@@ -6,6 +6,7 @@
     sounds: [],
     soundBrowserPath: [],
     soundBrowserView: { folders: [], samples: [] },
+    selectedSoundIds: new Set(),
     knobs: [],
     knobTargets: { global: [], pads: {} },
     pendingLearn: null,
@@ -50,10 +51,18 @@
     patternDelete: document.getElementById("pattern-delete"),
     soundList: document.getElementById("sound-list"),
     soundBreadcrumb: document.getElementById("sound-breadcrumb"),
+    selectAllSounds: document.getElementById("select-all-sounds"),
+    selectedSoundsCount: document.getElementById("selected-sounds-count"),
+    deleteSelectedSounds: document.getElementById("delete-selected-sounds"),
     volumeList: document.getElementById("volume-list"),
     effectsList: document.getElementById("effects-list"),
     uploadZone: document.getElementById("upload-zone"),
     fileInput: document.getElementById("file-input"),
+    folderInput: document.getElementById("folder-input"),
+    uploadProgress: document.getElementById("upload-progress"),
+    uploadProgressLabel: document.getElementById("upload-progress-label"),
+    uploadProgressPercent: document.getElementById("upload-progress-percent"),
+    uploadProgressBar: document.getElementById("upload-progress-bar"),
     modal: document.getElementById("assign-modal"),
     modalTitle: document.getElementById("modal-pad-title"),
     modalClose: document.getElementById("modal-close"),
@@ -105,6 +114,7 @@
   };
 
   const VIEWS = ["pads", "performance", "sounds", "volumes", "effects", "sequencer", "metronome", "looper", "knobs", "config"];
+  const SUPPORTED_AUDIO_EXTENSIONS = new Set([".wav", ".mp3", ".ogg", ".flac", ".aiff", ".aif"]);
   for (const name of VIEWS) {
     document.getElementById(`tab-${name}`).addEventListener("click", () => switchView(name));
   }
@@ -365,6 +375,7 @@
 
   function navigateToFolder(path) {
     state.soundBrowserPath = path;
+    state.selectedSoundIds.clear();
     loadSoundBrowser();
   }
 
@@ -396,6 +407,12 @@
     renderBreadcrumb();
     el.soundList.innerHTML = "";
     const { folders, samples } = state.soundBrowserView;
+    const inUse = new Set(state.pads.filter(p => p.sample_id).map(p => p.sample_id));
+    const selectableIds = new Set(samples.filter(sound => !inUse.has(sound.id)).map(sound => sound.id));
+    for (const id of state.selectedSoundIds) {
+      if (!selectableIds.has(id)) state.selectedSoundIds.delete(id);
+    }
+    renderSoundSelectionControls(selectableIds);
 
     for (const name of folders) {
       const li = document.createElement("li");
@@ -410,20 +427,36 @@
       return;
     }
 
-    const inUse = new Set(state.pads.filter(p => p.sample_id).map(p => p.sample_id));
     for (const sound of samples) {
       const li = document.createElement("li");
       li.className = "sound-item";
       const used = inUse.has(sound.id);
       li.innerHTML = `
+        <label class="sound-select">
+          <input type="checkbox" aria-label="Selecionar ${escapeHtml(sound.display_name)}" ${used ? "disabled" : ""} ${state.selectedSoundIds.has(sound.id) ? "checked" : ""}>
+        </label>
         <button class="icon-btn play-btn" title="Ouvir">▶</button>
         <span class="sound-name">${escapeHtml(sound.display_name)}</span>
         <button class="icon-btn delete-btn" title="${used ? "Em uso, não pode remover" : "Remover"}" ${used ? "disabled" : ""}>🗑</button>
       `;
+      li.querySelector(".sound-select input").addEventListener("change", (event) => {
+        if (event.target.checked) state.selectedSoundIds.add(sound.id);
+        else state.selectedSoundIds.delete(sound.id);
+        renderSoundList();
+      });
       li.querySelector(".play-btn").addEventListener("click", () => playPreview(sound.id));
       li.querySelector(".delete-btn").addEventListener("click", () => deleteSound(sound.id));
       el.soundList.appendChild(li);
     }
+  }
+
+  function renderSoundSelectionControls(selectableIds) {
+    const selectedCount = state.selectedSoundIds.size;
+    el.selectAllSounds.checked = selectableIds.size > 0 && selectedCount === selectableIds.size;
+    el.selectAllSounds.indeterminate = selectedCount > 0 && selectedCount < selectableIds.size;
+    el.selectAllSounds.disabled = selectableIds.size === 0;
+    el.selectedSoundsCount.textContent = selectedCount === 1 ? "1 selecionado" : `${selectedCount} selecionados`;
+    el.deleteSelectedSounds.disabled = selectedCount === 0;
   }
 
   // --- Volumes --------------------------------------------------------
@@ -883,11 +916,11 @@
     const result = await response.json();
     el.metronomeEngineWarning.classList.toggle("hidden", result.engine_applied !== false);
   });
-  el.metronomeBeatsSelect.addEventListener("change", () => {
-    fetch("/api/metronome/beats-per-bar", {
+  el.metronomeSignatureSelect.addEventListener("change", () => {
+    fetch("/api/metronome/signature", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ beats_per_bar: Number(el.metronomeBeatsSelect.value) }),
+      body: JSON.stringify({ signature: el.metronomeSignatureSelect.value }),
     });
   });
 
@@ -1074,6 +1107,34 @@
     }
   }
 
+  async function deleteSelectedSounds() {
+    const selectedIds = [...state.selectedSoundIds];
+    if (!selectedIds.length) return;
+    if (!window.confirm(`Excluir ${selectedIds.length} ${selectedIds.length === 1 ? "som selecionado" : "sons selecionados"}?`)) return;
+
+    const results = await Promise.all(selectedIds.map(async (soundId) => {
+      const res = await fetch(`/api/sounds/${soundId}`, { method: "DELETE" });
+      return { soundId, ok: res.ok };
+    }));
+    for (const { soundId, ok } of results) {
+      if (ok) state.selectedSoundIds.delete(soundId);
+    }
+    const failedCount = results.filter(result => !result.ok).length;
+    if (failedCount) alert(`${failedCount} ${failedCount === 1 ? "som nao foi removido" : "sons nao foram removidos"}.`);
+  }
+
+  el.selectAllSounds.addEventListener("change", () => {
+    const { samples } = state.soundBrowserView;
+    const inUse = new Set(state.pads.filter(p => p.sample_id).map(p => p.sample_id));
+    for (const sound of samples) {
+      if (inUse.has(sound.id)) continue;
+      if (el.selectAllSounds.checked) state.selectedSoundIds.add(sound.id);
+      else state.selectedSoundIds.delete(sound.id);
+    }
+    renderSoundList();
+  });
+  el.deleteSelectedSounds.addEventListener("click", deleteSelectedSounds);
+
   function openAssignModal(padNumber) {
     state.selectedPad = padNumber;
     const pad = state.pads.find(p => p.pad_number === padNumber);
@@ -1163,27 +1224,125 @@
     closeModal();
   });
 
-  async function uploadOne(file) {
-    const form = new FormData();
-    form.append("file", file);
-    form.append("folder", currentSoundFolder());
-    const res = await fetch("/api/sounds/upload", { method: "POST", body: form });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      alert(`Falha ao enviar ${file.name}: ${body.detail || res.status}`);
-    }
+  function updateUploadProgress(loaded, total, fileCount) {
+    const percent = total ? Math.min(100, Math.round((loaded / total) * 100)) : 100;
+    el.uploadProgressLabel.textContent = `Enviando ${fileCount} ${fileCount === 1 ? "arquivo" : "arquivos"}...`;
+    el.uploadProgressPercent.textContent = `${percent}%`;
+    el.uploadProgressBar.style.width = `${percent}%`;
   }
 
-  async function uploadFiles(files) {
+  function uploadOne(file, folder, onProgress) {
+    return new Promise((resolve) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("folder", folder);
+
+      const request = new XMLHttpRequest();
+      request.open("POST", "/api/sounds/upload");
+      request.upload.addEventListener("progress", (event) => {
+        if (event.lengthComputable) onProgress(event.loaded);
+      });
+      request.addEventListener("load", () => {
+        onProgress(file.size);
+        if (request.status < 200 || request.status >= 300) {
+          let detail = request.status;
+          try {
+            detail = JSON.parse(request.responseText).detail || detail;
+          } catch (_) {}
+          alert(`Falha ao enviar ${file.name}: ${detail}`);
+        }
+        resolve();
+      });
+      request.addEventListener("error", () => {
+        onProgress(file.size);
+        alert(`Falha ao enviar ${file.name}: erro de rede`);
+        resolve();
+      });
+      request.send(form);
+    });
+  }
+
+  function isSupportedAudioFile(file) {
+    const dot = file.name.lastIndexOf(".");
+    return dot >= 0 && SUPPORTED_AUDIO_EXTENSIONS.has(file.name.slice(dot).toLowerCase());
+  }
+
+  async function uploadFiles(files, folderForFile = () => currentSoundFolder()) {
     // Uploaded in parallel (not one-by-one) so selecting/dropping several
     // files at once feels immediate rather than queued.
-    await Promise.all(Array.from(files).map(uploadOne));
+    const audioFiles = Array.from(files).filter(isSupportedAudioFile);
+    return uploadEntries(audioFiles.map((file) => ({ file, folder: folderForFile(file) })));
+  }
+
+  async function uploadEntries(entries) {
+    if (!entries.length) return;
+    const totalBytes = entries.reduce((sum, { file }) => sum + file.size, 0);
+    const uploadedBytes = new Array(entries.length).fill(0);
+    el.uploadProgress.classList.remove("hidden");
+    updateUploadProgress(0, totalBytes, entries.length);
+
+    await Promise.all(
+      entries.map(({ file, folder }, index) => uploadOne(file, folder, (loaded) => {
+        uploadedBytes[index] = loaded;
+        updateUploadProgress(uploadedBytes.reduce((sum, value) => sum + value, 0), totalBytes, entries.length);
+      }))
+    );
+    await loadSoundBrowser();
+    setTimeout(() => el.uploadProgress.classList.add("hidden"), 450);
+  }
+
+  function folderForSelectedFile(file) {
+    const relativeParts = (file.webkitRelativePath || "").split("/").filter(Boolean);
+    const baseParts = currentSoundFolder().split("/").filter(Boolean);
+    return [...baseParts, ...relativeParts.slice(0, -1)].join("/");
+  }
+
+  function entryFile(entry) {
+    return new Promise((resolve, reject) => entry.file(resolve, reject));
+  }
+
+  function readDirectory(reader) {
+    return new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+  }
+
+  async function collectDroppedFiles(entry, path, uploads) {
+    if (entry.isFile) {
+      const file = await entryFile(entry);
+      if (isSupportedAudioFile(file)) uploads.push({ file, folder: [...path].join("/") });
+      return;
+    }
+    const reader = entry.createReader();
+    let entries;
+    do {
+      entries = await readDirectory(reader);
+      await Promise.all(entries.map((child) => collectDroppedFiles(child, [...path, entry.name], uploads)));
+    } while (entries.length);
+  }
+
+  async function uploadDroppedItems(items) {
+    const entries = Array.from(items)
+      .map((item) => item.webkitGetAsEntry?.())
+      .filter(Boolean);
+    if (!entries.length) return uploadFiles(Array.from(items).map((item) => item.getAsFile()).filter(Boolean));
+
+    const uploads = [];
+    await Promise.all(entries.map((entry) => collectDroppedFiles(entry, [], uploads)));
+    const baseParts = currentSoundFolder().split("/").filter(Boolean);
+    return uploadEntries(
+      uploads.map(({ file, folder }) => ({ file, folder: [...baseParts, folder].filter(Boolean).join("/") }))
+    );
   }
 
   el.fileInput.addEventListener("change", () => {
     if (el.fileInput.files.length) {
       uploadFiles(el.fileInput.files);
       el.fileInput.value = "";
+    }
+  });
+  el.folderInput.addEventListener("change", () => {
+    if (el.folderInput.files.length) {
+      uploadFiles(el.folderInput.files, folderForSelectedFile);
+      el.folderInput.value = "";
     }
   });
 
@@ -1200,7 +1359,8 @@
     })
   );
   el.uploadZone.addEventListener("drop", (e) => {
-    if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
+    if (e.dataTransfer.items.length) uploadDroppedItems(e.dataTransfer.items);
+    else if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
   });
 
   function escapeHtml(str) {
@@ -1270,7 +1430,7 @@
         state.metronome = {
           running: msg.running,
           beat_in_bar: msg.beat_in_bar,
-          beats_per_bar: msg.beats_per_bar,
+          signature: msg.signature,
           style: msg.style,
         };
         renderMetronome();
@@ -1299,7 +1459,7 @@
   }
 
   async function init() {
-    const [padsRes, soundsRes, knobsRes, settingsRes, padEffectsRes, catalogRes, knobTargetsRes, sequencerRes, looperRes, tempoRes, metronomeRes, metronomeStylesRes, masterRes, engineStatusRes, kitsRes, patternsRes] =
+    const [padsRes, soundsRes, knobsRes, settingsRes, padEffectsRes, catalogRes, knobTargetsRes, sequencerRes, looperRes, tempoRes, metronomeRes, metronomeStylesRes, metronomeSignaturesRes, masterRes, engineStatusRes, kitsRes, patternsRes] =
       await Promise.all([
         fetch("/api/pads"),
         fetch("/api/sounds"),
@@ -1313,6 +1473,7 @@
         fetch("/api/tempo"),
         fetch("/api/metronome"),
         fetch("/api/metronome/styles"),
+        fetch("/api/metronome/time-signatures"),
         fetch("/api/master"),
         fetch("/api/engine/status"),
         fetch("/api/kits"),
@@ -1333,6 +1494,7 @@
     state.tempo = await tempoRes.json();
     state.metronome = await metronomeRes.json();
     state.metronomeStyles = await metronomeStylesRes.json();
+    state.timeSignatures = await metronomeSignaturesRes.json();
     state.master = await masterRes.json();
     state.engineStatus = await engineStatusRes.json();
     state.kits = await kitsRes.json();
@@ -1351,6 +1513,7 @@
     renderSequencer();
     renderTempo();
     renderMetronomeStyles();
+    renderMetronomeSignatures();
     renderMetronome();
     renderMaster();
     renderEngineStatus();

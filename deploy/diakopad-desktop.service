@@ -23,6 +23,13 @@ Type=simple
 WorkingDirectory=__INSTALL_DIR__/backend
 Environment=DIAKOPAD_SFZ_BANK_DIR=__INSTALL_DIR__/backend/sfz_bank
 Environment=DIAKOPAD_MIDI_CHANNEL=10
+# orchestrator.py's default HARDWARE_MIDI_PATTERN ("system:midi_capture_.*")
+# only matches a plain jackd2/a2jmidid setup. Under PipeWire, the SMC-PAD's
+# hardware MIDI capture ports show up as "Midi-Bridge:SINCO ..." instead
+# (confirm with `jack_lsp -p | grep -i sinco` on THIS machine) - without this
+# override, the physical controller's Note/CC never reaches DiakoPad-in and
+# knob-learn/loop recording/controller-action learning silently see nothing.
+Environment=DIAKOPAD_HARDWARE_MIDI_PATTERN=Midi-Bridge:SINCO.*
 # sfizz/mod-host binaries and the effect catalog's LV2 URIs/ports - confirm
 # on THIS machine with `which sfizz_jack`, `which mod-host` and
 # `lv2ls`/`lv2info` (see README.md and backend/engine/effects_catalog.py)

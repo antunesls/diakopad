@@ -112,6 +112,14 @@ perto do hardware.
 * Pra recompilar um `sfizz_jack` já em uso (ex.: reinstalar por cima), pare
   o `diakopad.service` antes — sobrescrever o binário rodando dá
   `Text file busy`.
+* `HARDWARE_MIDI_PATTERN` (`backend/engine/orchestrator.py`) tem como padrão
+  `system:midi_capture_.*`, que só existe num setup jackd2/a2jmidid puro. Sob
+  PipeWire, o SMC-PAD aparece como `Midi-Bridge:SINCO SMC-PAD-Master
+  (capture)` (confirme com `jack_lsp -p | grep -i sinco`) — sem sobrescrever
+  `DIAKOPAD_HARDWARE_MIDI_PATTERN` (ver `deploy/diakopad-desktop.service`),
+  o hardware físico nunca chega em `DiakoPad-in`: knob-learn, gravação do
+  looper e o aprendizado de ações de controlador (aba Config) ficam surdos
+  ao controlador, mesmo com os pads soando normalmente pela tela.
 
 ## Passo manual único: preparar o SMC-PAD
 

@@ -222,6 +222,7 @@ class EngineStatusTests(unittest.TestCase):
             patch("engine.orchestrator.jackgraph.available", return_value=True),
             patch("engine.orchestrator.modhost_client.is_alive", return_value=True),
             patch("engine.orchestrator.sfizz_proc.is_running", side_effect=lambda client: client.endswith("01")),
+            patch("engine.orchestrator.system_metrics.cpu_percent", return_value=42.5),
         ):
             status = orchestrator.engine_status()
 
@@ -229,6 +230,7 @@ class EngineStatusTests(unittest.TestCase):
         self.assertTrue(status["modhost"])
         self.assertTrue(status["pads"]["1"])
         self.assertFalse(status["pads"]["2"])
+        self.assertEqual(status["cpu_percent"], 42.5)
 
 
 class MasterGainTests(unittest.IsolatedAsyncioTestCase):
@@ -239,6 +241,7 @@ class MasterGainTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(config["in_ports"], ("in_l", "in_r"))
         self.assertEqual(config["out_ports"], ("out_l", "out_r"))
         self.assertEqual(config["symbol"], "th")
+
 
     async def test_master_inserts_limiter_before_the_gain_stage(self):
         original_available = orchestrator._master_available
@@ -280,6 +283,38 @@ class MasterGainTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(applied)
         self.assertFalse(orchestrator.master_state()["available"])
+
+
+class PitchEffectTests(unittest.TestCase):
+    def test_pitch_effect_uses_the_validated_mapitchshift_ports_and_controls(self):
+        plugin = effects_catalog.PLUGIN_CATALOG["pitch"]
+
+        self.assertEqual(plugin["lv2_uri"], "http://distrho.sf.net/plugins/MaPitchshift")
+        self.assertEqual(plugin["in_ports"], ("lv2_audio_in_1",))
+        self.assertEqual(plugin["out_ports"], ("lv2_audio_out_1", "lv2_audio_out_2"))
+        self.assertEqual([param["symbol"] for param in plugin["params"]], ["blur", "window", "ratio", "xfade"])
+
+    def test_mono_input_effect_uses_left_channel_without_accessing_a_missing_right_port(self):
+        key = (1, 1)
+        previous = orchestrator._live_slot_plugin.get(key)
+        orchestrator._live_slot_plugin[key] = "pitch"
+        try:
+            with (
+                patch("engine.orchestrator.jackgraph.available", return_value=True),
+                patch("engine.orchestrator.jackgraph.disconnect_all"),
+                patch("engine.orchestrator.jackgraph.connect") as connect,
+            ):
+                orchestrator._rewire_pad_chain(1, [{"slot_index": 1}])
+
+            connect.assert_any_call("diakopad_pad01:output_1", "effect_1011:lv2_audio_in_1")
+            self.assertNotIn(
+                (("diakopad_pad01:output_2", "effect_1011:lv2_audio_in_1"),), connect.call_args_list
+            )
+        finally:
+            if previous is None:
+                del orchestrator._live_slot_plugin[key]
+            else:
+                orchestrator._live_slot_plugin[key] = previous
 
 
 class PanicTests(unittest.IsolatedAsyncioTestCase):
@@ -741,6 +776,86 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
                 await diakopad_app._dispatch_controller_action("kit_next")
 
             apply_kit.assert_not_awaited()
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    async def test_kit_next_skips_inactive_scenes(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            kit_a = storage.save_kit("a", storage.list_pads(), storage.list_pad_effects())
+            kit_b = storage.save_kit("b", storage.list_pads(), storage.list_pad_effects())
+            storage.set_kit_active(kit_a, False)
+            storage.set_setting("current_kit_id", str(kit_b))
+
+            with patch("app._apply_kit_and_broadcast", new=AsyncMock()) as apply_kit:
+                await diakopad_app._dispatch_controller_action("kit_next")
+
+            apply_kit.assert_awaited_once()
+            # Only kit_b is active, so next wraps back onto itself.
+            self.assertEqual(storage.get_settings()["current_kit_id"], str(kit_b))
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    async def test_panic_controller_action_runs_the_panic_flow(self):
+        with (
+            patch("app.orchestrator.panic", new=AsyncMock(return_value=True)) as panic,
+            patch("app.storage.list_pads", return_value=[{"pad_number": 1}]),
+            patch("app._broadcast_master", new=AsyncMock()) as broadcast_master,
+            patch("app._broadcast_looper", new=AsyncMock()),
+            patch("app._broadcast_sequencer", new=AsyncMock()),
+            patch("app._broadcast_metronome", new=AsyncMock()),
+        ):
+            await diakopad_app._dispatch_controller_action("panic")
+
+        panic.assert_awaited_once_with([{"pad_number": 1}])
+        broadcast_master.assert_awaited_once()
+
+    async def test_apply_scene_restores_global_state_and_transports(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            storage.set_setting("sequencer_bpm", "150")
+            storage.set_setting("metronome_signature", "5_4")
+            storage.set_sequencer_step(2, 3, True)
+            kit_id = storage.save_kit(
+                "cena",
+                storage.list_pads(),
+                storage.list_pad_effects(),
+                storage.list_knob_mappings(),
+                scene_state={
+                    "sequencer_bpm": "150",
+                    "metronome_style": "digital",
+                    "metronome_signature": "5_4",
+                    "metronome_running": "1",
+                    "sequencer_running": "1",
+                },
+                sequencer_steps=storage.list_sequencer_steps(),
+            )
+            kit = storage.load_kit(kit_id)
+
+            with (
+                patch("app.tempo.set") as tempo_set,
+                patch("app.metronome.set_signature") as set_signature,
+                patch("app.orchestrator.apply_metronome_style", new=AsyncMock()),
+                patch("app.orchestrator.apply_all_pads", new=AsyncMock()),
+                patch("app.sequencer.load_pattern") as load_pattern,
+                patch("app.sequencer.start", new=AsyncMock()) as seq_start,
+                patch("app.metronome.start", new=AsyncMock()) as met_start,
+                patch("app._broadcast_pads", new=AsyncMock()),
+                patch("app._broadcast_pad_effects", new=AsyncMock()),
+                patch("app._broadcast_knobs", new=AsyncMock()),
+                patch("app._broadcast_tempo", new=AsyncMock()),
+                patch("app._broadcast_sequencer", new=AsyncMock()),
+                patch("app._broadcast_metronome", new=AsyncMock()),
+            ):
+                await diakopad_app._apply_kit_and_broadcast(kit)
+
+            tempo_set.assert_called_once_with(150.0)
+            set_signature.assert_called_once_with("5_4")
+            load_pattern.assert_called_once()
+            seq_start.assert_awaited_once()
+            met_start.assert_awaited_once()
         finally:
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()

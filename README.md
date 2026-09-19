@@ -249,19 +249,26 @@ O Sfizz em si nunca suportou reverb/delay internos (opcode `effect1`/
 hospedado via **mod-host** (LV2), o mesmo host de efeitos que o Zynthian usa
 nativamente, e não via SFZ.
 
-## Performance e Kits
+## Performance e Cenas
 
 Aba **Performance**: modo de palco com os 16 pads grandes e uma faixa de
-kits no topo. Um **kit** é um snapshot nomeado de tudo que define o som do
-set: a atribuição de cada pad, volume/pan/tom, as cadeias de efeito e os
-mapeamentos de knob (trocar de kit também troca o layout dos knobs
-físicos; kits gravados antes disso entram no snapshot deixam os mapeamentos
-atuais como estão). Use ◀ ▶ para trocar de kit ao vivo (recarrega todos os
-pads no motor), **Salvar** para gravar o estado atual sobre um nome e
-**Excluir** para remover. O padrão do sequencer e as notas MIDI dos pads
-**não** fazem parte do kit (as notas pertencem ao controlador físico).
+cenas no topo. Uma **cena** é um snapshot nomeado de tudo que define o set:
+a atribuição de cada pad, volume/pan/tom, as cadeias de efeito, os
+mapeamentos de knob, o **tempo/metrônomo** (BPM, estilo, compasso e se estava
+tocando) e o **grid do sequencer** (os 16 × 16 passos e se estava tocando).
+Use ◀ ▶ para trocar de cena ao vivo (recarrega todos os pads no motor),
+**Salvar** para gravar o estado atual sobre um nome e **Excluir** para
+remover. As notas MIDI dos pads **não** fazem parte da cena (as notas
+pertencem ao controlador físico), nem volume/master, os vínculos MIDI de
+ações ou o áudio gravado no Looper.
 
-Trocar de kit reaplica os 16 pads no motor (cada um regrava o `.sfz` e
+Cada cena tem um **ativo/inativo**: só as ativas entram na navegação ◀ ▶ ao
+vivo. A lista abaixo do campo **Buscar cena...** mostra todas as cenas
+salvas, com o toggle de ativação, o carregamento por clique no nome e a
+exclusão — cenas inativas continuam guardadas e reativáveis a qualquer
+momento.
+
+Trocar de cena reaplica os 16 pads no motor (cada um regrava o `.sfz` e
 reinicia sua instância sfizz), então leva alguns segundos — a grade fica em
 estado "aplicando" durante a troca.
 

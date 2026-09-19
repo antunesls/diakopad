@@ -163,6 +163,19 @@ PLUGIN_CATALOG: dict[str, dict] = {
         ],
         lv2_uri="http://lsp-plug.in/plugins/lv2/flanger_stereo",
     ),
+    "pitch": _entry(
+        "DIAKOPAD_FX_PITCH",
+        "Pitch",
+        [
+            {"symbol": "blur", "label": "Suavização", "unit": "", "min": 0.0, "max": 0.25, "default": 0.0, "curve": "linear"},
+            {"symbol": "window", "label": "Janela", "unit": "", "min": 0.1, "max": 1000.0, "default": 100.0, "curve": "log"},
+            {"symbol": "ratio", "label": "Pitch", "unit": "x", "min": 0.25, "max": 4.0, "default": 1.0, "curve": "log"},
+            {"symbol": "xfade", "label": "Crossfade", "unit": "", "min": 0.0, "max": 1.0, "default": 1.0, "curve": "linear"},
+        ],
+        lv2_uri="http://distrho.sf.net/plugins/MaPitchshift",
+        in_ports="lv2_audio_in_1",
+        out_ports="lv2_audio_out_1,lv2_audio_out_2",
+    ),
     "phaser": _entry(
         "DIAKOPAD_FX_PHASER",
         "Phaser",

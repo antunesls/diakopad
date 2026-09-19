@@ -96,7 +96,34 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS kits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    -- 1 = scene available for live Performance navigation, 0 = saved but
+    -- kept out of the live list (see list_active_kits).
+    active INTEGER NOT NULL DEFAULT 1
+);
+
+-- Global (non-pad) part of a scene snapshot: the shared tempo, the metronome
+-- configuration and both transports' running state, so loading a scene
+-- restores the whole set, not just the 16 pads.
+CREATE TABLE IF NOT EXISTS kit_state (
+    kit_id INTEGER PRIMARY KEY,
+    sequencer_bpm TEXT NOT NULL DEFAULT '100',
+    metronome_style TEXT NOT NULL DEFAULT 'digital',
+    metronome_signature TEXT NOT NULL DEFAULT '4_4',
+    metronome_running TEXT NOT NULL DEFAULT '0',
+    sequencer_running TEXT NOT NULL DEFAULT '0',
+    FOREIGN KEY (kit_id) REFERENCES kits(id) ON DELETE CASCADE
+);
+
+-- Sequencer grid captured with the scene (16 x 16), same relationship
+-- pattern_steps has to patterns.
+CREATE TABLE IF NOT EXISTS kit_steps (
+    kit_id INTEGER NOT NULL,
+    pad_number INTEGER NOT NULL,
+    step_index INTEGER NOT NULL,
+    active INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (kit_id, pad_number, step_index),
+    FOREIGN KEY (kit_id) REFERENCES kits(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS kit_pads (
@@ -224,6 +251,12 @@ _SAMPLES_MIGRATIONS = [
     "ALTER TABLE samples ADD COLUMN folder TEXT NOT NULL DEFAULT ''",
 ]
 
+# kits.active was added when kits grew into full scenes with an active/inactive
+# flag; already-deployed kits default to active so the live list is unchanged.
+_KITS_MIGRATIONS = [
+    "ALTER TABLE kits ADD COLUMN active INTEGER NOT NULL DEFAULT 1",
+]
+
 
 def _migrate(conn: sqlite3.Connection) -> None:
     existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(pads)")}
@@ -236,6 +269,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     for stmt in _SAMPLES_MIGRATIONS:
         col = stmt.split("ADD COLUMN")[1].split()[0]
         if col not in existing_sample_cols:
+            conn.execute(stmt)
+
+    existing_kit_cols = {row["name"] for row in conn.execute("PRAGMA table_info(kits)")}
+    for stmt in _KITS_MIGRATIONS:
+        col = stmt.split("ADD COLUMN")[1].split()[0]
+        if col not in existing_kit_cols:
             conn.execute(stmt)
 
     # knob_mappings gained a "scope" column (pad vs. global targets like
@@ -788,16 +827,50 @@ def apply_pattern(pattern_id: int) -> Optional[dict]:
 def list_kits() -> list[dict]:
     conn = get_connection()
     try:
-        rows = conn.execute("SELECT id, name, created_at FROM kits ORDER BY name").fetchall()
+        rows = conn.execute(
+            "SELECT id, name, created_at, active FROM kits ORDER BY name"
+        ).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
 
 
-def save_kit(name: str, pads: list[dict], pad_effects: list[dict], knob_mappings: list[dict] | None = None) -> int:
-    """Captures the current pad state (assignment + mix, the effect chains
-    and the knob mappings) as a kit. Saving over an existing name replaces
-    its contents."""
+def list_active_kits() -> list[dict]:
+    """Scenes available for live Performance navigation (active = 1)."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, name, created_at, active FROM kits WHERE active = 1 ORDER BY name"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def set_kit_active(kit_id: int, active: bool) -> bool:
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "UPDATE kits SET active = ? WHERE id = ?", (1 if active else 0, kit_id)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def save_kit(
+    name: str,
+    pads: list[dict],
+    pad_effects: list[dict],
+    knob_mappings: list[dict] | None = None,
+    scene_state: dict | None = None,
+    sequencer_steps: list[dict] | None = None,
+) -> int:
+    """Captures the current set state as a scene: pad assignments + mix, the
+    effect chains, the knob mappings, the global tempo/metronome state and the
+    sequencer grid. Saving over an existing name replaces its contents (the
+    active flag is preserved)."""
     conn = get_connection()
     try:
         kit_id = conn.execute("SELECT id FROM kits WHERE name = ?", (name,)).fetchone()
@@ -811,6 +884,8 @@ def save_kit(name: str, pads: list[dict], pad_effects: list[dict], knob_mappings
             conn.execute("DELETE FROM kit_pads WHERE kit_id = ?", (kit_id_val,))
             conn.execute("DELETE FROM kit_effects WHERE kit_id = ?", (kit_id_val,))
             conn.execute("DELETE FROM kit_knobs WHERE kit_id = ?", (kit_id_val,))
+            conn.execute("DELETE FROM kit_state WHERE kit_id = ?", (kit_id_val,))
+            conn.execute("DELETE FROM kit_steps WHERE kit_id = ?", (kit_id_val,))
         conn.executemany(
             "INSERT INTO kit_pads (kit_id, pad_number, sample_id, volume_db, pan, cutoff_hz) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -848,6 +923,29 @@ def save_kit(name: str, pads: list[dict], pad_effects: list[dict], knob_mappings
                 for k in (knob_mappings or [])
             ],
         )
+        if scene_state is not None:
+            conn.execute(
+                "INSERT INTO kit_state "
+                "(kit_id, sequencer_bpm, metronome_style, metronome_signature, "
+                "metronome_running, sequencer_running) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    kit_id_val,
+                    str(scene_state.get("sequencer_bpm", "100")),
+                    str(scene_state.get("metronome_style", "digital")),
+                    str(scene_state.get("metronome_signature", "4_4")),
+                    "1" if scene_state.get("metronome_running") in (True, "1", 1) else "0",
+                    "1" if scene_state.get("sequencer_running") in (True, "1", 1) else "0",
+                ),
+            )
+        if sequencer_steps is not None:
+            conn.executemany(
+                "INSERT INTO kit_steps (kit_id, pad_number, step_index, active) "
+                "VALUES (?, ?, ?, ?)",
+                [
+                    (kit_id_val, s["pad_number"], s["step_index"], 1 if s.get("active") else 0)
+                    for s in sequencer_steps
+                ],
+            )
         conn.commit()
         return kit_id_val
     except Exception:
@@ -860,7 +958,9 @@ def save_kit(name: str, pads: list[dict], pad_effects: list[dict], knob_mappings
 def get_kit(kit_id: int) -> Optional[dict]:
     conn = get_connection()
     try:
-        row = conn.execute("SELECT id, name, created_at FROM kits WHERE id = ?", (kit_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id, name, created_at, active FROM kits WHERE id = ?", (kit_id,)
+        ).fetchone()
         if row is None:
             return None
         pads = conn.execute(
@@ -886,13 +986,30 @@ def get_kit(kit_id: int) -> Optional[dict]:
                 (kit_id,),
             ).fetchall()
         ]
+        state_row = conn.execute(
+            "SELECT sequencer_bpm, metronome_style, metronome_signature, "
+            "metronome_running, sequencer_running FROM kit_state WHERE kit_id = ?",
+            (kit_id,),
+        ).fetchone()
+        state = dict(state_row) if state_row is not None else None
+        steps = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT pad_number, step_index, active FROM kit_steps "
+                "WHERE kit_id = ? ORDER BY pad_number, step_index",
+                (kit_id,),
+            ).fetchall()
+        ]
         return {
             "id": row["id"],
             "name": row["name"],
             "created_at": row["created_at"],
+            "active": bool(row["active"]),
             "pads": [dict(r) for r in pads],
             "effects": effects_parsed,
             "knobs": knobs,
+            "state": state,
+            "steps": steps,
         }
     finally:
         conn.close()
@@ -909,12 +1026,14 @@ def delete_kit(kit_id: int) -> bool:
 
 
 def load_kit(kit_id: int) -> Optional[dict]:
-    """Copies a kit onto the live pad state (single transaction). midi_note is
-    preserved (physical controller mapping). The kit's knob mappings replace
-    the live ones wholesale, so the physical knobs follow the kit - except a
-    kit saved before knob mappings joined the snapshot (no kit_knobs rows),
-    which leaves the current mappings untouched. Returns the kit dict, or
-    None if the kit doesn't exist."""
+    """Copies a scene onto the live state (single transaction). midi_note is
+    preserved (physical controller mapping). The scene's knob mappings replace
+    the live ones wholesale, so the physical knobs follow the scene - except a
+    scene saved before knob mappings joined the snapshot (no kit_knobs rows),
+    which leaves the current mappings untouched. The global tempo/metronome
+    settings and the sequencer grid are restored too when the scene carries
+    them (scenes saved before scenes grew a global state leave them as-is).
+    Returns the scene dict, or None if it doesn't exist."""
     kit = get_kit(kit_id)
     if kit is None:
         return None
@@ -946,6 +1065,26 @@ def load_kit(kit_id: int) -> Optional[dict]:
                 [
                     (k["cc_number"], k["scope"], k["pad_number"], k["param"])
                     for k in kit["knobs"]
+                ],
+            )
+        if kit["state"] is not None:
+            for key in ("sequencer_bpm", "metronome_style", "metronome_signature"):
+                conn.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                    (key, kit["state"][key]),
+                )
+        if kit["steps"]:
+            active = {
+                (s["pad_number"], s["step_index"]): 1 if s["active"] else 0
+                for s in kit["steps"]
+            }
+            conn.execute("DELETE FROM sequencer_steps")
+            conn.executemany(
+                "INSERT INTO sequencer_steps (pad_number, step_index, active) VALUES (?, ?, ?)",
+                [
+                    (pad, step, active.get((pad, step), 0))
+                    for pad in range(1, 17)
+                    for step in range(SEQUENCER_STEPS)
                 ],
             )
         conn.commit()

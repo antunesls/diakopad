@@ -145,11 +145,12 @@ _pending_note_learn: Optional[int] = None  # pad_number waiting for a physical h
 
 # --- Controller action bindings ---------------------------------------------
 # Dedicated SMC-PAD controls with no on-screen equivalent (the "Gravar"
-# button, the side arrow, the "bak" pad) get bound here to a fixed logical
-# action instead of a pad or a knob param. Checked before pad-note-learn/
-# pad-trigger in _handle_note and before knob-learn/CC-target in _handle_cc,
-# so a dedicated control never accidentally plays a pad or tweaks a knob.
-CONTROLLER_ACTIONS = ("kit_next", "kit_prev", "looper_record_toggle", "looper_play_toggle", "looper_overdub_toggle")
+# button, the side arrow, the "bak" pad, a panic button) get bound here to a
+# fixed logical action instead of a pad or a knob param. Checked before
+# pad-note-learn/pad-trigger in _handle_note and before knob-learn/CC-target
+# in _handle_cc, so a dedicated control never accidentally plays a pad or
+# tweaks a knob.
+CONTROLLER_ACTIONS = ("kit_next", "kit_prev", "looper_record_toggle", "looper_play_toggle", "looper_overdub_toggle", "panic")
 _pending_controller_learn: Optional[str] = None  # action waiting for a physical signal, or None
 _kit_switch_lock = asyncio.Lock()
 # Last CC value seen per CC-bound controller action. Buttons fire on the
@@ -255,7 +256,13 @@ async def _broadcast_controller_actions() -> None:
 
 
 async def _dispatch_controller_action(action: str) -> None:
-    if action == "looper_record_toggle":
+    if action == "panic":
+        await orchestrator.panic(storage.list_pads())
+        await _broadcast_master()
+        await _broadcast_looper()
+        await _broadcast_sequencer()
+        await _broadcast_metronome()
+    elif action == "looper_record_toggle":
         if looper.get_state()["state"] == "recording":
             await looper.record_stop(storage.list_pads(), storage.get_settings())
         else:
@@ -278,7 +285,7 @@ async def _dispatch_controller_action(action: str) -> None:
         await manager.broadcast({"type": "navigate", "view": "looper"})
     elif action in ("kit_next", "kit_prev"):
         async with _kit_switch_lock:
-            kits = storage.list_kits()
+            kits = storage.list_active_kits()
             if not kits:
                 return
             current_id = storage.get_settings().get("current_kit_id") or ""
@@ -904,18 +911,39 @@ async def set_pad_effect_param(pad_number: int, slot_index: int, body: EffectPar
 
 
 async def _apply_kit_and_broadcast(kit: dict) -> None:
-    """Reapplies an already-loaded (storage.load_kit) kit onto the engine
-    and broadcasts pads/pad_effects/knobs - shared by the REST load endpoint
-    and the hardware-triggered kit_next dispatch, so neither duplicates the
-    other's engine-reload logic."""
+    """Reapplies an already-loaded (storage.load_kit) scene onto the engine
+    and broadcasts pads/pad_effects/knobs/tempo/sequencer/metronome - shared
+    by the REST load endpoint and the hardware-triggered scene navigation, so
+    neither duplicates the other's engine-reload logic. The scene's global
+    state (tempo, metronome, transports) is only touched when the scene
+    carries one (scenes saved before that joined the snapshot leave it as-is).
+    """
     global _pad_notes
+    state = kit.get("state")
+    if state is not None:
+        tempo.set(float(state["sequencer_bpm"]))
+        metronome.set_signature(state["metronome_signature"])
+        await orchestrator.apply_metronome_style(state["metronome_style"])
     _pad_notes = _build_pad_note_map(storage.list_pads())
+    sequencer.load_pattern(storage.list_sequencer_steps())
     await orchestrator.apply_all_pads(
         storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
     )
+    if state is not None:
+        if state["sequencer_running"] == "1":
+            await sequencer.start(storage.list_pads(), storage.get_settings(), _on_sequencer_tick)
+        else:
+            await sequencer.stop()
+        if state["metronome_running"] == "1":
+            await metronome.start(_on_metronome_beat)
+        else:
+            await metronome.stop()
     await _broadcast_pads()
     await _broadcast_pad_effects()
     await _broadcast_knobs()
+    await _broadcast_tempo()
+    await _broadcast_sequencer()
+    await _broadcast_metronome()
 
 
 async def _broadcast_kits() -> None:
@@ -938,11 +966,35 @@ async def save_kit(body: KitRequest):
     name = body.name.strip()
     if not name:
         raise HTTPException(400, "name must not be empty")
+    settings = storage.get_settings()
     kit_id = storage.save_kit(
-        name, storage.list_pads(), storage.list_pad_effects(), storage.list_knob_mappings()
+        name,
+        storage.list_pads(),
+        storage.list_pad_effects(),
+        storage.list_knob_mappings(),
+        scene_state={
+            "sequencer_bpm": settings.get("sequencer_bpm", "100"),
+            "metronome_style": settings.get("metronome_style", metronome_sounds.DEFAULT_STYLE),
+            "metronome_signature": settings.get("metronome_signature", time_signatures.DEFAULT_SIGNATURE),
+            "metronome_running": "1" if metronome.get_state()["running"] else "0",
+            "sequencer_running": "1" if sequencer.get_state()["running"] else "0",
+        },
+        sequencer_steps=storage.list_sequencer_steps(),
     )
     await _broadcast_kits()
     return {"ok": True, "kit": {"id": kit_id, "name": name}}
+
+
+class SceneActiveRequest(BaseModel):
+    active: bool
+
+
+@app.post("/api/kits/{kit_id}/active")
+async def set_kit_active(kit_id: int, body: SceneActiveRequest):
+    if not storage.set_kit_active(kit_id, body.active):
+        raise HTTPException(404, "kit not found")
+    await _broadcast_kits()
+    return {"ok": True}
 
 
 @app.delete("/api/kits/{kit_id}")

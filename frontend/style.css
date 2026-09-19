@@ -152,6 +152,33 @@ html, body {
 .engine-status.ok { color: var(--ok); }
 .engine-status.warning { color: #ffd56a; }
 .engine-status.error { color: #ff8a8a; }
+.cpu-meter {
+  min-width: 58px;
+  padding: 7px 9px;
+  border: 1px solid #485063;
+  border-radius: 8px;
+  background: #171a22;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+.cpu-meter.warning { color: #ffd56a; border-color: #806b37; }
+.cpu-meter.high { color: #ff8a8a; border-color: #8f4747; }
+.effect-knob-assign {
+  padding: 4px 6px;
+  border: 1px solid #485063;
+  border-radius: 6px;
+  background: var(--panel-alt);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.effect-knob-assign:hover { border-color: var(--accent); color: var(--accent); }
 .global-tap-btn,
 .global-sequencer-btn { background: var(--panel-alt); font-size: 11px; }
 .global-tap-btn strong { color: var(--accent); font-size: 14px; }
@@ -307,8 +334,79 @@ html, body {
 .kit-action:disabled,
 .kit-nav:disabled { opacity: 0.35; cursor: default; }
 
+.scene-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.scene-search {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #353a47;
+  border-radius: 9px;
+  background: var(--panel-alt);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.scene-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.scene-empty {
+  padding: 10px 12px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.scene-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.scene-row.current { border-color: var(--accent-dim); }
+
+.scene-active-toggle {
+  display: flex;
+  align-items: center;
+}
+.scene-active-toggle input {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--accent);
+}
+
+.scene-load-btn {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .perf-grid {
-  height: calc(100% - 128px);
+  height: calc(100% - 300px);
 }
 
 .perf-grid .pad {

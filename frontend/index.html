@@ -33,6 +33,7 @@
       </label>
       <button id="master-mute-btn" class="master-mute-btn" type="button">Mute</button>
       <button id="engine-status" class="engine-status" type="button" aria-expanded="false">Motor</button>
+      <output id="cpu-meter" class="cpu-meter" aria-live="polite">CPU --</output>
       <button id="tab-master" class="tab" type="button">Master</button>
       <button id="panic-btn" class="panic-btn" type="button" aria-label="Segure para acionar o panic">Segure PANIC</button>
       <span id="conn-status" class="conn-status" title="Conexão">●</span>
@@ -50,16 +51,20 @@
 
   <main id="view-performance" class="view hidden">
     <div class="kit-strip">
-      <button id="kit-prev" class="kit-nav" type="button" aria-label="Kit anterior">◀</button>
+      <button id="kit-prev" class="kit-nav" type="button" aria-label="Cena anterior">◀</button>
       <div class="kit-current">
-        <span id="kit-name" class="kit-name">Nenhum kit salvo</span>
+        <span id="kit-name" class="kit-name">Nenhuma cena salva</span>
         <span id="kit-count" class="kit-count"></span>
       </div>
-      <button id="kit-next" class="kit-nav" type="button" aria-label="Próximo kit">▶</button>
+      <button id="kit-next" class="kit-nav" type="button" aria-label="Próxima cena">▶</button>
       <button id="kit-save" class="kit-action" type="button">Salvar</button>
       <button id="kit-delete" class="kit-action danger" type="button">Excluir</button>
     </div>
-    <p class="pad-live-hint">Toque para tocar, segure para trocar o som. ◀ ▶ troca o kit ao vivo.</p>
+    <div class="scene-manager">
+      <input id="scene-search" class="scene-search" type="search" placeholder="Buscar cena...">
+      <ul id="scene-list" class="scene-list"></ul>
+    </div>
+    <p class="pad-live-hint">Toque para tocar, segure para trocar o som. ◀ ▶ troca a cena ao vivo (só as ativas).</p>
     <div id="perf-pad-grid" class="pad-grid perf-grid"></div>
   </main>
 
@@ -245,6 +250,14 @@
     <h2 class="tab-note">Controles dedicados do SMC-PAD</h2>
     <p class="tab-note">Vincule botões físicos sem tela equivalente a uma ação do app. Aperte "Aprender" e depois o botão/pad no controlador.</p>
     <ul class="settings-list">
+      <li class="settings-row" data-controller-action="panic">
+        <div class="settings-text">
+          <span class="settings-label">Panic</span>
+          <span class="settings-desc">Silencia tudo, para transports e muta o master, igual ao botão PANIC.</span>
+          <div class="controller-bindings-chips" id="controller-bindings-panic"></div>
+        </div>
+        <button class="secondary-btn" id="controller-learn-btn-panic" type="button">Aprender</button>
+      </li>
       <li class="settings-row" data-controller-action="looper_record_toggle">
         <div class="settings-text">
           <span class="settings-label">Gravar (Looper)</span>

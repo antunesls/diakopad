@@ -130,9 +130,44 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn("masterLimiterThreshold", app)
         self.assertIn(
             '<button id="engine-status" class="engine-status" type="button" aria-expanded="false">Motor</button>\n'
+            '      <output id="cpu-meter" class="cpu-meter" aria-live="polite">CPU --</output>\n'
             '      <button id="tab-master" class="tab" type="button">Master</button>',
             html,
         )
+
+    def test_config_expoe_midi_learn_para_panic(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('data-controller-action="panic"', html)
+        self.assertIn('id="controller-learn-btn-panic"', html)
+        self.assertIn("panic:", app)
+
+    def test_performance_tem_lista_pesquisavel_de_cenas_com_ativacao(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="scene-search"', html)
+        self.assertIn('id="scene-list"', html)
+        self.assertIn("function activeKits()", app)
+        self.assertIn("function renderSceneList()", app)
+        self.assertIn("/active`, {", app)
+
+    def test_topo_exibe_percentual_de_cpu_do_sistema(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="cpu-meter"', html)
+        self.assertIn("cpuMeter", app)
+        self.assertIn("cpu_percent", app)
+
+    def test_parametros_de_efeito_permitem_aprendizado_direto_de_knob(self):
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("effect-knob-assign", app)
+        self.assertIn("slot${slot.slot_index}:${p.symbol}", app)
+        self.assertIn("startKnobCapture(\"pad\", padNumber", app)
+        self.assertIn("refreshKnobTargets", app)
 
 
 if __name__ == "__main__":

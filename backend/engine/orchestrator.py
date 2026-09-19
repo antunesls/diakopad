@@ -33,6 +33,7 @@ import re
 import midi
 import sfz
 import storage
+import system_metrics
 from engine import effects_catalog, jackgraph, looper, metronome, metronome_sounds, modhost_client, sequencer, sfizz_proc
 
 logger = logging.getLogger("diakopad.engine.orchestrator")
@@ -181,6 +182,7 @@ def engine_status() -> dict:
         "pads": {str(n): sfizz_proc.is_running(sfizz_proc.client_name(n)) for n in range(1, 17)},
         "metronome": sfizz_proc.is_running(METRONOME_CLIENT),
         "master": master_state(),
+        "cpu_percent": system_metrics.cpu_percent(),
         "last_error": _last_engine_error or None,
     }
 
@@ -426,9 +428,12 @@ def _rewire_pad_chain(pad_number: int, slots: list[dict]) -> None:
         slot_client = _effect_client(instance)
         jackgraph.disconnect_all(rf"^{re.escape(slot_client)}:")
         in_ports, out_ports = plugin["in_ports"], plugin["out_ports"]
-        jackgraph.connect(prev_out[0], f"{slot_client}:{in_ports[0]}")
-        jackgraph.connect(prev_out[1], f"{slot_client}:{in_ports[1]}")
-        prev_out = (f"{slot_client}:{out_ports[0]}", f"{slot_client}:{out_ports[1]}")
+        for index, in_port in enumerate(in_ports):
+            jackgraph.connect(prev_out[min(index, len(prev_out) - 1)], f"{slot_client}:{in_port}")
+        if len(out_ports) == 1:
+            prev_out = (f"{slot_client}:{out_ports[0]}",) * 2
+        else:
+            prev_out = (f"{slot_client}:{out_ports[0]}", f"{slot_client}:{out_ports[1]}")
 
     master_l, master_r = _master_destinations()
     jackgraph.connect(prev_out[0], master_l)

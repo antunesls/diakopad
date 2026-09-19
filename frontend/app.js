@@ -24,9 +24,10 @@
     metronomeStyles: [],
     timeSignatures: [],
     master: { available: false, volume: 100, muted: false, limiter_available: false, limiter_enabled: true, limiter_threshold_db: -1 },
-    engineStatus: { jack: false, modhost: false, pads: {}, metronome: false, last_error: null },
+    engineStatus: { jack: false, modhost: false, pads: {}, metronome: false, cpu_percent: null, last_error: null },
     kits: [],
     kitIndex: 0,
+    kitSearch: "",
     patterns: [],
     patternIndex: 0,
     controllerActions: { bindings: {}, pending_learn: null },
@@ -47,6 +48,8 @@
     kitCount: document.getElementById("kit-count"),
     kitSave: document.getElementById("kit-save"),
     kitDelete: document.getElementById("kit-delete"),
+    sceneSearch: document.getElementById("scene-search"),
+    sceneList: document.getElementById("scene-list"),
     patternPrev: document.getElementById("pattern-prev"),
     patternNext: document.getElementById("pattern-next"),
     patternName: document.getElementById("pattern-name"),
@@ -91,6 +94,7 @@
     masterLimiterThresholdValue: document.getElementById("master-limiter-threshold-value"),
     masterLimiterWarning: document.getElementById("master-limiter-warning"),
     engineStatus: document.getElementById("engine-status"),
+    cpuMeter: document.getElementById("cpu-meter"),
     engineStatusDetail: document.getElementById("engine-status-detail"),
     engineStatusText: document.getElementById("engine-status-text"),
     engineRestartBtn: document.getElementById("engine-restart-btn"),
@@ -101,6 +105,8 @@
     fullRestartBtn: document.getElementById("full-restart-btn"),
     controllerBindingsLooperRecordToggle: document.getElementById("controller-bindings-looper_record_toggle"),
     controllerLearnBtnLooperRecordToggle: document.getElementById("controller-learn-btn-looper_record_toggle"),
+    controllerBindingsPanic: document.getElementById("controller-bindings-panic"),
+    controllerLearnBtnPanic: document.getElementById("controller-learn-btn-panic"),
     controllerBindingsLooperPlayToggle: document.getElementById("controller-bindings-looper_play_toggle"),
     controllerLearnBtnLooperPlayToggle: document.getElementById("controller-learn-btn-looper_play_toggle"),
     controllerBindingsLooperOverdubToggle: document.getElementById("controller-bindings-looper_overdub_toggle"),
@@ -195,6 +201,9 @@
     el.engineStatus.textContent = level === "ok" ? "Motor OK" : "Motor";
     el.engineStatus.title = problems.length ? problems.join(" · ") : "Motor de áudio pronto";
     el.engineStatusText.textContent = problems.length ? problems.join(". ") : "JACK, sfizz e mod-host estão prontos.";
+    const cpu = state.engineStatus.cpu_percent;
+    el.cpuMeter.textContent = Number.isFinite(cpu) ? `CPU ${Math.round(cpu)}%` : "CPU --";
+    el.cpuMeter.className = `cpu-meter${cpu >= 85 ? " high" : cpu >= 65 ? " warning" : ""}`;
   }
 
   async function setMaster(body) {
@@ -365,31 +374,80 @@
     midiNoteHitTimer = setTimeout(() => el.midiNoteIndicator.classList.remove("hit"), 180);
   }
 
-  // Kits: named snapshots of the 16 pad assignments + effect chains, for
-  // switching the whole set during a show. Kit switching re-applies every
-  // pad in the engine, so the grid shows a busy state while it runs.
+  // Cenas: named snapshots of the whole set (16 pad assignments, effect
+  // chains, knobs, tempo/metronome and sequencer grid), for switching during
+  // a show. Only ACTIVE scenes take part in the ◀ ▶ navigation; inactive ones
+  // stay saved in the manager list below. Scene switching re-applies every pad
+  // in the engine, so the grid shows a busy state while it runs.
+
+  function activeKits() {
+    return state.kits.filter((k) => k.active);
+  }
+
+  function currentKit() {
+    return activeKits()[state.kitIndex] || null;
+  }
 
   async function loadKits() {
     const res = await fetch("/api/kits");
     state.kits = await res.json();
-    if (state.kitIndex >= state.kits.length) state.kitIndex = 0;
+    if (state.kitIndex >= activeKits().length) state.kitIndex = 0;
     renderKitStrip();
+    renderSceneList();
   }
 
   function renderKitStrip() {
-    const kit = state.kits[state.kitIndex];
-    el.kitName.textContent = kit ? kit.name : "Nenhum kit salvo";
-    el.kitCount.textContent = state.kits.length ? `${state.kitIndex + 1} / ${state.kits.length}` : "";
-    el.kitPrev.disabled = state.kits.length < 2;
-    el.kitNext.disabled = state.kits.length < 2;
+    const act = activeKits();
+    const kit = currentKit();
+    el.kitName.textContent = kit ? kit.name : "Nenhuma cena ativa";
+    el.kitCount.textContent = act.length ? `${state.kitIndex + 1} / ${act.length}` : "";
+    el.kitPrev.disabled = act.length < 2;
+    el.kitNext.disabled = act.length < 2;
     el.kitDelete.disabled = !kit;
   }
 
+  function renderSceneList() {
+    const term = state.kitSearch.trim().toLowerCase();
+    const scenes = state.kits.filter((k) => !term || k.name.toLowerCase().includes(term));
+    el.sceneList.innerHTML = "";
+    if (!scenes.length) {
+      el.sceneList.innerHTML = `<li class="scene-empty">Nenhuma cena${term ? " encontrada" : " salva"}.</li>`;
+      return;
+    }
+    const current = currentKit();
+    for (const scene of scenes) {
+      const li = document.createElement("li");
+      li.className = "scene-row" + (current && current.id === scene.id ? " current" : "");
+      li.innerHTML = `
+        <label class="scene-active-toggle" title="Usar na performance">
+          <input type="checkbox" ${scene.active ? "checked" : ""}>
+        </label>
+        <button class="scene-load-btn" type="button">${escapeHtml(scene.name)}</button>
+        <button class="icon-btn delete-btn" title="Excluir">🗑</button>
+      `;
+      li.querySelector(".scene-active-toggle input").addEventListener("change", (e) => {
+        fetch(`/api/kits/${scene.id}/active`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ active: e.target.checked }),
+        });
+      });
+      li.querySelector(".scene-load-btn").addEventListener("click", () => {
+        const index = activeKits().findIndex((k) => k.id === scene.id);
+        if (index >= 0) loadKitAt(index);
+      });
+      li.querySelector(".delete-btn").addEventListener("click", () => deleteKit(scene));
+      el.sceneList.appendChild(li);
+    }
+  }
+
   async function loadKitAt(index) {
-    if (!state.kits.length) return;
-    state.kitIndex = (index + state.kits.length) % state.kits.length;
+    const act = activeKits();
+    if (!act.length) return;
+    state.kitIndex = (index + act.length) % act.length;
     renderKitStrip();
-    const kit = state.kits[state.kitIndex];
+    renderSceneList();
+    const kit = currentKit();
     el.perfPadGrid.classList.add("applying");
     try {
       await fetch(`/api/kits/${kit.id}/load`, { method: "POST" });
@@ -399,8 +457,9 @@
   }
 
   async function saveCurrentKit() {
-    const suggestion = state.kits[state.kitIndex] ? state.kits[state.kitIndex].name : "";
-    const name = window.prompt("Nome do kit:", suggestion);
+    const current = currentKit();
+    const suggestion = current ? current.name : "";
+    const name = window.prompt("Nome da cena:", suggestion);
     if (name === null) return;
     const trimmed = name.trim();
     if (!trimmed) return;
@@ -410,29 +469,36 @@
       body: JSON.stringify({ name: trimmed }),
     });
     if (!res.ok) {
-      window.alert("Não foi possível salvar o kit.");
+      window.alert("Não foi possível salvar a cena.");
       return;
     }
     await loadKits();
-    const saved = state.kits.findIndex((k) => k.name === trimmed);
+    const saved = activeKits().findIndex((k) => k.name === trimmed);
     if (saved >= 0) {
       state.kitIndex = saved;
       renderKitStrip();
     }
   }
 
-  async function deleteCurrentKit() {
-    const kit = state.kits[state.kitIndex];
+  async function deleteKit(kit) {
     if (!kit) return;
-    if (!window.confirm(`Excluir o kit "${kit.name}"?`)) return;
+    if (!window.confirm(`Excluir a cena "${kit.name}"?`)) return;
     await fetch(`/api/kits/${kit.id}`, { method: "DELETE" });
     await loadKits();
+  }
+
+  function deleteCurrentKit() {
+    return deleteKit(currentKit());
   }
 
   el.kitPrev.addEventListener("click", () => loadKitAt(state.kitIndex - 1));
   el.kitNext.addEventListener("click", () => loadKitAt(state.kitIndex + 1));
   el.kitSave.addEventListener("click", saveCurrentKit);
   el.kitDelete.addEventListener("click", deleteCurrentKit);
+  el.sceneSearch.addEventListener("input", () => {
+    state.kitSearch = el.sceneSearch.value;
+    renderSceneList();
+  });
 
   // Sons: browsed one folder level at a time (see backend GET
   // /api/sounds/browse) so a huge imported library never has to render as
@@ -771,17 +837,26 @@
     for (const p of plugin.params) {
       const value = slot.params[p.symbol] ?? p.default;
       const step = (p.max - p.min) / 100 || 1;
+      const knobParam = `slot${slot.slot_index}:${p.symbol}`;
+      const mapping = state.knobs.find(
+        (knob) => knob.scope === "pad" && knob.pad_number === padNumber && knob.param === knobParam
+      );
       const row = document.createElement("div");
       row.className = "mix-control";
       row.innerHTML = `
         <span class="mix-control-label">${escapeHtml(p.label)}</span>
         <input type="range" min="${p.min}" max="${p.max}" step="${step}" value="${value}">
         <span class="mix-value">${formatParamValue(value, p.unit)}</span>
+        <button class="effect-knob-assign" type="button" title="Atribuir knob">${mapping ? `CC ${mapping.cc_number}` : "Knob"}</button>
       `;
       const input = row.querySelector("input");
       const valueEl = row.querySelector(".mix-value");
       input.addEventListener("input", () => (valueEl.textContent = formatParamValue(Number(input.value), p.unit)));
       input.addEventListener("change", () => setPadEffectParam(padNumber, slot.slot_index, p.symbol, Number(input.value)));
+      row.querySelector(".effect-knob-assign").addEventListener("click", () => {
+        el.knobModal.classList.remove("hidden");
+        startKnobCapture("pad", padNumber, knobParam);
+      });
       container.appendChild(row);
     }
   }
@@ -792,11 +867,12 @@
   }
 
   async function setPadEffectSlot(padNumber, slotIndex, pluginId) {
-    await fetch(`/api/pads/${padNumber}/effects/${slotIndex}`, {
+    const response = await fetch(`/api/pads/${padNumber}/effects/${slotIndex}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ plugin_id: pluginId }),
     });
+    if (response.ok) refreshKnobTargets();
   }
 
   async function setPadEffectParam(padNumber, slotIndex, symbol, value) {
@@ -1213,6 +1289,11 @@
     });
   }
 
+  async function refreshKnobTargets() {
+    const response = await fetch("/api/knobs/targets");
+    if (response.ok) state.knobTargets = await response.json();
+  }
+
   function closeKnobModal() {
     const wasCapturing = knobPicker.step === "capture";
     el.knobModal.classList.add("hidden");
@@ -1247,6 +1328,10 @@
   });
 
   const CONTROLLER_ACTION_ELS = {
+    panic: {
+      chips: el.controllerBindingsPanic,
+      btn: el.controllerLearnBtnPanic,
+    },
     looper_record_toggle: {
       chips: el.controllerBindingsLooperRecordToggle,
       btn: el.controllerLearnBtnLooperRecordToggle,
@@ -1653,6 +1738,7 @@
         state.knobs = msg.knobs;
         state.pendingLearn = msg.pending_learn;
         renderKnobs();
+        renderEffects();
         if (knobPicker.step === "capture" && !state.pendingLearn) {
           el.knobModal.classList.add("hidden");
           knobPicker.step = null;
@@ -1663,6 +1749,7 @@
       } else if (msg.type === "pad_effects") {
         state.padEffects = msg.pad_effects;
         renderEffects();
+        refreshKnobTargets();
       } else if (msg.type === "sequencer") {
         state.sequencer = { running: msg.running, current_step: msg.current_step, steps: msg.steps };
         renderSequencer();
@@ -1693,10 +1780,12 @@
         renderMetronomeBeat(msg.beat_in_bar);
       } else if (msg.type === "kits") {
         state.kits = msg.kits;
-        const currentIdx = state.kits.findIndex((k) => String(k.id) === String(msg.current_kit_id));
+        const act = activeKits();
+        const currentIdx = act.findIndex((k) => String(k.id) === String(msg.current_kit_id));
         if (currentIdx >= 0) state.kitIndex = currentIdx;
-        else if (state.kitIndex >= state.kits.length) state.kitIndex = 0;
+        else if (state.kitIndex >= act.length) state.kitIndex = 0;
         renderKitStrip();
+        renderSceneList();
       } else if (msg.type === "patterns") {
         state.patterns = msg.patterns;
         if (state.patternIndex >= state.patterns.length) state.patternIndex = 0;
@@ -1760,13 +1849,14 @@
     state.master = await masterRes.json();
     state.engineStatus = await engineStatusRes.json();
     state.kits = await kitsRes.json();
-    if (state.kitIndex >= state.kits.length) state.kitIndex = 0;
+    if (state.kitIndex >= activeKits().length) state.kitIndex = 0;
     state.patterns = await patternsRes.json();
     if (state.patternIndex >= state.patterns.length) state.patternIndex = 0;
     state.controllerActions = await controllerActionsRes.json();
 
     renderPads();
     renderKitStrip();
+    renderSceneList();
     renderPatternStrip();
     renderControllerActions();
     await loadSoundBrowser();

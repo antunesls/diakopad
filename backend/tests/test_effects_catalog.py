@@ -8,8 +8,8 @@ class CatalogShapeTests(unittest.TestCase):
         for plugin_id, entry in effects_catalog.PLUGIN_CATALOG.items():
             with self.subTest(plugin_id=plugin_id):
                 self.assertTrue(entry["lv2_uri"])
-                self.assertEqual(len(entry["in_ports"]), 2)
-                self.assertEqual(len(entry["out_ports"]), 2)
+                self.assertIn(len(entry["in_ports"]), (1, 2))
+                self.assertIn(len(entry["out_ports"]), (1, 2))
                 self.assertTrue(entry["params"])
                 symbols = [p["symbol"] for p in entry["params"]]
                 self.assertEqual(len(symbols), len(set(symbols)))

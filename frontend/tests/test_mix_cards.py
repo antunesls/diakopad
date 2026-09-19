@@ -128,6 +128,11 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn('id="tab-master"', html)
         self.assertIn('id="master-limiter-threshold"', html)
         self.assertIn("masterLimiterThreshold", app)
+        self.assertIn(
+            '<button id="engine-status" class="engine-status" type="button" aria-expanded="false">Motor</button>\n'
+            '      <button id="tab-master" class="tab" type="button">Master</button>',
+            html,
+        )
 
 
 if __name__ == "__main__":

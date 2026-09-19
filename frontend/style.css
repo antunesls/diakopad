@@ -89,6 +89,32 @@ html, body {
   flex-shrink: 0;
 }
 
+.midi-note-indicator {
+  min-width: 102px;
+  padding: 7px 9px;
+  border: 1px solid #485063;
+  border-radius: 8px;
+  background: #171a22;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.midi-note-indicator.hit {
+  animation: midi-note-hit 180ms ease-out;
+  border-color: #ffe36e;
+  color: #ffe36e;
+}
+
+@keyframes midi-note-hit {
+  0% { transform: scale(1); background: #171a22; }
+  45% { transform: scale(1.06); background: #4c4828; }
+  100% { transform: scale(1); background: #171a22; }
+}
+
 .master-control {
   display: flex;
   align-items: center;
@@ -1246,6 +1272,7 @@ html, body {
   .master-control input { width: 48px; }
   .engine-status { padding-inline: 7px; }
   .panic-btn { padding-inline: 7px; }
+  .midi-note-indicator { min-width: 92px; padding-inline: 6px; font-size: 11px; }
   .mix-card-header { padding: 8px; }
   .mix-card .pad-sound,
   .mix-card-summary { display: none; }

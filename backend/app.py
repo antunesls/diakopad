@@ -178,6 +178,7 @@ def _handle_note(note: int, velocity: int) -> None:
     out DiakoPad-trigger-out straight into each pad's sfizz instance, never
     back through this input port."""
     global _pending_note_learn
+    asyncio.create_task(_broadcast_midi_note(note, velocity))
     if _pending_note_learn is not None:
         pad_number = _pending_note_learn
         _pending_note_learn = None
@@ -313,6 +314,10 @@ async def _broadcast_pads() -> None:
 
 async def _broadcast_pad_hit(pad_number: int, velocity: int) -> None:
     await manager.broadcast({"type": "pad_hit", "pad_number": pad_number, "velocity": velocity})
+
+
+async def _broadcast_midi_note(note: int, velocity: int) -> None:
+    await manager.broadcast({"type": "midi_note", "note": note, "velocity": velocity})
 
 
 def _build_pad_note_map(pads: list[dict]) -> dict[int, list[int]]:

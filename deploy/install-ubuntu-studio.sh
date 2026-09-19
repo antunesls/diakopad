@@ -39,6 +39,11 @@ fi
 
 mkdir -p "$INSTALL_DIR/backend/samples" "$SFZ_BANK_DIR" "$BUILD_DIR"
 
+# Stop any previous install's service so rebuilding sfizz_jack/mod-host below
+# doesn't hit "Text file busy" trying to overwrite a binary its own running
+# process still has mapped (harmless no-op on a first install).
+systemctl --user stop diakopad.service 2>/dev/null || true
+
 echo "==> Installing build/runtime dependencies"
 sudo apt-get update
 sudo apt-get install -y \
@@ -57,6 +62,16 @@ if ! command -v sfizz_jack >/dev/null 2>&1; then
   if [ ! -d "$BUILD_DIR/sfizz" ]; then
     git clone --recursive https://github.com/sfztools/sfizz.git "$BUILD_DIR/sfizz"
   fi
+  # Upstream's sfizz_jack starts an interactive CLI thread
+  # (clients/jack_client.cpp) that blocks on std::getline(std::cin, ...) for
+  # commands. Under systemd/SSH stdin has no terminal and is already at EOF,
+  # so that thread immediately sets shouldClose=true and the 1-second main
+  # loop tears the whole client down within ~1s of every spawn - looks like
+  # sfizz "crashing" in a tight loop (validated on-device, Ubuntu Studio,
+  # Sep/2026). Zynthian's own sfizz build doesn't have this problem, so it
+  # only shows up on this from-source desktop build. Strip the thread.
+  sed -i '/std::thread cli_thread(cliThreadProc);/d; /cli_thread\.join();/d' \
+    "$BUILD_DIR/sfizz/clients/jack_client.cpp"
   cmake -S "$BUILD_DIR/sfizz" -B "$BUILD_DIR/sfizz/build" \
     -DCMAKE_BUILD_TYPE=Release -DSFIZZ_JACK=ON -DSFIZZ_LV2=OFF -DSFIZZ_VST=OFF
   cmake --build "$BUILD_DIR/sfizz/build" -j"$(nproc)"

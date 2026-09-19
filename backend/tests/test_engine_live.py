@@ -86,6 +86,18 @@ class PadTriggerEndpointTests(unittest.IsolatedAsyncioTestCase):
 
 
 class PadHitFeedbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_physical_midi_note_is_broadcast_without_matching_pad(self):
+        original_notes = diakopad_app._pad_notes
+        diakopad_app._pad_notes = {}
+        try:
+            with patch("app.manager.broadcast", new=AsyncMock()) as broadcast:
+                diakopad_app._handle_note(60, 90)
+                await asyncio.sleep(0)
+
+            broadcast.assert_awaited_once_with({"type": "midi_note", "note": 60, "velocity": 90})
+        finally:
+            diakopad_app._pad_notes = original_notes
+
     async def test_hit_queue_coalesces_repeated_hits_for_the_same_pad(self):
         with patch("app.manager.broadcast", new=AsyncMock()) as broadcast:
             diakopad_app._queue_pad_hit(1, 40)
@@ -148,8 +160,9 @@ class PadNoteLearnTests(unittest.IsolatedAsyncioTestCase):
             ):
                 diakopad_app._handle_note(40, 90)
 
-            create_task.assert_called_once()
-            create_task.call_args[0][0].close()  # scheduling was mocked out; avoid an "never awaited" warning
+            self.assertEqual(create_task.call_count, 2)
+            for call in create_task.call_args_list:
+                call.args[0].close()  # scheduling was mocked out; avoid an "never awaited" warning
             queue_hit.assert_not_called()
             self.assertIsNone(diakopad_app._pending_note_learn)
         finally:

@@ -98,6 +98,21 @@ perto do hardware.
    antes de iniciar o serviço — o unit não gerencia isso.
 4. `systemctl --user enable --now diakopad.service`
 
+### Achados da validação em hardware (set/2026, Ubuntu Studio + PipeWire)
+
+* O `sfizz_jack` do repositório upstream (`sfztools/sfizz`) sobe uma thread
+  de CLI interativa que bloqueia em `std::getline(std::cin, ...)` esperando
+  comandos. Sem terminal (systemd/SSH), o stdin já nasce em EOF, a thread
+  fecha o cliente na hora, e o loop principal (que só checa isso a cada 1s)
+  mata o processo ~1s após cada spawn — o *watchdog* reinicia em loop,
+  parecendo áudio "fora de sincronia" quando na verdade é o instrumento
+  reiniciando sem parar. `install-ubuntu-studio.sh` já aplica o patch
+  (remove essa thread antes de compilar); o build do Zynthian no Pi não tem
+  esse problema, então só aparece nesse build a partir do fonte.
+* Pra recompilar um `sfizz_jack` já em uso (ex.: reinstalar por cima), pare
+  o `diakopad.service` antes — sobrescrever o binário rodando dá
+  `Text file busy`.
+
 ## Passo manual único: preparar o SMC-PAD
 
 No app **CubeSuite** (M-Vave), configure um preset onde os 16 pads enviam

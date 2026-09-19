@@ -33,6 +33,7 @@
   let looperTimer = null;
   let tapTimestamps = [];
   let panicTimer = null;
+  let midiNoteHitTimer = null;
 
   const el = {
     padGrid: document.getElementById("pad-grid"),
@@ -72,6 +73,7 @@
     modalNoteValue: document.getElementById("modal-note-value"),
     modalLearnNoteBtn: document.getElementById("modal-learn-note-btn"),
     connStatus: document.getElementById("conn-status"),
+    midiNoteIndicator: document.getElementById("midi-note-indicator"),
     globalTapBtn: document.getElementById("global-tap-btn"),
     globalBpm: document.getElementById("global-bpm"),
     globalSequencerBtn: document.getElementById("global-sequencer-btn"),
@@ -287,6 +289,20 @@
       pad.classList.add("hit");
       setTimeout(() => pad.classList.remove("hit"), 130);
     }
+  }
+
+  function formatMidiNote(note) {
+    const names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    return `${names[note % 12]}${Math.floor(note / 12) - 2}`;
+  }
+
+  function showMidiNote(note) {
+    el.midiNoteIndicator.textContent = `MIDI: ${formatMidiNote(note)} (${note})`;
+    clearTimeout(midiNoteHitTimer);
+    el.midiNoteIndicator.classList.remove("hit");
+    void el.midiNoteIndicator.offsetWidth;
+    el.midiNoteIndicator.classList.add("hit");
+    midiNoteHitTimer = setTimeout(() => el.midiNoteIndicator.classList.remove("hit"), 180);
   }
 
   // Kits: named snapshots of the 16 pad assignments + effect chains, for
@@ -1419,6 +1435,8 @@
         if (!el.modal.classList.contains("hidden")) renderNoteLearnButton();
       } else if (msg.type === "pad_hit") {
         flashPadHit(msg.pad_number);
+      } else if (msg.type === "midi_note") {
+        showMidiNote(msg.note);
       } else if (msg.type === "sounds") {
         state.sounds = msg.sounds;
         loadSoundBrowser();

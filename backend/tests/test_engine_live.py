@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import app as diakopad_app
 import storage
 from app import trigger_pad as trigger_pad_endpoint
-from engine import jackgraph, orchestrator, sfizz_proc
+from engine import effects_catalog, jackgraph, orchestrator, sfizz_proc
 
 
 class _PortClient:
@@ -648,6 +648,46 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
         finally:
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
+
+
+class EffectSlotApplyTests(unittest.IsolatedAsyncioTestCase):
+    """Kits saved before a catalog swap (e.g. mda/Ambience -> Dragonfly
+    reverb) carry param symbols the new plugin doesn't have - they must be
+    filtered out (with defaults filling in) before reaching param_set."""
+
+    def setUp(self):
+        self._original_live = dict(orchestrator._live_slot_plugin)
+        orchestrator._live_slot_plugin.clear()
+
+    def tearDown(self):
+        orchestrator._live_slot_plugin.clear()
+        orchestrator._live_slot_plugin.update(self._original_live)
+
+    async def test_stale_params_are_filtered_before_param_set(self):
+        pad_effects = [
+            {
+                "pad_number": 1,
+                "slot_index": 1,
+                "plugin_id": "reverb",
+                "params": {"mix": 0.3, "size": 0.5, "hf_damp": 0.5, "decay": 4.0},
+            }
+        ]
+        with (
+            patch("engine.orchestrator.modhost_client.is_alive", return_value=True),
+            patch("engine.orchestrator.modhost_client.add", new=AsyncMock(return_value=True)) as add,
+            patch(
+                "engine.orchestrator.modhost_client.param_set", new=AsyncMock(return_value=True)
+            ) as param_set,
+            patch("engine.orchestrator.jackgraph.available", return_value=False),
+        ):
+            await orchestrator._apply_pad_effects_unlocked(1, pad_effects)
+
+        add.assert_awaited_once()
+        sent = {call.args[1]: call.args[2] for call in param_set.await_args_list}
+        self.assertNotIn("mix", sent)
+        self.assertEqual(
+            sent, effects_catalog.effective_params("reverb", pad_effects[0]["params"])
+        )
 
 
 if __name__ == "__main__":

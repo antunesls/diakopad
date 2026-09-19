@@ -852,6 +852,23 @@ async def set_pad_effect_param(pad_number: int, slot_index: int, body: EffectPar
         raise HTTPException(400, "pad_number must be between 1 and 16")
     if not 1 <= slot_index <= storage.EFFECT_SLOTS_PER_PAD:
         raise HTTPException(400, f"slot_index must be between 1 and {storage.EFFECT_SLOTS_PER_PAD}")
+    plugin_id = next(
+        (
+            row["plugin_id"]
+            for row in storage.list_pad_effects()
+            if row["pad_number"] == pad_number and row["slot_index"] == slot_index
+        ),
+        None,
+    )
+    if plugin_id:
+        param = next(
+            (p for p in effects_catalog.PLUGIN_CATALOG[plugin_id]["params"] if p["symbol"] == body.symbol),
+            None,
+        )
+        if param is None:
+            raise HTTPException(400, "unknown param symbol for this slot's plugin")
+        if not param["min"] <= body.value <= param["max"]:
+            raise HTTPException(400, f"value out of range ({param['min']}..{param['max']})")
     storage.set_pad_effect_param(pad_number, slot_index, body.symbol, body.value)
     await orchestrator.set_effect_param(pad_number, slot_index, body.symbol, body.value)
     await _broadcast_pad_effects()

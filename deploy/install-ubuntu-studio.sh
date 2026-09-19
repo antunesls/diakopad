@@ -50,7 +50,9 @@ sudo apt-get install -y \
   python3-venv python3-pip \
   build-essential cmake git pkg-config \
   libjack-jackd2-dev liblilv-dev lv2-dev libreadline-dev \
-  mda-lv2 x42-plugins
+  lilv-utils \
+  mda-lv2 x42-plugins \
+  dragonfly-reverb lsp-plugins zam-plugins
 
 echo "==> Setting up Python venv"
 python3 -m venv "$INSTALL_DIR/backend/.venv"
@@ -109,18 +111,16 @@ cat <<EOF
      Controls) or pipewire-jack. Sanity-check:
          jack_lsp || echo "no JACK server reachable yet"
 
-  2. Find the real LV2 plugin URIs on this machine and set them in
-       ~/.config/systemd/user/diakopad.service (edit, then
-       'systemctl --user daemon-reload') - one DIAKOPAD_FX_<NAME>_LV2_URI
-      per entry in backend/engine/effects_catalog.py's PLUGIN_CATALOG
-      (reverb, delay, compressor, drive, eq3), plus
-      DIAKOPAD_FX_MASTER_GAIN_LV2_URI for master volume/mute/PANIC:
-          which sfizz_jack mod-host
-          lv2ls | grep -i reverb
-          lv2ls | grep -i delay
-          lv2info <a-uri-from-above>
-      Unlike the Pi image, there is no known-good LV2_PATH/URI set to
-      start from here - this discovery step is required, not optional.
+  2. The effect catalog's defaults (backend/engine/effects_catalog.py) and
+     the master gain in the installed service already target this exact
+     setup - validated on-device (Ubuntu Studio, set/2026): Dragonfly
+     Hall/Plate, ZamVerb, LSP chorus/flanger/phaser, mda delay/compressor/
+     drive, x42 fil4 EQ + x42 balance as master trim. Only re-check if your
+     install differs:
+          lv2ls | grep -Ei 'dragonfly|zamaudio|lsp-plug|drobilla|gareus'
+          lv2info <uri>    # port/param symbols, if you swap a plugin
+     Per-entry overrides stay available via DIAKOPAD_FX_<NAME>_LV2_URI (see
+     the installed ~/.config/systemd/user/diakopad.service comments).
 
   3. Start DiakoPad:
          systemctl --user enable --now diakopad.service

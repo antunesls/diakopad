@@ -30,26 +30,25 @@ Environment=DIAKOPAD_MIDI_CHANNEL=10
 # override, the physical controller's Note/CC never reaches DiakoPad-in and
 # knob-learn/loop recording/controller-action learning silently see nothing.
 Environment=DIAKOPAD_HARDWARE_MIDI_PATTERN=Midi-Bridge:SINCO.*
-# sfizz/mod-host binaries and the effect catalog's LV2 URIs/ports - confirm
-# on THIS machine with `which sfizz_jack`, `which mod-host` and
-# `lv2ls`/`lv2info` (see README.md and backend/engine/effects_catalog.py)
-# before relying on the placeholder defaults baked into backend/engine/.
-# There is no known-good LV2_PATH/URI set to copy from the Pi deploy - a
-# desktop distro's plugin locations and available bundles differ.
+# sfizz/mod-host binaries. The effect catalog's defaults in
+# backend/engine/effects_catalog.py are the plugins validated on this very
+# target (Ubuntu Studio, set/2026: Dragonfly Hall/Plate, ZamVerb, LSP
+# chorus/flanger/phaser, mda delay/compressor/drive, x42 fil4 EQ - install
+# script apt-installs them all), so no DIAKOPAD_FX_<NAME>_LV2_URI overrides
+# are needed unless your install differs (confirm with lv2ls/lv2info).
 Environment=DIAKOPAD_SFIZZ_BIN=sfizz_jack
 Environment=DIAKOPAD_MODHOST_BIN=mod-host
 Environment=DIAKOPAD_MODHOST_PORT=5555
-#Environment=DIAKOPAD_FX_REVERB_LV2_URI=
-#Environment=DIAKOPAD_FX_DELAY_LV2_URI=
-#Environment=DIAKOPAD_FX_COMPRESSOR_LV2_URI=
-#Environment=DIAKOPAD_FX_DRIVE_LV2_URI=
-#Environment=DIAKOPAD_FX_EQ3_LV2_URI=
-# Master gain is optional but required for master mute/PANIC to cut one-shot
-# samples immediately. Confirm its control symbol and range with lv2info.
-#Environment=DIAKOPAD_FX_MASTER_GAIN_LV2_URI=
-#Environment=DIAKOPAD_FX_MASTER_GAIN_SYMBOL=gain
-#Environment=DIAKOPAD_FX_MASTER_GAIN_MIN=-60
-#Environment=DIAKOPAD_FX_MASTER_GAIN_MAX=0
+# Master gain: x42 Stereo Balance as a pure trim (packaged in x42-plugins;
+# symbol "trim" in dB, ports in_left/in_right -> out_left/out_right).
+# Range -20..0 dB = attenuation only (100% slider = unity), required for
+# master mute/PANIC to cut one-shot samples immediately.
+Environment=DIAKOPAD_FX_MASTER_GAIN_LV2_URI=http://gareus.org/oss/lv2/balance
+Environment=DIAKOPAD_FX_MASTER_GAIN_SYMBOL=trim
+Environment=DIAKOPAD_FX_MASTER_GAIN_MIN=-20
+Environment=DIAKOPAD_FX_MASTER_GAIN_MAX=0
+Environment=DIAKOPAD_FX_MASTER_GAIN_IN_PORTS=in_left,in_right
+Environment=DIAKOPAD_FX_MASTER_GAIN_OUT_PORTS=out_left,out_right
 ExecStart=__INSTALL_DIR__/backend/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8080
 Restart=on-failure
 RestartSec=2

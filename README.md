@@ -88,11 +88,13 @@ perto do hardware.
    - **Sem kiosk**: pule `diakopad-kiosk.service`/`kiosk-xinitrc`, é
      tela de toque específica do Pi — no laptop é só abrir
      `http://localhost:8080/` no navegador.
-   - **Sem LV2_PATH/URIs conhecidos de antemão**: ao contrário do Pi
-     (documentado em "Achados da validação em hardware" abaixo), não há
-     um conjunto de URIs já validado pra copiar — refaça a descoberta com
-     `lv2ls`/`lv2info` nesta máquina (o próprio script imprime os passos
-     ao final).
+    - **Catálogo de efeitos já validado pra este alvo**: os defaults de
+      `backend/engine/effects_catalog.py` (Dragonfly Hall/Plate, ZamVerb,
+      LSP chorus/flanger/phaser, mda delay/compressor/drive, x42 fil4) e o
+      master gain (x42 balance) do `diakopad-desktop.service` foram
+      validados no-device (set/2026) — nenhum `DIAKOPAD_FX_*` extra é
+      preciso; sobrescrevas só se a sua instalação divergir
+      (`lv2ls`/`lv2info`).
 3. Garanta que um servidor compatível com JACK já esteja rodando na sua
    sessão (jackd2 via QjackCtl/Ubuntu Studio Controls, ou pipewire-jack)
    antes de iniciar o serviço — o unit não gerencia isso.
@@ -140,21 +142,29 @@ slider (regrava o `.sfz` do pad e reinicia sua instância sfizz).
 
 Aba **Efeitos**: tom (filtro grave/agudo, nativo do sfizz) mais **3 slots de
 efeito configuráveis por pad** — em cada slot você escolhe um plugin de um
-catálogo curado (Reverb, Delay, Compressor, Overdrive, EQ 3 bandas, ver
+catálogo curado (Reverb Dragonfly Hall, Reverb Plate, Reverb IR ZamVerb,
+Chorus/Flanger/Phaser LSP, Delay, Compressor, Overdrive, EQ 3 bandas, ver
 `backend/engine/effects_catalog.py`) e ajusta os parâmetros daquele plugin.
 Trocar o plugin de um slot recria a cadeia no mod-host (`sfizz → slot 1 →
 slot 2 → slot 3 → master`); mudar só um parâmetro é um `param_set` barato,
-sem reiniciar nada.
+sem reiniciar nada. Params salvos de uma versão anterior do catálogo (ex.:
+kits gravados com o mda/Ambience) são filtrados no carregamento — símbolos
+que não pertencem ao plugin atual caem fora e os defaults completam.
 
-O catálogo foi validado no-device (imagem bookworm): Reverb = mda/Ambience,
-Delay = mda/Delay, Compressor = mda/Dynamics, Overdrive = mda/Overdrive
-(pacote apt `mda-lv2`; portas de controle normalizadas 0..1) e EQ 3 bandas
-= x42 fil4 stereo (gains ±18 dB, já presente em `/usr/local/lib/lv2`).
-O drop-in `deploy/diakopad-master.conf` também exporta o `LV2_PATH` com os
-três diretórios de plugins da imagem — sem isso o mod-host só enxerga 10
-plugins de exemplo. Há ainda ~139 bundles extras na imagem (Surge XT
-Effects, Xenia, etc.) caso queira curar mais slots; cada entrada do
-catálogo continua sobreponível por `DIAKOPAD_FX_<NAME>_LV2_URI`.
+Os defaults do catálogo foram validados no-device no deploy de laptop
+(Ubuntu Studio, set/2026): Reverb = Dragonfly Hall, Reverb Plate = Dragonfly
+Plate (pacote apt `dragonfly-reverb`), Reverb IR = ZamVerb — convolução com
+IRs embutidos, selecionáveis pelo param "Sala" (pacote `zam-plugins`) —
+Chorus/Flanger/Phaser = LSP stereo (`lsp-plugins`; portas e faixas reais,
+controles em unidades físicas) e Delay/Compressor/Overdrive = mda (portas
+normalizadas 0..1, `mda-lv2`) e EQ 3 bandas = x42 fil4 stereo (±18 dB).
+No Pi (imagem bookworm) esses plugins não existem: `deploy/diakopad.service`
+pinna o reverb de volta ao mda/Ambience via `DIAKOPAD_FX_REVERB_LV2_URI`, e
+os slots novos simplesmente ficam vazios lá — e o drop-in
+`deploy/diakopad-master.conf` continua exportando o `LV2_PATH` com os três
+diretórios de plugins da imagem (sem ele o mod-host só enxerga 10 plugins
+de exemplo). Cada entrada continua
+sobreponível por `DIAKOPAD_FX_<NAME>_LV2_URI`.
 
 ### Master e Segurança De Palco
 

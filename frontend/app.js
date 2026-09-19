@@ -131,6 +131,13 @@
 
   const VIEWS = ["pads", "performance", "sounds", "volumes", "effects", "sequencer", "metronome", "looper", "knobs", "config"];
   const SUPPORTED_AUDIO_EXTENSIONS = new Set([".wav", ".mp3", ".ogg", ".flac", ".aiff", ".aif"]);
+  // Uploading a big folder (or several dropped together) can mean hundreds
+  // of files - firing every XHR at once used to overwhelm the connection
+  // (browser socket limits, the laptop's single uvicorn worker competing
+  // with JACK/sfizz for CPU) and a chunk would fail with a generic network
+  // error. Capped the same way the backend caps concurrent pad respawns
+  // (engine/orchestrator.py's _apply_semaphore).
+  const UPLOAD_CONCURRENCY = 4;
   for (const name of VIEWS) {
     document.getElementById(`tab-${name}`).addEventListener("click", () => switchView(name));
   }
@@ -1463,8 +1470,9 @@
   }
 
   async function uploadFiles(files, folderForFile = () => currentSoundFolder()) {
-    // Uploaded in parallel (not one-by-one) so selecting/dropping several
-    // files at once feels immediate rather than queued.
+    // Uploaded with bounded concurrency (see UPLOAD_CONCURRENCY) rather
+    // than one-by-one, so a batch still feels reasonably immediate without
+    // overwhelming the connection.
     const audioFiles = Array.from(files).filter(isSupportedAudioFile);
     return uploadEntries(audioFiles.map((file) => ({ file, folder: folderForFile(file) })));
   }
@@ -1476,12 +1484,22 @@
     el.uploadProgress.classList.remove("hidden");
     updateUploadProgress(0, totalBytes, entries.length);
 
-    await Promise.all(
-      entries.map(({ file, folder }, index) => uploadOne(file, folder, (loaded) => {
-        uploadedBytes[index] = loaded;
-        updateUploadProgress(uploadedBytes.reduce((sum, value) => sum + value, 0), totalBytes, entries.length);
-      }))
-    );
+    // Bounded-concurrency pool: at most UPLOAD_CONCURRENCY requests in
+    // flight, the rest wait their turn - see UPLOAD_CONCURRENCY above for
+    // why unbounded Promise.all isn't safe for a big batch.
+    let nextIndex = 0;
+    async function worker() {
+      while (nextIndex < entries.length) {
+        const index = nextIndex++;
+        const { file, folder } = entries[index];
+        await uploadOne(file, folder, (loaded) => {
+          uploadedBytes[index] = loaded;
+          updateUploadProgress(uploadedBytes.reduce((sum, value) => sum + value, 0), totalBytes, entries.length);
+        });
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, entries.length) }, worker));
+
     await loadSoundBrowser();
     setTimeout(() => el.uploadProgress.classList.add("hidden"), 450);
   }

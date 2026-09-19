@@ -334,7 +334,11 @@ async def _apply_pad_effects_unlocked(pad_number: int, pad_effects: list[dict]) 
                     logger.warning("no LV2 URI configured for effect %r; leaving pad %d slot %d empty", plugin_id, pad_number, row["slot_index"])
             _live_slot_plugin[key] = plugin_id if loaded else None
         if _live_slot_plugin.get(key):
-            for symbol, value in row["params"].items():
+            # effective_params(): defaults + stored values, dropping symbols
+            # that no longer belong to the current plugin (kits saved before
+            # a catalog swap, e.g. mda/Ambience -> Dragonfly reverb) and
+            # clamping to each param's LV2 range.
+            for symbol, value in effects_catalog.effective_params(plugin_id, row["params"]).items():
                 await modhost_client.param_set(instance, symbol, value)
 
     _rewire_pad_chain(pad_number, slots)

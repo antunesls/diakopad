@@ -88,6 +88,19 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn("SUPPORTED_AUDIO_EXTENSIONS", app)
         self.assertIn("filter(isSupportedAudioFile)", app)
 
+    def test_upload_de_muitos_arquivos_usa_concorrencia_limitada(self):
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        # Regressão: subir uma pasta grande (ou várias arrastadas juntas) com
+        # Promise.all sem limite disparava todos os XHRs de uma vez e uma
+        # fatia falhava com "erro de rede" sob carga.
+        self.assertIn("const UPLOAD_CONCURRENCY = 4;", app)
+        self.assertIn("Math.min(UPLOAD_CONCURRENCY, entries.length)", app)
+        self.assertNotIn(
+            "await Promise.all(\n      entries.map(({ file, folder }, index) => uploadOne(file, folder,",
+            app,
+        )
+
     def test_upload_exibe_progresso_percentual(self):
         html = (FRONTEND / "index.html").read_text(encoding="utf-8")
         app = (FRONTEND / "app.js").read_text(encoding="utf-8")

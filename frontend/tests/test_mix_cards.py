@@ -121,6 +121,15 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn('window.confirm("Reiniciar o DiakoPad e o áudio do laptop?")', app)
         self.assertIn('fetch("/api/system/restart", { method: "POST" })', app)
 
+    def test_config_permite_limpar_todos_os_pads_com_confirmacao(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="clear-all-pads-btn"', html)
+        self.assertIn("Limpar todos os pads", html)
+        self.assertIn('window.confirm("Limpar o som de todos os 16 pads?', app)
+        self.assertIn('fetch("/api/pads/clear", { method: "POST" })', app)
+
     def test_aba_master_expoe_volume_mute_e_limiter(self):
         html = (FRONTEND / "index.html").read_text(encoding="utf-8")
         app = (FRONTEND / "app.js").read_text(encoding="utf-8")

@@ -103,6 +103,7 @@
     settingSustain: document.getElementById("setting-sustain"),
     settingVelocity: document.getElementById("setting-velocity"),
     fullRestartBtn: document.getElementById("full-restart-btn"),
+    clearAllPadsBtn: document.getElementById("clear-all-pads-btn"),
     controllerBindingsLooperRecordToggle: document.getElementById("controller-bindings-looper_record_toggle"),
     controllerLearnBtnLooperRecordToggle: document.getElementById("controller-learn-btn-looper_record_toggle"),
     controllerBindingsPanic: document.getElementById("controller-bindings-panic"),
@@ -268,6 +269,11 @@
       el.fullRestartBtn.textContent = "Reiniciar";
       window.alert("Não foi possível iniciar a recuperação do sistema.");
     }
+  });
+  el.clearAllPadsBtn.addEventListener("click", async () => {
+    if (!window.confirm("Limpar o som de todos os 16 pads? Volume, efeitos e knobs são mantidos.")) return;
+    const response = await fetch("/api/pads/clear", { method: "POST" });
+    if (!response.ok) window.alert("Não foi possível limpar os pads.");
   });
   el.panicBtn.addEventListener("pointerdown", armPanic);
   ["pointerup", "pointerleave", "pointercancel"].forEach((eventName) => {

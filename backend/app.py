@@ -588,6 +588,18 @@ async def assign_pad(pad_number: int, body: AssignRequest):
     return {"ok": True, "engine_applied": applied}
 
 
+@app.post("/api/pads/clear")
+async def clear_all_pads():
+    """Removes the sound from all 16 pads at once. Mix, effects and knobs are
+    kept; only the sample assignment is cleared."""
+    storage.clear_all_pads()
+    await orchestrator.apply_all_pads(
+        storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
+    )
+    await _broadcast_pads()
+    return {"ok": True}
+
+
 @app.post("/api/pads/{pad_number}/note")
 async def set_pad_note(pad_number: int, body: NoteRequest):
     global _pad_notes

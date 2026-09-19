@@ -408,6 +408,17 @@ def assign_sample(pad_number: int, sample_id: Optional[int]) -> None:
         conn.close()
 
 
+def clear_all_pads() -> None:
+    """Removes the sample assignment from every pad (mix/effects/knobs are
+    left untouched - this is the bulk "clear the pads" action)."""
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE pads SET sample_id = NULL")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def list_samples() -> list[dict]:
     conn = get_connection()
     try:

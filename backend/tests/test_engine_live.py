@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import app as diakopad_app
 import storage
+from fastapi.testclient import TestClient
 from app import trigger_pad as trigger_pad_endpoint
 from engine import effects_catalog, jackgraph, orchestrator, sfizz_proc
 
@@ -31,6 +32,15 @@ class JackGraphAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(found)
         self.assertEqual(client.calls, 2)
+
+
+class FullRestartTests(unittest.TestCase):
+    def test_full_restart_starts_the_systemd_helper_unit(self):
+        with patch("subprocess.Popen") as popen:
+            response = TestClient(diakopad_app.app).post("/api/system/restart")
+
+        self.assertEqual(response.status_code, 202)
+        popen.assert_called_once_with(["systemctl", "--user", "start", "diakopad-restart.service"])
 
 
 class PadApplyResponsivenessTests(unittest.IsolatedAsyncioTestCase):

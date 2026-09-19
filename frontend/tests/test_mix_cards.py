@@ -112,6 +112,15 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn('request.upload.addEventListener("progress"', app)
         self.assertIn(".upload-progress", css)
 
+    def test_config_permite_reiniciar_diakopad_e_audio_com_confirmacao(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="full-restart-btn"', html)
+        self.assertIn("Reiniciar DiakoPad e áudio", html)
+        self.assertIn('window.confirm("Reiniciar o DiakoPad e o áudio do laptop?")', app)
+        self.assertIn('fetch("/api/system/restart", { method: "POST" })', app)
+
 
 if __name__ == "__main__":
     unittest.main()

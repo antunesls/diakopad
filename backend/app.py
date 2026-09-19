@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import subprocess
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -751,6 +752,17 @@ async def restart_engine():
     await _broadcast_master()
     await _broadcast_engine_status()
     return {"ok": True, "status": status}
+
+
+@app.post("/api/system/restart", status_code=202)
+def restart_full_system():
+    """Schedules the user-systemd unit that restarts audio and DiakoPad."""
+    try:
+        subprocess.Popen(["systemctl", "--user", "start", "diakopad-restart.service"])
+    except OSError as exc:
+        logger.exception("Could not start the DiakoPad restart unit")
+        raise HTTPException(503, "Não foi possível iniciar a recuperação do sistema.") from exc
+    return {"ok": True}
 
 
 @app.get("/api/sounds")

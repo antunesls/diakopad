@@ -100,6 +100,12 @@ perto do hardware.
    antes de iniciar o serviço — o unit não gerencia isso.
 4. `systemctl --user enable --now diakopad.service`
 
+O botão **Config > Reiniciar DiakoPad e áudio** reinicia o serviço do
+DiakoPad, PipeWire e WirePlumber para recuperar o grafo de áudio após uma
+troca de dispositivo. O `install-ubuntu-studio.sh` instala a unidade auxiliar
+necessária; em um deploy já existente, copie `deploy/diakopad-restart.service`
+para `~/.config/systemd/user/` e execute `systemctl --user daemon-reload`.
+
 ### Achados da validação em hardware (set/2026, Ubuntu Studio + PipeWire)
 
 * O `sfizz_jack` do repositório upstream (`sfztools/sfizz`) sobe uma thread

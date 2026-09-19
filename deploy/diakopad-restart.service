@@ -1,0 +1,6 @@
+[Unit]
+Description=Restarts DiakoPad and its PipeWire audio session
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'systemctl --user restart pipewire.service wireplumber.service && systemctl --user restart diakopad.service'

@@ -91,6 +91,7 @@
     previewAudio: document.getElementById("preview-audio"),
     settingSustain: document.getElementById("setting-sustain"),
     settingVelocity: document.getElementById("setting-velocity"),
+    fullRestartBtn: document.getElementById("full-restart-btn"),
     controllerBindingsLooperRecordToggle: document.getElementById("controller-bindings-looper_record_toggle"),
     controllerLearnBtnLooperRecordToggle: document.getElementById("controller-learn-btn-looper_record_toggle"),
     controllerBindingsLooperPlayToggle: document.getElementById("controller-bindings-looper_play_toggle"),
@@ -219,6 +220,19 @@
     el.engineStatus.setAttribute("aria-expanded", String(!hidden));
   });
   el.engineRestartBtn.addEventListener("click", () => fetch("/api/engine/restart", { method: "POST" }));
+  el.fullRestartBtn.addEventListener("click", async () => {
+    if (!window.confirm("Reiniciar o DiakoPad e o áudio do laptop?")) return;
+    el.fullRestartBtn.disabled = true;
+    el.fullRestartBtn.textContent = "Reiniciando...";
+    try {
+      const response = await fetch("/api/system/restart", { method: "POST" });
+      if (!response.ok) throw new Error("restart failed");
+    } catch (_) {
+      el.fullRestartBtn.disabled = false;
+      el.fullRestartBtn.textContent = "Reiniciar";
+      window.alert("Não foi possível iniciar a recuperação do sistema.");
+    }
+  });
   el.panicBtn.addEventListener("pointerdown", armPanic);
   ["pointerup", "pointerleave", "pointercancel"].forEach((eventName) => {
     el.panicBtn.addEventListener(eventName, cancelPanic);

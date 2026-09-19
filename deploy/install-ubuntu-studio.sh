@@ -98,6 +98,7 @@ echo "==> Installing systemd --user unit"
 mkdir -p "$HOME/.config/systemd/user"
 sed "s#__INSTALL_DIR__#$INSTALL_DIR#g" "$INSTALL_DIR/deploy/diakopad-desktop.service" \
   > "$HOME/.config/systemd/user/diakopad.service"
+cp "$INSTALL_DIR/deploy/diakopad-restart.service" "$HOME/.config/systemd/user/diakopad-restart.service"
 systemctl --user daemon-reload
 
 cat <<EOF

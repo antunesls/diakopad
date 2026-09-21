@@ -1952,7 +1952,10 @@
   // pad grid underneath stays tappable for the no-hardware dev/test path.
   function renderKitBrowseModal() {
     const kb = state.kitBrowse;
-    if (!kb || !kb.active) {
+    // Stays hidden while armed (waiting for the target-pad tap) - the small
+    // header banner already covers that moment; the big modal only earns
+    // its place once there's an actual kit/sound to show.
+    if (!kb || !kb.active || kb.phase !== "browsing") {
       el.kitBrowseModal.classList.add("hidden");
       return;
     }
@@ -1960,12 +1963,6 @@
     el.kitBrowseModalCategories.innerHTML = "";
     el.kitBrowseModalKitList.innerHTML = "";
     el.kitBrowseModalSoundList.innerHTML = "";
-
-    if (kb.phase === "armed") {
-      el.kitBrowseModalEyebrow.textContent = "Navegar kits";
-      el.kitBrowseModalKit.textContent = "Selecione o pad pra editar";
-      return;
-    }
 
     el.kitBrowseModalEyebrow.textContent = `Editando pad ${kb.target_pad}`;
     el.kitBrowseModalKit.textContent = kb.kit.name;

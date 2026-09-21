@@ -127,6 +127,10 @@ class LooperQuantizeRequest(BaseModel):
     enabled: bool
 
 
+class LooperVolumeRequest(BaseModel):
+    volume: float
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self.active: list[WebSocket] = []
@@ -295,7 +299,7 @@ def _handle_note(note: int, velocity: int) -> None:
         return
     for pad_number in pad_numbers:
         _queue_pad_hit(pad_number, velocity)
-        if looper.get_state()["state"] in ("recording", "overdubbing"):
+        if looper.is_capturing():
             looper.record_event(pad_number, velocity)
 
 
@@ -675,6 +679,18 @@ async def _apply_knob_target(key: tuple[str, Optional[int], str]) -> None:
         return  # stale mapping - e.g. the effect slot it pointed to was emptied since
     value = knob_registry.cc_to_value(cc_value, meta)
 
+    if scope == "global" and param == "looper_track":
+        looper.select_track(int(value) - 1)
+        await _broadcast_looper()
+        await manager.broadcast({"type": "navigate", "view": "looper"})
+        return
+
+    if scope == "global" and param == "looper_mute":
+        looper.set_mute(looper.get_selected(), value >= 0.5)
+        await _broadcast_looper()
+        await manager.broadcast({"type": "navigate", "view": "looper"})
+        return
+
     if scope == "global" and param == "tempo":
         tempo.set(value)
         await _broadcast_tempo()
@@ -963,7 +979,7 @@ async def trigger_pad(pad_number: int):
     sent = await trigger.trigger_pad(pad_number, pads, 100, storage.get_settings())
     if sent:
         _queue_pad_hit(pad_number, 100)
-        if looper.get_state()["state"] in ("recording", "overdubbing"):
+        if looper.is_capturing():
             looper.record_event(pad_number, 100)
     return {"ok": sent}
 
@@ -1627,6 +1643,53 @@ async def looper_overdub_start():
 @app.post("/api/looper/overdub/stop")
 async def looper_overdub_stop():
     looper.overdub_stop()
+    await _broadcast_looper()
+    return {"ok": True}
+
+
+@app.post("/api/looper/play")
+async def looper_play():
+    await looper.play_start(storage.list_pads(), storage.get_settings())
+    await _broadcast_looper()
+    return {"ok": True}
+
+
+def _track_index_or_400(track_index: int) -> int:
+    if not 0 <= track_index < looper.TRACK_COUNT:
+        raise HTTPException(400, f"track index must be between 0 and {looper.TRACK_COUNT - 1}")
+    return track_index
+
+
+@app.post("/api/looper/tracks/{track_index}/select")
+async def looper_track_select(track_index: int):
+    _track_index_or_400(track_index)
+    looper.select_track(track_index)
+    await _broadcast_looper()
+    return {"ok": True}
+
+
+@app.post("/api/looper/tracks/{track_index}/mute")
+async def looper_track_mute(track_index: int):
+    _track_index_or_400(track_index)
+    looper.toggle_mute(track_index)
+    await _broadcast_looper()
+    return {"ok": True}
+
+
+@app.post("/api/looper/tracks/{track_index}/volume")
+async def looper_track_volume(track_index: int, body: LooperVolumeRequest):
+    _track_index_or_400(track_index)
+    if not 0 <= body.volume <= 100:
+        raise HTTPException(400, "volume must be between 0 and 100")
+    looper.set_volume(track_index, body.volume)
+    await _broadcast_looper()
+    return {"ok": True}
+
+
+@app.post("/api/looper/tracks/{track_index}/clear")
+async def looper_track_clear(track_index: int):
+    _track_index_or_400(track_index)
+    looper.clear_track(track_index)
     await _broadcast_looper()
     return {"ok": True}
 

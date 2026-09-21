@@ -18,7 +18,7 @@
     padEffects: [],
     effectsCatalog: [],
     sequencer: { running: false, current_step: 0, steps: [] },
-    looper: { state: "stopped", loop_duration: null, event_count: 0, overdub_event_count: 0, started_at: null },
+    looper: { state: "stopped", selected_track: 0, loop_duration: null, started_at: null, tracks: [] },
     tempo: { bpm: 100 },
     metronome: { running: false, beat_in_bar: 0, signature: "4_4", style: "digital" },
     metronomeStyles: [],
@@ -154,8 +154,10 @@
     looperProgress: document.getElementById("looper-progress"),
     looperProgressFill: document.getElementById("looper-progress-fill"),
     looperDetails: document.getElementById("looper-details"),
+    looperTrackList: document.getElementById("looper-track-list"),
     looperRecordBtn: document.getElementById("looper-record-btn"),
     looperOverdubBtn: document.getElementById("looper-overdub-btn"),
+    looperPlayBtn: document.getElementById("looper-play-btn"),
     looperStopBtn: document.getElementById("looper-stop-btn"),
     looperClearBtn: document.getElementById("looper-clear-btn"),
     metronomeBpm: document.getElementById("metronome-bpm"),
@@ -1249,21 +1251,26 @@
       overdubbing: "Sobrepondo...",
     };
     el.looperStateLabel.textContent = labels[s.state] || s.state;
-    el.looperRecordBtn.textContent = s.state === "recording" ? "■ Fechar loop" : "● Gravar";
+    el.looperRecordBtn.textContent = s.state === "recording" ? "■ Fechar trilha" : "● Gravar";
     el.looperRecordBtn.classList.toggle("active", s.state === "recording");
     el.looperRecordBtn.disabled = s.state === "overdubbing";
     el.looperOverdubBtn.textContent = s.state === "overdubbing" ? "■ Fechar sobreposição" : "+ Sobrepor";
     el.looperOverdubBtn.classList.toggle("active", s.state === "overdubbing");
     el.looperOverdubBtn.disabled = s.state !== "playing" && s.state !== "overdubbing";
+    const tracks = s.tracks || [];
+    const hasContent = tracks.some((t) => t.event_count > 0);
+    el.looperPlayBtn.disabled = !(s.state === "stopped" && hasContent && s.loop_duration);
     el.looperStopBtn.disabled = s.state !== "playing" && s.state !== "overdubbing";
-    el.looperClearBtn.disabled = s.state === "stopped" && s.event_count === 0;
+    el.looperClearBtn.disabled = s.state === "stopped" && !hasContent;
 
     el.looperProgress.classList.toggle("hidden", s.state !== "playing" && s.state !== "overdubbing");
 
     const details = [];
-    if (s.event_count) {
-      const label = s.event_count === 1 ? "1 toque gravado" : `${s.event_count} toques gravados`;
-      details.push(s.overdub_event_count ? `${label} (+${s.overdub_event_count} na sobreposição)` : label);
+    const totalEvents = tracks.reduce((sum, t) => sum + (t.event_count || 0), 0);
+    const usedTracks = tracks.filter((t) => t.event_count > 0).length;
+    if (totalEvents) {
+      const label = totalEvents === 1 ? "1 toque gravado" : `${totalEvents} toques gravados`;
+      details.push(usedTracks > 1 ? `${label} em ${usedTracks} trilhas` : label);
     }
     if (s.loop_duration) {
       const barDuration = looperBarDuration();
@@ -1280,6 +1287,8 @@
     }
     el.looperDetails.textContent = details.join(" · ");
 
+    renderLooperTracks();
+
     clearInterval(looperTimer);
     if (s.state === "recording" || s.state === "playing" || s.state === "overdubbing") {
       looperTimer = setInterval(updateLooperElapsed, 200);
@@ -1288,6 +1297,63 @@
       el.looperElapsed.textContent = "";
       el.looperProgressFill.style.width = "0%";
     }
+  }
+
+  function renderLooperTracks() {
+    const s = state.looper;
+    const stateLabels = { stopped: "Vazia", recording: "Gravando", playing: "Tocando", overdubbing: "Sobrepondo" };
+    el.looperTrackList.innerHTML = "";
+    (s.tracks || []).forEach((t, i) => {
+      const card = document.createElement("div");
+      card.className = "looper-track state-" + (t.state || "stopped");
+      if (i === s.selected_track) card.classList.add("selected");
+      if (t.muted) card.classList.add("muted");
+      card.dataset.track = String(i);
+
+      const header = document.createElement("div");
+      header.className = "looper-track-header";
+      const name = document.createElement("span");
+      name.className = "looper-track-name";
+      name.textContent = `T${i + 1}`;
+      const badge = document.createElement("span");
+      badge.className = "looper-track-state";
+      badge.textContent = stateLabels[t.state] || t.state;
+      header.append(name, badge);
+
+      const meta = document.createElement("div");
+      meta.className = "looper-track-meta";
+      const parts = [];
+      if (t.event_count) parts.push(t.event_count === 1 ? "1 toque" : `${t.event_count} toques`);
+      if (t.overdub_event_count) parts.push(`+${t.overdub_event_count} na sobreposição`);
+      meta.textContent = parts.join(" · ") || "—";
+
+      const actions = document.createElement("div");
+      actions.className = "looper-track-actions";
+
+      const muteBtn = document.createElement("button");
+      muteBtn.type = "button";
+      muteBtn.className = "secondary-btn looper-mute-btn";
+      muteBtn.classList.toggle("active", !!t.muted);
+      muteBtn.textContent = t.muted ? "Mudo" : "Som";
+
+      const volume = document.createElement("input");
+      volume.type = "range";
+      volume.className = "looper-volume";
+      volume.min = "0";
+      volume.max = "100";
+      volume.value = String(t.volume == null ? 100 : t.volume);
+      volume.title = `Volume da T${i + 1} (${t.volume == null ? 100 : t.volume}%)`;
+
+      const clearBtn = document.createElement("button");
+      clearBtn.type = "button";
+      clearBtn.className = "secondary-btn looper-track-clear-btn";
+      clearBtn.textContent = "Limpar";
+      clearBtn.disabled = t.state === "stopped" && !t.event_count && !t.overdub_event_count;
+
+      actions.append(muteBtn, volume, clearBtn);
+      card.append(header, meta, actions);
+      el.looperTrackList.append(card);
+    });
   }
 
   function updateLooperElapsed() {
@@ -1301,7 +1367,8 @@
       el.looperElapsed.textContent = `${elapsed.toFixed(1)}s`;
     } else if ((s.state === "playing" || s.state === "overdubbing") && s.loop_duration) {
       const pos = ((elapsed % s.loop_duration) + s.loop_duration) % s.loop_duration;
-      const suffix = s.state === "overdubbing" ? ` · ${s.overdub_event_count || 0} toques novos` : "";
+      const selected = (s.tracks || [])[s.selected_track || 0];
+      const suffix = s.state === "overdubbing" && selected ? ` · ${selected.overdub_event_count || 0} toques novos` : "";
       el.looperElapsed.textContent = `${pos.toFixed(1)}s / ${s.loop_duration.toFixed(1)}s${suffix}`;
       el.looperProgressFill.style.width = `${(pos / s.loop_duration) * 100}%`;
     }
@@ -1315,8 +1382,32 @@
     const endpoint = state.looper.state === "overdubbing" ? "/api/looper/overdub/stop" : "/api/looper/overdub/start";
     fetch(endpoint, { method: "POST" });
   });
+  el.looperPlayBtn.addEventListener("click", () => fetch("/api/looper/play", { method: "POST" }));
   el.looperStopBtn.addEventListener("click", () => fetch("/api/looper/stop", { method: "POST" }));
   el.looperClearBtn.addEventListener("click", () => fetch("/api/looper/clear", { method: "POST" }));
+
+  el.looperTrackList.addEventListener("click", (ev) => {
+    const card = ev.target.closest(".looper-track");
+    if (!card) return;
+    const trackIndex = Number(card.dataset.track);
+    if (ev.target.closest(".looper-mute-btn")) {
+      fetch(`/api/looper/tracks/${trackIndex}/mute`, { method: "POST" });
+    } else if (ev.target.closest(".looper-track-clear-btn")) {
+      fetch(`/api/looper/tracks/${trackIndex}/clear`, { method: "POST" });
+    } else if (!ev.target.closest(".looper-volume")) {
+      fetch(`/api/looper/tracks/${trackIndex}/select`, { method: "POST" });
+    }
+  });
+
+  el.looperTrackList.addEventListener("change", (ev) => {
+    if (!ev.target.classList.contains("looper-volume")) return;
+    const card = ev.target.closest(".looper-track");
+    fetch(`/api/looper/tracks/${Number(card.dataset.track)}/volume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ volume: Number(ev.target.value) }),
+    });
+  });
 
   // --- Knobs -----------------------------------------------------------
 
@@ -1960,10 +2051,10 @@
       } else if (msg.type === "looper") {
         state.looper = {
           state: msg.state,
+          selected_track: msg.selected_track,
           loop_duration: msg.loop_duration,
-          event_count: msg.event_count,
-          overdub_event_count: msg.overdub_event_count,
           started_at: msg.started_at,
+          tracks: msg.tracks || [],
         };
         renderLooper();
       } else if (msg.type === "controller_actions") {

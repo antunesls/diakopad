@@ -23,7 +23,7 @@ class ParamMeta(TypedDict):
     unit: str
     min: float
     max: float
-    curve: str  # "linear" | "log"
+    curve: str  # "linear" | "log" | "stepped" (discrete stops, e.g. looper track 1-4)
     bypass_at_max: bool  # only "tone" uses this: >=99% turn = filter bypass (None cutoff)
 
 
@@ -35,6 +35,8 @@ PAD_NATIVE_PARAMS: list[ParamMeta] = [
 
 GLOBAL_PARAMS: list[ParamMeta] = [
     {"param": "tempo", "label": "Tempo", "unit": "bpm", "min": 40, "max": 240, "curve": "linear", "bypass_at_max": False},
+    {"param": "looper_track", "label": "Looper — Trilha", "unit": "", "min": 1, "max": 4, "curve": "stepped", "bypass_at_max": False},
+    {"param": "looper_mute", "label": "Looper — Mute da Trilha", "unit": "", "min": 0, "max": 1, "curve": "stepped", "bypass_at_max": False},
 ]
 
 
@@ -89,6 +91,8 @@ def cc_to_value(cc_value: int, meta: ParamMeta) -> Optional[float]:
     if meta["bypass_at_max"] and frac >= 0.99:
         return None
     lo, hi = meta["min"], meta["max"]
+    if meta["curve"] == "stepped":
+        return lo + round(frac * (hi - lo))
     if meta["curve"] == "log":
         return lo * (hi / lo) ** frac
     return lo + frac * (hi - lo)

@@ -283,12 +283,17 @@ tempo atual, escolha de compasso e quatro estilos de som sintetizados
 (Digital, Beep, Madeira e Click seco). O BPM é global e compartilhado em
 tempo real com o Sequencer e com o alvo Tempo da aba Knobs.
 
-Aba **Looper**: um loop único e compartilhado, estilo pedal de loop. Grava o
-que você toca em qualquer pad enquanto está gravando; ao fechar a gravação,
-a duração do loop é arredondada pro compasso mais próximo (BPM e compasso do
-Metrônomo — desligável em Config > "Loop no compasso", aí volta a valer
-exatamente o tempo que o botão ficou pressionado) e ele passa a repetir
-sozinho.
+Aba **Looper**: quatro **trilhas** sincronizadas, estilo mesa de loop
+(RC-505). Grava/Sobrepor agem sempre na **trilha selecionada** (clique no
+cartão T1–T4 ou gire o knob "Looper — Trilha"); as demais continuam
+tocando. A **primeira** trilha fechada fixa o comprimento do ciclo —
+arredondado pro compasso mais próximo (BPM e compasso do Metrônomo —
+desligável em Config > "Loop no compasso") — e as trilhas seguintes gravam
+por cima, sempre relativas a esse ciclo, sem poderem dele dessincronizar.
+Cada trilha tem **mute** (no cartão ou knob "Looper — Mute da Trilha") e
+**volume** próprios, reagindo no meio do ciclo, além de limpeza individual
+("Limpar" no cartão) e global ("Limpar tudo"). O conteúdo é só em memória:
+não sobrevive a um restart e não faz parte das cenas.
 
 Os dois disparam os pads programaticamente pela porta MIDI virtual
 `DiakoPad-trigger-out` (`backend/engine/trigger.py`), conectada pelo
@@ -298,8 +303,9 @@ para o looper não gravar os próprios disparos automáticos.
 ## Knobs
 
 Aba central pra atribuir função a cada knob físico do SMC-PAD: clique em
-"Atribuir novo knob", escolha o alvo (um pad específico ou "Global", hoje só
-com o Tempo compartilhado), escolha o parâmetro daquele alvo (volume, pan,
+"Atribuir novo knob", escolha o alvo (um pad específico ou "Global" — Tempo
+compartilhado, seleção de trilha do Looper e mute da trilha selecionada),
+escolha o parâmetro daquele alvo (volume, pan,
 tom, ou um parâmetro de um efeito já atribuído a algum slot do pad) e gire o
 knob físico — o app captura o CC automaticamente (MIDI learn). A lista mostra
 todos os mapeamentos atuais, com opção de remover um por um ou limpar todos.

@@ -193,6 +193,25 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn("startKnobCapture(\"pad\", padNumber", app)
         self.assertIn("refreshKnobTargets", app)
 
+    def test_looper_tem_quatro_trilhas_selecionaveis_com_mute_e_volume(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+        css = (FRONTEND / "style.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="looper-track-list"', html)
+        self.assertIn('id="looper-play-btn"', html)
+        self.assertIn("function renderLooperTracks()", app)
+        self.assertIn("/api/looper/tracks/${trackIndex}/select", app)
+        self.assertIn("/api/looper/tracks/${trackIndex}/mute", app)
+        self.assertIn("/api/looper/tracks/${Number(card.dataset.track)}/volume", app)
+        self.assertIn("/api/looper/tracks/${trackIndex}/clear", app)
+        self.assertIn("/api/looper/play", app)
+        self.assertIn("tracks: msg.tracks || []", app)
+        self.assertIn(".looper-tracks", css)
+        self.assertIn(".looper-track.selected", css)
+        self.assertIn(".looper-track.muted", css)
+        self.assertIn(".looper-volume", css)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -218,17 +218,21 @@
       </div>
       <div class="looper-details" id="looper-details"></div>
     </div>
+    <div class="looper-tracks" id="looper-track-list"></div>
     <div class="looper-controls">
       <button id="looper-record-btn" class="accent-btn" type="button">● Gravar</button>
       <button id="looper-overdub-btn" class="secondary-btn" type="button" disabled>+ Sobrepor</button>
+      <button id="looper-play-btn" class="secondary-btn" type="button" disabled>▶ Tocar</button>
       <button id="looper-stop-btn" class="secondary-btn" type="button">■ Parar loop</button>
-      <button id="looper-clear-btn" class="danger-btn" type="button">Limpar</button>
+      <button id="looper-clear-btn" class="danger-btn" type="button">Limpar tudo</button>
     </div>
     <p class="tab-note">
-      Grava um único loop compartilhado: toque os pads normalmente enquanto
-      grava, solte "Gravar" de novo pra fechar o loop e ele passa a repetir
-      sozinho. Com o loop tocando, "Sobrepor" grava uma camada extra por
-      cima sem reiniciar o que já está tocando.
+      Quatro trilhas no mesmo ciclo: a primeira trilha gravada fixa o
+      comprimento do loop (quantizado ao compasso) e as demais gravam por
+      cima, sempre sincronizadas. Gravar e Sobrepor agem na trilha
+      selecionada — clique no cartão da trilha pra armar (a seleção também
+      pode ser feita por knob na aba Knobs, alvo "Looper — Trilha"). Cada
+      trilha tem mute e volume próprios.
     </p>
   </main>
 

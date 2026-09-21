@@ -9,7 +9,7 @@ import app as diakopad_app
 import storage
 from fastapi.testclient import TestClient
 from app import trigger_pad as trigger_pad_endpoint
-from engine import effects_catalog, jackgraph, orchestrator, sfizz_proc
+from engine import effects_catalog, jackgraph, looper, orchestrator, sfizz_proc
 
 
 class _PortClient:
@@ -109,7 +109,7 @@ class PadTriggerEndpointTests(unittest.IsolatedAsyncioTestCase):
             patch("app.storage.list_pads", return_value=pads),
             patch("app.storage.get_settings", return_value={}),
             patch("app.trigger.trigger_pad", new=AsyncMock(return_value=True)),
-            patch("app.looper.get_state", return_value={"state": "recording"}),
+            patch("app.looper.is_capturing", return_value=True),
             patch("app.looper.record_event") as record_event,
         ):
             result = await trigger_pad_endpoint(3)
@@ -160,7 +160,7 @@ class PadHitFeedbackTests(unittest.IsolatedAsyncioTestCase):
         try:
             with (
                 patch("app._queue_pad_hit") as queue_hit,
-                patch("app.looper.get_state", return_value={"state": "recording"}),
+                patch("app.looper.is_capturing", return_value=True),
                 patch("app.looper.record_event") as record_event,
             ):
                 diakopad_app._handle_note(36, 90)
@@ -936,6 +936,46 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
         finally:
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
+
+
+class LooperKnobTargetTests(unittest.IsolatedAsyncioTestCase):
+    """Turning a knob bound to the looper_track/looper_mute global params
+    drives the armed-track selection and its mute (app.py's
+    _apply_knob_target), with the navigate-to-looper broadcast so a
+    hardware selection is mirrored on screen."""
+
+    def setUp(self):
+        looper._tracks = [looper.Track() for _ in range(looper.TRACK_COUNT)]
+        looper._selected = 0
+
+    def tearDown(self):
+        looper._tracks = [looper.Track() for _ in range(looper.TRACK_COUNT)]
+        looper._selected = 0
+        diakopad_app._pending_cc_values.clear()
+
+    async def test_knob_turn_selects_the_looper_track(self):
+        diakopad_app._pending_cc_values[("global", None, "looper_track")] = 127
+
+        with (
+            patch("app.storage.list_pad_effects", return_value=[]),
+            patch("app.manager.broadcast", new=AsyncMock()) as broadcast,
+        ):
+            await diakopad_app._apply_knob_target(("global", None, "looper_track"))
+
+        self.assertEqual(looper.get_selected(), 3)
+        broadcast.assert_any_await({"type": "navigate", "view": "looper"})
+
+    async def test_knob_turn_mutes_the_armed_track(self):
+        diakopad_app._pending_cc_values[("global", None, "looper_mute")] = 127
+        looper._selected = 2
+
+        with (
+            patch("app.storage.list_pad_effects", return_value=[]),
+            patch("app.manager.broadcast", new=AsyncMock()),
+        ):
+            await diakopad_app._apply_knob_target(("global", None, "looper_mute"))
+
+        self.assertTrue(looper._tracks[2].muted)
 
 
 class EffectSlotApplyTests(unittest.IsolatedAsyncioTestCase):

@@ -8,6 +8,16 @@ FRONTEND = Path(__file__).resolve().parents[1]
 
 
 class MixCardsTest(unittest.TestCase):
+    def test_identificacao_exibe_versao_e_desenvolvedor(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        readme = (FRONTEND.parent / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn('class="app-identification"', html)
+        self.assertIn("Versão 0.1.0", html)
+        self.assertIn("Desenvolvido por Lucas Souza (AntunesLS)", html)
+        self.assertIn("Versão: 0.1.0", readme)
+        self.assertIn("Desenvolvedor: Lucas Souza (AntunesLS)", readme)
+
     def test_mixagem_usa_cards_recolhiveis_com_resumo_de_efeitos(self):
         app = (FRONTEND / "app.js").read_text(encoding="utf-8")
         css = (FRONTEND / "style.css").read_text(encoding="utf-8")

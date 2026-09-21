@@ -1,5 +1,8 @@
 # DiakoPad
 
+Versão: 0.1.0<br>
+Desenvolvedor: Lucas Souza (AntunesLS)
+
 App standalone de drum pad para Raspberry Pi + M-Vave SMC-PAD: mostra os 16
 pads numa grade touch-friendly, permite atribuir um som a cada pad e subir
 novos sons por qualquer navegador na rede. Roda sobre a imagem do Zynthian

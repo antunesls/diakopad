@@ -344,9 +344,129 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+def _migrate_rename_old_kits_table(conn: sqlite3.Connection) -> None:
+    """A DB from before the kit/scene split called the scene-snapshot table
+    "kits" (id, name, created_at, active - no category/sort_index/
+    source_path). Must run BEFORE executescript(SCHEMA), while that name is
+    still free, so the new sound-set-shaped `kits` table can claim it -
+    otherwise CREATE TABLE IF NOT EXISTS silently no-ops against the old
+    shape. Idempotent: a DB that has already been migrated (or was never in
+    the old shape) is a fast no-op.
+
+    Also fixes controller_bindings rows learned under the old action names
+    (kit_next/kit_prev) and the current_kit_id setting, so an
+    already-configured physical scene-switch button doesn't silently stop
+    working after the rename."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='kits'"
+    ).fetchone()
+    if row is None:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(kits)")}
+    if "category" in cols or "active" not in cols:
+        return  # already the new sound-set shape, or an unrecognized one
+
+    scenes_exists = (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='scenes'"
+        ).fetchone()
+        is not None
+    )
+
+    if not scenes_exists:
+        # Common case: this DB predates the scene rename entirely - rename
+        # the table and its children in place, preserving every row.
+        conn.executescript(
+            """
+            ALTER TABLE kits RENAME TO scenes;
+            ALTER TABLE kit_pads RENAME TO scene_pads;
+            ALTER TABLE kit_effects RENAME TO scene_effects;
+            ALTER TABLE kit_knobs RENAME TO scene_knobs;
+            ALTER TABLE kit_state RENAME TO scene_state;
+            ALTER TABLE kit_steps RENAME TO scene_steps;
+            """
+        )
+        for table in ("scene_pads", "scene_effects", "scene_knobs", "scene_state", "scene_steps"):
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone()
+            if exists:
+                conn.execute(f"ALTER TABLE {table} RENAME COLUMN kit_id TO scene_id")
+    else:
+        # A previous run of the new code already created an empty `scenes`
+        # table before this migration existed. Recover: move any real rows
+        # out of the old kits/kit_* tables if scenes is still empty, then
+        # drop the old tables either way so the new sound-set-shaped `kits`
+        # can be created.
+        scenes_count = conn.execute("SELECT COUNT(*) AS c FROM scenes").fetchone()["c"]
+        kits_count = conn.execute("SELECT COUNT(*) AS c FROM kits").fetchone()["c"]
+        if kits_count > 0 and scenes_count == 0:
+            conn.executescript(
+                """
+                INSERT INTO scenes (id, name, created_at, active)
+                    SELECT id, name, created_at, active FROM kits;
+                INSERT INTO scene_pads (scene_id, pad_number, sample_id, volume_db, pan, cutoff_hz)
+                    SELECT kit_id, pad_number, sample_id, volume_db, pan, cutoff_hz FROM kit_pads;
+                INSERT INTO scene_effects (scene_id, pad_number, slot_index, plugin_id, params)
+                    SELECT kit_id, pad_number, slot_index, plugin_id, params FROM kit_effects;
+                INSERT INTO scene_knobs (scene_id, cc_number, scope, pad_number, param)
+                    SELECT kit_id, cc_number, scope, pad_number, param FROM kit_knobs;
+                INSERT INTO scene_state (scene_id, sequencer_bpm, metronome_style, metronome_signature, metronome_running, sequencer_running)
+                    SELECT kit_id, sequencer_bpm, metronome_style, metronome_signature, metronome_running, sequencer_running FROM kit_state;
+                INSERT INTO scene_steps (scene_id, pad_number, step_index, active)
+                    SELECT kit_id, pad_number, step_index, active FROM kit_steps;
+                """
+            )
+        elif kits_count > 0 and scenes_count > 0:
+            # Both hold real data - don't guess. Extremely unlikely (would
+            # need this migration skipped across more than one upgrade of an
+            # already-deployed instance); leave both tables in place for a
+            # human to reconcile instead of risking data loss.
+            import logging
+
+            logging.getLogger("diakopad.storage").error(
+                "storage: both 'kits' (old scene shape, %d rows) and "
+                "'scenes' (%d rows) hold data - skipping the automatic "
+                "rename migration, reconcile manually.",
+                kits_count,
+                scenes_count,
+            )
+            return
+        conn.executescript(
+            """
+            DROP TABLE IF EXISTS kit_steps;
+            DROP TABLE IF EXISTS kit_state;
+            DROP TABLE IF EXISTS kit_knobs;
+            DROP TABLE IF EXISTS kit_effects;
+            DROP TABLE IF EXISTS kit_pads;
+            DROP TABLE IF EXISTS kits;
+            """
+        )
+
+    conn.execute("UPDATE controller_bindings SET action='scene_next' WHERE action='kit_next'")
+    conn.execute("UPDATE controller_bindings SET action='scene_prev' WHERE action='kit_prev'")
+
+    old_setting = conn.execute(
+        "SELECT value FROM settings WHERE key='current_kit_id'"
+    ).fetchone()
+    if old_setting is not None:
+        new_setting = conn.execute(
+            "SELECT value FROM settings WHERE key='current_scene_id'"
+        ).fetchone()
+        if new_setting is None or not new_setting["value"]:
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('current_scene_id', ?)",
+                (old_setting["value"],),
+            )
+        conn.execute("DELETE FROM settings WHERE key='current_kit_id'")
+
+    conn.commit()
+
+
 def init_db() -> None:
     conn = get_connection()
     try:
+        _migrate_rename_old_kits_table(conn)
         conn.executescript(SCHEMA)
         _migrate(conn)
         existing = conn.execute("SELECT COUNT(*) AS c FROM pads").fetchone()["c"]

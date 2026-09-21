@@ -40,6 +40,7 @@ Design notes:
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from typing import Optional
 
@@ -218,7 +219,8 @@ async def record_stop(pads: list[dict], settings: dict) -> None:
         # First take to close: it fixes the shared cycle length.
         duration = held
         if settings.get("looper_quantize_enabled", "1") == "1":
-            duration = _quantize_to_bar(duration, settings)
+            last_event_offset = max(event["offset"] for event in track.events)
+            duration = _quantize_to_bar(duration, settings, last_event_offset)
         _loop_duration = duration
     track.state = "playing"
     _started_at = time.time()
@@ -306,12 +308,18 @@ def _cancel_task() -> None:
     _loop_start = None
 
 
-def _quantize_to_bar(duration: float, settings: dict) -> float:
+def _quantize_to_bar(
+    duration: float, settings: dict, minimum_duration: Optional[float] = None
+) -> float:
     """Rounds duration up/down to the nearest whole bar at the current
     tempo/signature (minimum one bar), so the loop repeats in sync with the
-    beat instead of drifting by whatever the raw hold time was. Falls back
-    to the raw duration if bpm/settings are somehow unusable (defensive -
-    should never actually happen, sequencer_bpm always has a default)."""
+    beat instead of drifting by whatever the raw hold time was. When a
+    minimum_duration is supplied, expands to the next whole bar if nearest
+    rounding would put a recorded event outside the cycle - scheduling an
+    event after the cycle end makes the following cycle fire late. Falls
+    back to the raw duration if bpm/settings are somehow unusable
+    (defensive - should never actually happen, sequencer_bpm always has a
+    default)."""
     try:
         bpm = float(settings.get("sequencer_bpm", 100))
     except (TypeError, ValueError):
@@ -324,7 +332,10 @@ def _quantize_to_bar(duration: float, settings: dict) -> float:
     if bar_duration <= 0:
         return duration
     bars = max(1, round(duration / bar_duration))
-    return bars * bar_duration
+    quantized = bars * bar_duration
+    if minimum_duration is not None and quantized < minimum_duration:
+        quantized = max(1, math.ceil(minimum_duration / bar_duration)) * bar_duration
+    return quantized
 
 
 def _apply_track_gain(track: Track, velocity: int) -> int:

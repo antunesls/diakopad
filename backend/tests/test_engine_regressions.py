@@ -268,6 +268,26 @@ class LooperQuantizeTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(looper._loop_duration, 4.0, delta=0.05)  # snapped to 2 bars
         await self._cancel_task()
 
+    async def test_record_stop_never_places_a_late_hit_outside_the_quantized_cycle(self):
+        # At 120 BPM in 4/4 each bar is 2s. The old nearest-bar rounding
+        # chose 2s for this 2.9s take, leaving the 2.7s hit beyond the cycle.
+        # Playback then waited past the cycle end and the next cycle started
+        # late, audibly falling behind the beat.
+        settings = {
+            "sequencer_bpm": "120", "metronome_signature": "4_4",
+            "looper_quantize_enabled": "1",
+        }
+        track = looper._tracks[0]
+        track.state = "recording"
+        track.events = [{"offset": 2.7, "pad_number": 1, "velocity": 100}]
+        looper._record_start = time.monotonic() - 2.9
+
+        with patch("engine.trigger.trigger_pad", new=AsyncMock()):
+            await looper.record_stop([], settings)
+
+        self.assertAlmostEqual(looper._loop_duration, 4.0, delta=0.05)
+        await self._cancel_task()
+
     async def test_record_stop_keeps_raw_duration_when_disabled(self):
         settings = {
             "sequencer_bpm": "120", "metronome_signature": "4_4",

@@ -136,25 +136,25 @@ html, body {
   pointer-events: auto;
   background: var(--panel);
   border: 2px solid var(--accent);
-  border-radius: 20px;
+  border-radius: 18px;
   box-shadow: 0 16px 50px rgba(0,0,0,0.5);
-  padding: 24px 36px 30px;
-  width: min(920px, 94vw);
+  padding: 18px 24px 22px;
+  width: min(600px, 92vw);
   max-height: calc(100vh - 100px);
   overflow-y: auto;
   text-align: center;
 }
 
 .kit-browse-modal-eyebrow {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-dim);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .kit-browse-modal-kit {
-  font-size: 36px;
+  font-size: 26px;
   font-weight: 800;
   color: var(--text);
   line-height: 1.2;
@@ -165,7 +165,7 @@ html, body {
   flex-wrap: wrap;
   justify-content: center;
   gap: 8px;
-  margin: 14px 0 22px;
+  margin: 10px 0 16px;
 }
 .kit-browse-modal-pill {
   padding: 5px 14px;
@@ -185,29 +185,29 @@ html, body {
 .kit-browse-modal-body {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 24px;
+  gap: 16px;
   text-align: left;
 }
 .kit-browse-modal-col-title {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-dim);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .kit-browse-modal-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 44vh;
+  max-height: 30vh;
   overflow-y: auto;
   border: 1px solid #2b2f3a;
-  border-radius: 12px;
+  border-radius: 10px;
 }
 .kit-browse-modal-list-item {
-  padding: 8px 12px;
-  font-size: 15px;
+  padding: 6px 10px;
+  font-size: 13.5px;
   color: var(--text-dim);
   border-bottom: 1px solid #23262f;
 }

@@ -151,6 +151,9 @@
     sequencerBody: document.getElementById("sequencer-body"),
     looperStateLabel: document.getElementById("looper-state-label"),
     looperElapsed: document.getElementById("looper-elapsed"),
+    looperProgress: document.getElementById("looper-progress"),
+    looperProgressFill: document.getElementById("looper-progress-fill"),
+    looperDetails: document.getElementById("looper-details"),
     looperRecordBtn: document.getElementById("looper-record-btn"),
     looperOverdubBtn: document.getElementById("looper-overdub-btn"),
     looperStopBtn: document.getElementById("looper-stop-btn"),
@@ -1227,6 +1230,16 @@
 
   // --- Looper ----------------------------------------------------------
 
+  // Bar duration at the CURRENT tempo/signature - only meaningful as an
+  // approximation for a loop recorded earlier at a different BPM, but still
+  // useful context ("about how many bars is this loop"). Mirrors the same
+  // pulses-per-bar math as engine/looper.py's _quantize_to_bar.
+  function looperBarDuration() {
+    const sig = state.timeSignatures.find((s) => s.signature === state.metronome.signature);
+    if (!sig || !state.tempo.bpm) return null;
+    return sig.pulses * (60 / state.tempo.bpm);
+  }
+
   function renderLooper() {
     const s = state.looper;
     const labels = {
@@ -1245,12 +1258,35 @@
     el.looperStopBtn.disabled = s.state !== "playing" && s.state !== "overdubbing";
     el.looperClearBtn.disabled = s.state === "stopped" && s.event_count === 0;
 
+    el.looperProgress.classList.toggle("hidden", s.state !== "playing" && s.state !== "overdubbing");
+
+    const details = [];
+    if (s.event_count) {
+      const label = s.event_count === 1 ? "1 toque gravado" : `${s.event_count} toques gravados`;
+      details.push(s.overdub_event_count ? `${label} (+${s.overdub_event_count} na sobreposição)` : label);
+    }
+    if (s.loop_duration) {
+      const barDuration = looperBarDuration();
+      const bars = barDuration ? Math.max(1, Math.round(s.loop_duration / barDuration)) : null;
+      const sigLabel = state.metronome.signature
+        ? (state.timeSignatures.find((sg) => sg.signature === state.metronome.signature) || {}).label
+        : null;
+      details.push(
+        bars
+          ? `Loop de ${s.loop_duration.toFixed(1)}s · ≈ ${bars} ${bars === 1 ? "compasso" : "compassos"}` +
+            (sigLabel ? ` (${Math.round(state.tempo.bpm)} BPM · ${sigLabel})` : "")
+          : `Loop de ${s.loop_duration.toFixed(1)}s`
+      );
+    }
+    el.looperDetails.textContent = details.join(" · ");
+
     clearInterval(looperTimer);
     if (s.state === "recording" || s.state === "playing" || s.state === "overdubbing") {
       looperTimer = setInterval(updateLooperElapsed, 200);
       updateLooperElapsed();
     } else {
       el.looperElapsed.textContent = "";
+      el.looperProgressFill.style.width = "0%";
     }
   }
 
@@ -1267,6 +1303,7 @@
       const pos = ((elapsed % s.loop_duration) + s.loop_duration) % s.loop_duration;
       const suffix = s.state === "overdubbing" ? ` · ${s.overdub_event_count || 0} toques novos` : "";
       el.looperElapsed.textContent = `${pos.toFixed(1)}s / ${s.loop_duration.toFixed(1)}s${suffix}`;
+      el.looperProgressFill.style.width = `${(pos / s.loop_duration) * 100}%`;
     }
   }
 
@@ -1887,6 +1924,7 @@
       } else if (msg.type === "tempo") {
         state.tempo.bpm = msg.bpm;
         renderTempo();
+        renderLooper(); // bar-count estimate depends on the current BPM
       } else if (msg.type === "master") {
         state.master = { available: msg.available, volume: msg.volume, muted: msg.muted };
         renderMaster();
@@ -1903,6 +1941,7 @@
           style: msg.style,
         };
         renderMetronome();
+        renderLooper(); // bar-count estimate depends on the current signature
       } else if (msg.type === "metronome_tick") {
         state.metronome.beat_in_bar = msg.beat_in_bar;
         renderMetronomeBeat(msg.beat_in_bar);

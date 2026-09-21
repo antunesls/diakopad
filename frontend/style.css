@@ -1590,6 +1590,29 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
+.looper-progress {
+  height: 8px;
+  margin-top: 12px;
+  border-radius: 999px;
+  background: #171a22;
+  border: 1px solid #2b2f3a;
+  overflow: hidden;
+}
+.looper-progress.hidden { display: none; }
+.looper-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 150ms linear;
+}
+
+.looper-details {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin-top: 10px;
+}
+
 .looper-controls {
   display: flex;
   gap: 10px;

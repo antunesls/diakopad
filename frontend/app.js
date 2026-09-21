@@ -140,8 +140,9 @@
     kitBrowseModal: document.getElementById("kit-browse-modal"),
     kitBrowseModalEyebrow: document.getElementById("kit-browse-modal-eyebrow"),
     kitBrowseModalKit: document.getElementById("kit-browse-modal-kit"),
-    kitBrowseModalCategory: document.getElementById("kit-browse-modal-category"),
-    kitBrowseModalSound: document.getElementById("kit-browse-modal-sound"),
+    kitBrowseModalCategories: document.getElementById("kit-browse-modal-categories"),
+    kitBrowseModalKitList: document.getElementById("kit-browse-modal-kit-list"),
+    kitBrowseModalSoundList: document.getElementById("kit-browse-modal-sound-list"),
     sequencerPlayBtn: document.getElementById("sequencer-play-btn"),
     sequencerBpm: document.getElementById("sequencer-bpm"),
     sequencerClearBtn: document.getElementById("sequencer-clear-btn"),
@@ -1956,17 +1957,46 @@
       return;
     }
     el.kitBrowseModal.classList.remove("hidden");
+    el.kitBrowseModalCategories.innerHTML = "";
+    el.kitBrowseModalKitList.innerHTML = "";
+    el.kitBrowseModalSoundList.innerHTML = "";
+
     if (kb.phase === "armed") {
       el.kitBrowseModalEyebrow.textContent = "Navegar kits";
       el.kitBrowseModalKit.textContent = "Selecione o pad pra editar";
-      el.kitBrowseModalCategory.textContent = "";
-      el.kitBrowseModalSound.textContent = "";
       return;
     }
+
     el.kitBrowseModalEyebrow.textContent = `Editando pad ${kb.target_pad}`;
-    el.kitBrowseModalKit.textContent = `${kb.kit.name} (${kb.kit_index + 1}/${kb.kit_count})`;
-    el.kitBrowseModalCategory.textContent = `${kb.category} (${kb.category_index + 1}/${kb.category_count})`;
-    el.kitBrowseModalSound.textContent = `Som: ${kb.candidate_display_name || "nenhum"}`;
+    el.kitBrowseModalKit.textContent = kb.kit.name;
+
+    for (const category of kb.categories) {
+      const pill = document.createElement("span");
+      pill.className = "kit-browse-modal-pill" + (category === kb.category ? " current" : "");
+      pill.textContent = category;
+      el.kitBrowseModalCategories.appendChild(pill);
+    }
+
+    kb.kits.forEach((kit, idx) => {
+      const li = document.createElement("li");
+      li.className = "kit-browse-modal-list-item" + (idx === kb.kit_index ? " current" : "");
+      li.textContent = kit.name;
+      el.kitBrowseModalKitList.appendChild(li);
+    });
+
+    if (kb.sounds.length === 0) {
+      const li = document.createElement("li");
+      li.className = "kit-browse-modal-list-empty";
+      li.textContent = "Este kit não tem sons cadastrados.";
+      el.kitBrowseModalSoundList.appendChild(li);
+    }
+    for (const sound of kb.sounds) {
+      const li = document.createElement("li");
+      const isCandidate = sound.pad_number === kb.candidate_pad_number;
+      li.className = "kit-browse-modal-list-item" + (isCandidate ? " current" : "");
+      li.innerHTML = `<span class="kit-browse-modal-sound-pad">#${sound.pad_number}</span> ${sound.display_name}`;
+      el.kitBrowseModalSoundList.appendChild(li);
+    }
   }
 
   // Purely visual aid so the pad grid reflects kit-browse mode even when

@@ -383,18 +383,32 @@ def _kit_browse_payload() -> dict:
         return {"type": "kit_browse", "active": True, "phase": "armed", "target_pad": None}
     kit = state["kits"][state["kit_idx"]]
     candidate_pad_number = state.get("candidate_pad_number")
-    candidate_entry = next((p for p in kit.get("pads", []) if p["pad_number"] == candidate_pad_number), None)
+    sounds = sorted(
+        (p for p in kit.get("pads", []) if p.get("sample_id") is not None),
+        key=lambda p: p["pad_number"],
+    )
+    candidate_entry = next((p for p in sounds if p["pad_number"] == candidate_pad_number), None)
     return {
         "type": "kit_browse",
         "active": True,
         "phase": "browsing",
         "target_pad": target_pad,
+        # Full lists (not just the current one) so the UI can show where you
+        # are among every category/kit, not just a bare "2/5" counter.
+        "categories": state["categories"],
         "category": state["categories"][state["category_idx"]],
         "category_index": state["category_idx"],
         "category_count": len(state["categories"]),
+        "kits": [{"id": k["id"], "name": k["name"]} for k in state["kits"]],
         "kit": {"id": kit["id"], "name": kit["name"]},
         "kit_index": state["kit_idx"],
         "kit_count": len(state["kits"]),
+        # Every sound the highlighted kit actually has (pads with no sample
+        # assigned are left out), so the UI can list them all with the
+        # current candidate picked out - not just the one candidate name.
+        "sounds": [
+            {"pad_number": p["pad_number"], "display_name": p["display_name"]} for p in sounds
+        ],
         "candidate_pad_number": candidate_pad_number,
         "candidate_display_name": candidate_entry["display_name"] if candidate_entry else None,
     }

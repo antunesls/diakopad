@@ -114,56 +114,130 @@ html, body {
   white-space: nowrap;
 }
 
-/* Big, read-from-across-the-room overlay of the current kit-browse state -
-   same data as .kit-browse-banner, just large enough to see without leaning
-   over the screen. pointer-events:none so it never blocks taps on the pad
-   grid underneath (needed for the no-hardware dev/test path). */
+/* Big, read-from-across-the-room overlay of the current kit-browse state:
+   category strip, the full kit list of the current category and the full
+   sound list of the highlighted kit, not just the one current name each.
+   pointer-events:none on the backdrop so it never blocks taps on the pad
+   grid underneath (needed for the no-hardware dev/test path) - the content
+   itself re-enables pointer-events only so a trackpad/mouse can scroll a
+   long list, never to intercept pad taps outside it. */
 .kit-browse-modal {
   position: fixed;
-  top: 84px;
-  left: 50%;
-  transform: translateX(-50%);
+  inset: 0;
+  top: 76px;
   z-index: 60;
+  display: flex;
+  justify-content: center;
   pointer-events: none;
-  background: var(--panel);
-  border: 2px solid var(--accent);
-  border-radius: 18px;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
-  padding: 20px 32px;
-  min-width: 320px;
-  max-width: 90vw;
-  text-align: center;
 }
 .kit-browse-modal.hidden { display: none; }
+
+.kit-browse-modal-content {
+  pointer-events: auto;
+  background: var(--panel);
+  border: 2px solid var(--accent);
+  border-radius: 20px;
+  box-shadow: 0 16px 50px rgba(0,0,0,0.5);
+  padding: 24px 36px 30px;
+  width: min(920px, 94vw);
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  text-align: center;
+}
+
 .kit-browse-modal-eyebrow {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-dim);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .kit-browse-modal-kit {
-  font-size: 30px;
+  font-size: 36px;
   font-weight: 800;
   color: var(--text);
   line-height: 1.2;
 }
-.kit-browse-modal-category {
+
+.kit-browse-modal-categories {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 14px 0 22px;
+}
+.kit-browse-modal-pill {
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1px solid #3a3f4d;
+  background: #171a22;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+}
+.kit-browse-modal-pill.current {
+  border-color: var(--accent);
+  background: #2a2410;
+  color: var(--accent);
+}
+
+.kit-browse-modal-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  text-align: left;
+}
+.kit-browse-modal-col-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.kit-browse-modal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 44vh;
+  overflow-y: auto;
+  border: 1px solid #2b2f3a;
+  border-radius: 12px;
+}
+.kit-browse-modal-list-item {
+  padding: 8px 12px;
   font-size: 15px;
   color: var(--text-dim);
-  margin-top: 4px;
+  border-bottom: 1px solid #23262f;
 }
-.kit-browse-modal-sound {
-  font-size: 20px;
-  font-weight: 700;
+.kit-browse-modal-list-item:last-child { border-bottom: none; }
+.kit-browse-modal-list-item.current {
+  background: #2a2410;
   color: var(--accent);
-  margin-top: 10px;
+  font-weight: 700;
 }
+.kit-browse-modal-sound-pad {
+  display: inline-block;
+  min-width: 22px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  margin-right: 6px;
+}
+.kit-browse-modal-list-item.current .kit-browse-modal-sound-pad { color: inherit; }
+.kit-browse-modal-list-empty {
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 @media (max-width: 640px) {
-  .kit-browse-modal { top: 68px; padding: 14px 20px; min-width: 0; width: 92vw; }
-  .kit-browse-modal-kit { font-size: 22px; }
-  .kit-browse-modal-sound { font-size: 17px; }
+  .kit-browse-modal { top: 60px; }
+  .kit-browse-modal-content { padding: 18px 18px 22px; }
+  .kit-browse-modal-kit { font-size: 24px; }
+  .kit-browse-modal-body { grid-template-columns: 1fr; gap: 16px; }
+  .kit-browse-modal-list { max-height: 26vh; }
 }
 
 .midi-note-indicator.hit {

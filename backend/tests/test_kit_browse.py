@@ -195,6 +195,27 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
 
+    # --- payload shape --------------------------------------------------------
+
+    async def test_payload_lists_every_category_kit_and_sound_not_just_the_current_one(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            self._seed_kits()
+            with patch("app.orchestrator.apply_preview_kit", new=AsyncMock(return_value=True)):
+                await diakopad_app._kit_browse_select_target(7)
+
+            payload = diakopad_app._kit_browse_payload()
+            self.assertEqual(payload["categories"], ["01_electronic", "02_custom"])
+            self.assertEqual([k["name"] for k in payload["kits"]], ["Electronic A", "Electronic B"])
+            self.assertEqual(
+                payload["sounds"],
+                [{"pad_number": 3, "display_name": "Three"}, {"pad_number": 7, "display_name": "Seven"}],
+            )
+            self.assertEqual(payload["candidate_pad_number"], 7)
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
     # --- select-target / nav state machine ----------------------------------
 
     async def test_select_target_defaults_candidate_to_same_pad_number(self):

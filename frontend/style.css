@@ -139,26 +139,26 @@ html, body {
 .kit-browse-modal-content {
   pointer-events: auto;
   background: var(--panel);
-  border: 2px solid var(--accent);
-  border-radius: 18px;
+  border: 3px solid var(--accent);
+  border-radius: 26px;
   box-shadow: 0 16px 50px rgba(0,0,0,0.5);
-  padding: 18px 24px 22px;
-  width: min(460px, 90vw);
+  padding: 36px 48px 44px;
+  width: min(920px, 94vw);
   max-height: calc(100vh - 100px);
   overflow-y: auto;
   text-align: center;
 }
 
 .kit-browse-modal-eyebrow {
-  font-size: 13px;
+  font-size: 20px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-dim);
-  margin-bottom: 6px;
+  margin-bottom: 10px;
 }
 .kit-browse-modal-kit {
-  font-size: 26px;
+  font-size: 48px;
   font-weight: 800;
   color: var(--text);
   line-height: 1.2;
@@ -168,16 +168,16 @@ html, body {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 8px;
-  margin: 10px 0 16px;
+  gap: 12px;
+  margin: 16px 0 26px;
 }
 .kit-browse-modal-pill {
-  padding: 5px 14px;
+  padding: 8px 22px;
   border-radius: 999px;
   border: 1px solid #3a3f4d;
   background: #171a22;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: 18px;
   font-weight: 600;
 }
 .kit-browse-modal-pill.current {
@@ -190,29 +190,29 @@ html, body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   align-items: start;
-  gap: 16px;
+  gap: 28px;
   text-align: left;
 }
 .kit-browse-modal-col-title {
-  font-size: 11px;
+  font-size: 15px;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-dim);
-  margin-bottom: 6px;
+  margin-bottom: 10px;
 }
 .kit-browse-modal-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 190px;
+  max-height: 380px;
   overflow-y: auto;
   border: 1px solid #2b2f3a;
-  border-radius: 10px;
+  border-radius: 14px;
 }
 .kit-browse-modal-list-item {
-  padding: 6px 10px;
-  font-size: 13.5px;
+  padding: 11px 16px;
+  font-size: 19px;
   color: var(--text-dim);
   border-bottom: 1px solid #23262f;
 }
@@ -224,25 +224,25 @@ html, body {
 }
 .kit-browse-modal-sound-pad {
   display: inline-block;
-  min-width: 22px;
+  min-width: 32px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
-  margin-right: 6px;
+  margin-right: 8px;
 }
 .kit-browse-modal-list-item.current .kit-browse-modal-sound-pad { color: inherit; }
 .kit-browse-modal-list-empty {
-  padding: 10px 12px;
-  font-size: 14px;
+  padding: 16px 18px;
+  font-size: 18px;
   color: var(--text-dim);
   font-style: italic;
 }
 
 @media (max-width: 640px) {
   .kit-browse-modal { top: 60px; }
-  .kit-browse-modal-content { padding: 18px 18px 22px; }
-  .kit-browse-modal-kit { font-size: 24px; }
-  .kit-browse-modal-body { grid-template-columns: 1fr; gap: 16px; }
-  .kit-browse-modal-list { max-height: 220px; }
+  .kit-browse-modal-content { padding: 24px 22px 28px; }
+  .kit-browse-modal-kit { font-size: 32px; }
+  .kit-browse-modal-body { grid-template-columns: 1fr; gap: 20px; }
+  .kit-browse-modal-list { max-height: 260px; }
 }
 
 .midi-note-indicator.hit {

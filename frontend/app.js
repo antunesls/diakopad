@@ -1943,8 +1943,8 @@
     }
     const soundLabel = kb.candidate_display_name || "nenhum";
     el.kitBrowseBanner.textContent =
-      `Editando pad ${kb.target_pad} — ${kb.category} (${kb.category_index + 1}/${kb.category_count}) · ` +
-      `${kb.kit.name} (${kb.kit_index + 1}/${kb.kit_count}) · som: ${soundLabel}`;
+      `Editando pad ${kb.target_pad} — kit ${kb.kit.name} (${kb.kit_index + 1}/${kb.kit_count}) · ` +
+      `som: ${soundLabel} (${kb.sound_index === null ? "-" : kb.sound_index + 1}/${kb.sound_count})`;
   }
 
   // Big, read-from-across-the-room overlay with the same info as the header
@@ -1970,12 +1970,11 @@
     el.kitBrowseModalEyebrow.textContent = `Editando pad ${kb.target_pad}`;
     el.kitBrowseModalKit.textContent = kb.kit.name;
 
-    for (const category of kb.categories) {
-      const pill = document.createElement("span");
-      pill.className = "kit-browse-modal-pill" + (category === kb.category ? " current" : "");
-      pill.textContent = category;
-      el.kitBrowseModalCategories.appendChild(pill);
-    }
+    const soundPosition = kb.sound_index === null ? "-" : kb.sound_index + 1;
+    const counter = document.createElement("span");
+    counter.className = "kit-browse-modal-pill current";
+    counter.textContent = `Kit ${kb.kit_index + 1}/${kb.kit_count} · Som ${soundPosition}/${kb.sound_count}`;
+    el.kitBrowseModalCategories.appendChild(counter);
 
     kb.kits.forEach((kit, idx) => {
       const li = document.createElement("li");

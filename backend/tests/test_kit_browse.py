@@ -19,23 +19,28 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
         return temp_ctx, original_db_path
 
     def _seed_kits(self):
-        """2 categories x 2 kits each - enough to exercise wraparound on all
-        four directions. "Electronic A" deliberately has a sample at
-        pad_number 7 (so a target_pad=7 session gets a same-number default
-        candidate) but not at pad_number 2 (so a target_pad=2 session falls
-        back to the first populated pad_number, 3)."""
+        """4 kits, one flat list (no separate category level - "category" is
+        just metadata on a kit, not a navigation dimension) - enough to
+        exercise wraparound on the kit list (up/down) and, within one kit,
+        its own sound list (left/right). "Kit A" deliberately has a sample
+        at pad_number 7 (so a target_pad=7 session gets a same-number
+        default candidate) but not at pad_number 2 (so a target_pad=2
+        session falls back to the first populated pad_number, 3), plus a
+        third sound (10) so left/right within it has more than one
+        direction to prove."""
         sample = storage.add_sample("s.wav", "S")
-        storage.create_kit("Electronic A", "01_electronic", 0, [
+        storage.create_kit("Kit A", "x", 0, [
             {"pad_number": 3, "sample_id": sample, "display_name": "Three"},
             {"pad_number": 7, "sample_id": sample, "display_name": "Seven"},
+            {"pad_number": 10, "sample_id": sample, "display_name": "Ten"},
         ])
-        storage.create_kit("Electronic B", "01_electronic", 1, [
+        storage.create_kit("Kit B", "x", 1, [
             {"pad_number": 2, "sample_id": sample, "display_name": "B"},
         ])
-        storage.create_kit("Custom A", "02_custom", 0, [
+        storage.create_kit("Kit C", "y", 0, [
             {"pad_number": 2, "sample_id": sample, "display_name": "C"},
         ])
-        storage.create_kit("Custom B", "02_custom", 1, [
+        storage.create_kit("Kit D", "y", 1, [
             {"pad_number": 2, "sample_id": sample, "display_name": "D"},
         ])
         return sample
@@ -105,7 +110,7 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
                 patch("app._queue_pad_hit") as queue_hit,
             ):
                 diakopad_app._kit_browse_state = {
-                    "target_pad": 1, "categories": ["x"], "category_idx": 0,
+                    "target_pad": 1,
                     "kits": [{"id": 1, "name": "k", "pads": []}], "kit_idx": 0,
                     "candidate_pad_number": None,
                 }
@@ -197,7 +202,7 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
 
     # --- payload shape --------------------------------------------------------
 
-    async def test_payload_lists_every_category_kit_and_sound_not_just_the_current_one(self):
+    async def test_payload_lists_every_kit_and_sound_not_just_the_current_one(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
             self._seed_kits()
@@ -205,13 +210,20 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
                 await diakopad_app._kit_browse_select_target(7)
 
             payload = diakopad_app._kit_browse_payload()
-            self.assertEqual(payload["categories"], ["01_electronic", "02_custom"])
-            self.assertEqual([k["name"] for k in payload["kits"]], ["Electronic A", "Electronic B"])
+            self.assertEqual(
+                [k["name"] for k in payload["kits"]], ["Kit A", "Kit B", "Kit C", "Kit D"]
+            )
             self.assertEqual(
                 payload["sounds"],
-                [{"pad_number": 3, "display_name": "Three"}, {"pad_number": 7, "display_name": "Seven"}],
+                [
+                    {"pad_number": 3, "display_name": "Three"},
+                    {"pad_number": 7, "display_name": "Seven"},
+                    {"pad_number": 10, "display_name": "Ten"},
+                ],
             )
             self.assertEqual(payload["candidate_pad_number"], 7)
+            self.assertEqual(payload["sound_index"], 1)
+            self.assertEqual(payload["sound_count"], 3)
         finally:
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
@@ -227,7 +239,7 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
 
             state = diakopad_app._kit_browse_state
             self.assertEqual(state["target_pad"], 7)
-            self.assertEqual(state["kits"][state["kit_idx"]]["name"], "Electronic A")
+            self.assertEqual(state["kits"][state["kit_idx"]]["name"], "Kit A")
             self.assertEqual(state["candidate_pad_number"], 7)  # kit has pad 7
             apply_preview.assert_awaited_once()
         finally:
@@ -237,7 +249,7 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
     async def test_select_target_falls_back_to_first_populated_pad(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
-            self._seed_kits()  # "Electronic A" (first kit) has pads 3 and 7, not 2
+            self._seed_kits()  # "Kit A" (first kit) has pads 3, 7 and 10, not 2
             with patch("app.orchestrator.apply_preview_kit", new=AsyncMock(return_value=True)):
                 await diakopad_app._kit_browse_select_target(2)
 
@@ -261,44 +273,55 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
 
-    async def test_nav_left_right_wraps_within_category(self):
+    async def test_nav_left_right_steps_through_the_current_kits_sounds(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
             self._seed_kits()
-            with patch("app.orchestrator.apply_preview_kit", new=AsyncMock(return_value=True)):
-                await diakopad_app._kit_browse_select_target(7)
-
-                await diakopad_app._kit_browse_nav("left")  # wraps to the last kit
-                state = diakopad_app._kit_browse_state
-                self.assertEqual(state["kits"][state["kit_idx"]]["name"], "Electronic B")
-                self.assertEqual(state["candidate_pad_number"], 2)  # recomputed for the new kit
+            with patch("app.orchestrator.apply_preview_kit", new=AsyncMock(return_value=True)) as apply_preview:
+                await diakopad_app._kit_browse_select_target(7)  # Kit A, candidate=7 (sounds: 3,7,10)
 
                 await diakopad_app._kit_browse_nav("right")
                 state = diakopad_app._kit_browse_state
-                self.assertEqual(state["kits"][state["kit_idx"]]["name"], "Electronic A")
-                self.assertEqual(state["candidate_pad_number"], 7)  # back to the same-number default
+                self.assertEqual(state["kits"][state["kit_idx"]]["name"], "Kit A")  # same kit
+                self.assertEqual(state["candidate_pad_number"], 10)
+
+                await diakopad_app._kit_browse_nav("right")  # wraps
+                state = diakopad_app._kit_browse_state
+                self.assertEqual(state["candidate_pad_number"], 3)
+
+                await diakopad_app._kit_browse_nav("left")
+                state = diakopad_app._kit_browse_state
+                self.assertEqual(state["candidate_pad_number"], 10)
+
+            # left/right never respawns the preview instance - it's the same
+            # kit throughout, and apply_preview_kit already pre-loaded every
+            # one of its sounds as regions in one go (see _kit_browse_nav).
+            apply_preview.assert_awaited_once()
         finally:
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
 
-    async def test_nav_up_down_wraps_across_categories_and_resets_kit_index(self):
+    async def test_nav_up_down_wraps_through_the_flat_kit_list(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
             self._seed_kits()
-            with patch("app.orchestrator.apply_preview_kit", new=AsyncMock(return_value=True)):
-                await diakopad_app._kit_browse_select_target(7)
-                await diakopad_app._kit_browse_nav("right")  # move off kit_idx 0 first
+            with patch("app.orchestrator.apply_preview_kit", new=AsyncMock(return_value=True)) as apply_preview:
+                await diakopad_app._kit_browse_select_target(7)  # Kit A, kit_idx 0
 
-                await diakopad_app._kit_browse_nav("up")  # wraps to the last category
+                await diakopad_app._kit_browse_nav("up")  # wraps to the last kit
                 state = diakopad_app._kit_browse_state
-                self.assertEqual(state["category_idx"], 1)
-                self.assertEqual(state["kit_idx"], 0)
-                self.assertEqual(state["kits"][0]["name"], "Custom A")
+                self.assertEqual(state["kit_idx"], 3)
+                self.assertEqual(state["kits"][state["kit_idx"]]["name"], "Kit D")
+                self.assertEqual(state["candidate_pad_number"], 2)  # Kit D's only sound
 
                 await diakopad_app._kit_browse_nav("down")  # wraps back to the first
                 state = diakopad_app._kit_browse_state
-                self.assertEqual(state["category_idx"], 0)
                 self.assertEqual(state["kit_idx"], 0)
+                self.assertEqual(state["candidate_pad_number"], 7)  # recomputed default for Kit A
+
+            # unlike left/right, every up/down step lands on a different kit
+            # and must reload the preview instance for it.
+            self.assertEqual(apply_preview.await_count, 3)  # select_target + up + down
         finally:
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
@@ -314,7 +337,7 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
 
             state = diakopad_app._kit_browse_state
             self.assertEqual(state["candidate_pad_number"], 3)
-            self.assertEqual(state["kits"][state["kit_idx"]]["name"], "Electronic A")  # unchanged
+            self.assertEqual(state["kits"][state["kit_idx"]]["name"], "Kit A")  # unchanged
             preview.assert_awaited_once_with(3)
         finally:
             storage.DB_PATH = original_db_path
@@ -343,12 +366,12 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
             with patch("app.orchestrator.apply_preview_kit", new=AsyncMock(return_value=True)):
                 with patch("app.trigger.trigger_preview", new=AsyncMock()) as preview:
                     await diakopad_app._kit_browse_select_target(7)
-                    await diakopad_app._kit_browse_nav("right")
+                    await diakopad_app._kit_browse_nav("up")  # wraps to Kit D
                     await diakopad_app._kit_browse_select_candidate(2)
             preview.assert_not_awaited()
 
             state = diakopad_app._kit_browse_state
-            self.assertEqual(state["kits"][state["kit_idx"]]["name"], "Electronic B")
+            self.assertEqual(state["kits"][state["kit_idx"]]["name"], "Kit D")
             self.assertEqual(state["candidate_pad_number"], 2)
         finally:
             storage.DB_PATH = original_db_path
@@ -367,7 +390,6 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
             ])
             diakopad_app._kit_browse_state = {
                 "target_pad": 9,
-                "categories": ["01_electronic"], "category_idx": 0,
                 "kits": [storage.get_kit(kit_id)], "kit_idx": 0,
                 "candidate_pad_number": 3,
             }
@@ -399,7 +421,6 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
             kit_id = storage.create_kit("Empty-ish Kit", "01_electronic", 0, [])
             diakopad_app._kit_browse_state = {
                 "target_pad": 9,
-                "categories": ["01_electronic"], "category_idx": 0,
                 "kits": [storage.get_kit(kit_id)], "kit_idx": 0,
                 "candidate_pad_number": None,
             }
@@ -444,7 +465,6 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
 
             diakopad_app._kit_browse_state = {
                 "target_pad": 9,
-                "categories": ["01_electronic"], "category_idx": 0,
                 "kits": [{"id": 1, "name": "k", "pads": []}], "kit_idx": 0,
                 "candidate_pad_number": None,
             }
@@ -467,7 +487,7 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
             self._seed_kits()
             with patch("app.orchestrator.apply_preview_kit", new=AsyncMock(return_value=True)):
                 await diakopad_app._kit_browse_select_target(9)
-                await diakopad_app._kit_browse_nav("right")  # move to "Electronic B"
+                await diakopad_app._kit_browse_nav("down")  # move to "Kit B"
                 remembered_kit_id = diakopad_app._kit_browse_state["kits"][diakopad_app._kit_browse_state["kit_idx"]]["id"]
 
                 with (
@@ -478,13 +498,13 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
 
                 # A brand new session, for a different pad, should open on
                 # the kit that was just confirmed rather than the first kit
-                # of the first category.
+                # overall.
                 await diakopad_app._kit_browse_select_target(10)
 
             state = diakopad_app._kit_browse_state
             self.assertEqual(state["target_pad"], 10)
             self.assertEqual(state["kits"][state["kit_idx"]]["id"], remembered_kit_id)
-            self.assertEqual(state["kits"][state["kit_idx"]]["name"], "Electronic B")
+            self.assertEqual(state["kits"][state["kit_idx"]]["name"], "Kit B")
         finally:
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
@@ -636,7 +656,7 @@ class KitBrowseEndpointTests(unittest.IsolatedAsyncioTestCase):
             await diakopad_app.kit_browse_toggle()
             with patch("app.orchestrator.apply_preview_kit", new=AsyncMock(return_value=True)):
                 await diakopad_app.kit_browse_select_target(diakopad_app.KitBrowseSelectTargetRequest(pad_number=5))
-                payload = await diakopad_app.kit_browse_nav(diakopad_app.KitBrowseNavRequest(direction="right"))
+                payload = await diakopad_app.kit_browse_nav(diakopad_app.KitBrowseNavRequest(direction="down"))
             self.assertEqual(payload["kit"]["name"], "Electronic B")
         finally:
             storage.DB_PATH = original_db_path
@@ -651,7 +671,6 @@ class KitBrowseEndpointTests(unittest.IsolatedAsyncioTestCase):
             ])
             diakopad_app._kit_browse_state = {
                 "target_pad": 9,
-                "categories": ["01_electronic"], "category_idx": 0,
                 "kits": [storage.get_kit(kit_id)], "kit_idx": 0,
                 "candidate_pad_number": 2,
             }
@@ -674,7 +693,6 @@ class KitBrowseEndpointTests(unittest.IsolatedAsyncioTestCase):
         try:
             diakopad_app._kit_browse_state = {
                 "target_pad": 9,
-                "categories": ["01_electronic"], "category_idx": 0,
                 "kits": [{"id": 1, "name": "k", "pads": []}], "kit_idx": 0,
                 "candidate_pad_number": None,
             }
@@ -691,7 +709,6 @@ class KitBrowseEndpointTests(unittest.IsolatedAsyncioTestCase):
         try:
             diakopad_app._kit_browse_state = {
                 "target_pad": 9,
-                "categories": ["01_electronic"], "category_idx": 0,
                 "kits": [{"id": 1, "name": "k", "pads": []}], "kit_idx": 0,
                 "candidate_pad_number": None,
             }
@@ -709,7 +726,6 @@ class KitBrowseEndpointTests(unittest.IsolatedAsyncioTestCase):
         try:
             diakopad_app._kit_browse_state = {
                 "target_pad": 9,
-                "categories": ["01_electronic"], "category_idx": 0,
                 "kits": [{"id": 1, "name": "k", "pads": []}], "kit_idx": 0,
                 "candidate_pad_number": None,
             }

@@ -168,13 +168,19 @@ _pending_note_learn: Optional[int] = None  # pad_number waiting for a physical h
 #   ARMED  -[press the toggle again]->    IDLE (cancel, nothing happened)
 # Once BROWSING, on the 4x4 grid (top row = 13,14,15,16; ...; bottom row =
 # 1,2,3,4 - see frontend/app.js's displayOrder()):
-#   13 Up (prev category)   14 Left (prev kit)  15 Right (next kit)  16 Down (next category)
+#   13 Up (prev kit)    14 Left (prev sound)  15 Right (next sound)  16 Down (next kit)
 #   1 Back (cancel, target pad keeps its old sound)
 #   4 Confirm (apply the candidate sound to the target pad only, remember
 #              this kit, exit)
-#   everything else: picks THAT pad-role's sound in the highlighted kit as
-#              the new candidate (previewed if the setting allows - see
-#              _kit_browse_maybe_preview) - overrides the default candidate.
+#   everything else: jumps straight to THAT pad-role's sound in the
+#              highlighted kit as the new candidate (previewed if the
+#              setting allows - see _kit_browse_maybe_preview) - a shortcut
+#              alongside stepping one at a time with left/right.
+# Kits are one flat list (storage.list_kits(), already ordered by category/
+# sort_index/name) - "category" is just metadata on a kit, not a separate
+# navigation level: each imported folder (e.g. "Akai MPC-60") is its own
+# unit, stepped through directly with up/down; left/right step through that
+# kit's own sounds instead.
 # None = IDLE (pads behave normally). See _handle_kit_browse_note,
 # _kit_browse_arm/_select_target/_nav/_select_candidate/_confirm/_back below.
 _kit_browse_state: Optional[dict] = None
@@ -388,17 +394,18 @@ def _kit_browse_payload() -> dict:
         key=lambda p: p["pad_number"],
     )
     candidate_entry = next((p for p in sounds if p["pad_number"] == candidate_pad_number), None)
+    sound_index = next(
+        (i for i, p in enumerate(sounds) if p["pad_number"] == candidate_pad_number), None
+    )
     return {
         "type": "kit_browse",
         "active": True,
         "phase": "browsing",
         "target_pad": target_pad,
-        # Full lists (not just the current one) so the UI can show where you
-        # are among every category/kit, not just a bare "2/5" counter.
-        "categories": state["categories"],
-        "category": state["categories"][state["category_idx"]],
-        "category_index": state["category_idx"],
-        "category_count": len(state["categories"]),
+        # The full flat kit list (not just the current one) so the UI can
+        # show where you are among every kit, not just a bare "2/16"
+        # counter. No separate category level - each imported folder is its
+        # own unit, "category" is just metadata on it.
         "kits": [{"id": k["id"], "name": k["name"]} for k in state["kits"]],
         "kit": {"id": kit["id"], "name": kit["name"]},
         "kit_index": state["kit_idx"],
@@ -411,6 +418,8 @@ def _kit_browse_payload() -> dict:
         ],
         "candidate_pad_number": candidate_pad_number,
         "candidate_display_name": candidate_entry["display_name"] if candidate_entry else None,
+        "sound_index": sound_index,
+        "sound_count": len(sounds),
     }
 
 
@@ -431,38 +440,24 @@ async def _kit_browse_select_target(pad_number: int) -> None:
     """Second step: pad_number becomes the pad being edited. Starts browsing
     at the last kit a confirm actually used (kit_browse_last_kit_id), since
     the tendency is to fill several pads from the same kit in a row, falling
-    back to the first kit of the first category the first time ever / if
-    that kit was deleted since. A no-op back to IDLE when the catalog is
-    empty - nothing to browse yet."""
+    back to the first kit overall the first time ever / if that kit was
+    deleted since. A no-op back to IDLE when the catalog is empty - nothing
+    to browse yet."""
     global _kit_browse_state
-    categories = storage.list_kit_categories()
-    if not categories:
-        _kit_browse_state = None
-        await _broadcast_kit_browse()
-        return
-
-    category_idx = 0
-    kit_idx = 0
-    kits = storage.list_kits_in_category(categories[0])
-    last_kit_id = storage.get_settings().get("kit_browse_last_kit_id") or ""
-    if last_kit_id:
-        for c_idx, category in enumerate(categories):
-            candidates = kits if c_idx == 0 else storage.list_kits_in_category(category)
-            match_idx = next((i for i, k in enumerate(candidates) if str(k["id"]) == last_kit_id), -1)
-            if match_idx != -1:
-                category_idx, kits, kit_idx = c_idx, candidates, match_idx
-                break
-
+    kits = storage.list_kits()
     if not kits:
         _kit_browse_state = None
         await _broadcast_kit_browse()
         return
 
+    last_kit_id = storage.get_settings().get("kit_browse_last_kit_id") or ""
+    kit_idx = 0
+    if last_kit_id:
+        kit_idx = next((i for i, k in enumerate(kits) if str(k["id"]) == last_kit_id), 0)
+
     kit = kits[kit_idx]
     _kit_browse_state = {
         "target_pad": pad_number,
-        "categories": categories,
-        "category_idx": category_idx,
         "kits": kits,
         "kit_idx": kit_idx,
         "candidate_pad_number": _kit_browse_default_candidate(kit, pad_number),
@@ -473,25 +468,38 @@ async def _kit_browse_select_target(pad_number: int) -> None:
 
 
 async def _kit_browse_nav(direction: str) -> None:
-    """left/right move within the current category's kit list; up/down move
-    to the previous/next category and land on its first kit. All four wrap
-    around. Recomputes the default candidate for the newly-highlighted kit
-    (see _kit_browse_default_candidate) - any candidate picked by hand on the
-    previous kit doesn't carry over."""
+    """up/down step through the flat kit list, one folder at a time (no
+    separate category level - see the module comment above _kit_browse_state)
+    and land on that kit's default candidate. left/right instead step
+    through the CURRENT kit's own sounds one at a time, in pad_number order
+    - a quicker alternative to always tapping that sound's specific pad. All
+    four wrap around."""
     state = _kit_browse_state
     if state is None or state.get("target_pad") is None:
         return
-    if direction in ("left", "right"):
-        delta = 1 if direction == "right" else -1
-        state["kit_idx"] = (state["kit_idx"] + delta) % len(state["kits"])
-    else:
+
+    kit_changed = False
+    if direction in ("up", "down"):
         delta = 1 if direction == "down" else -1
-        state["category_idx"] = (state["category_idx"] + delta) % len(state["categories"])
-        state["kits"] = storage.list_kits_in_category(state["categories"][state["category_idx"]])
-        state["kit_idx"] = 0
+        state["kit_idx"] = (state["kit_idx"] + delta) % len(state["kits"])
+        kit_changed = True
+
     kit = state["kits"][state["kit_idx"]]
-    state["candidate_pad_number"] = _kit_browse_default_candidate(kit, state["target_pad"])
-    await orchestrator.apply_preview_kit(kit)
+    if kit_changed:
+        state["candidate_pad_number"] = _kit_browse_default_candidate(kit, state["target_pad"])
+        await orchestrator.apply_preview_kit(kit)
+    else:
+        sounds = sorted(
+            (p for p in kit.get("pads", []) if p.get("sample_id") is not None),
+            key=lambda p: p["pad_number"],
+        )
+        if sounds:
+            numbers = [p["pad_number"] for p in sounds]
+            current = state.get("candidate_pad_number")
+            idx = numbers.index(current) if current in numbers else 0
+            delta = 1 if direction == "right" else -1
+            state["candidate_pad_number"] = numbers[(idx + delta) % len(numbers)]
+
     await _kit_browse_maybe_preview(kit, state["candidate_pad_number"])
     await _broadcast_kit_browse()
 
@@ -500,7 +508,7 @@ async def _kit_browse_select_candidate(pad_number: int) -> None:
     """Tapping one of the "free" pads while browsing overrides the default
     candidate with that specific sound from the highlighted kit - lets you
     pick any of the kit's sounds for the target pad, not just the one at the
-    same number. Doesn't change kit/category or leave browsing."""
+    same number. Doesn't change kit or leave browsing."""
     state = _kit_browse_state
     if state is None or state.get("target_pad") is None:
         return

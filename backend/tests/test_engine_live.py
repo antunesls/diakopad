@@ -632,6 +632,26 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
 
+    async def test_handle_note_bound_action_debounces_hardware_double_fire(self):
+        # Some physical buttons send two genuine (velocity > 0) Note On
+        # messages a few ms apart for a single press - not the already
+        # handled velocity<=0 release encoding. Left undebounced, a
+        # toggle-style action (kit_browse_toggle, panic, ...) would fire
+        # twice and immediately cancel itself.
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            storage.add_controller_binding("kit_browse_toggle", "note", 54)
+            with patch("app._dispatch_controller_action", new=AsyncMock()) as dispatch:
+                diakopad_app._handle_note(54, 127)
+                diakopad_app._handle_note(54, 127)
+                await asyncio.sleep(0)
+
+                dispatch.assert_awaited_once_with("kit_browse_toggle")
+        finally:
+            diakopad_app._bound_note_last_dispatch.clear()
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
     async def test_handle_note_captures_a_pending_learn_instead_of_dispatching(self):
         temp_ctx, original_db_path = self._with_temp_db()
         diakopad_app._pending_controller_learn = "scene_next"

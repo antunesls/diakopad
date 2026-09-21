@@ -10,6 +10,7 @@ import logging
 import re
 import subprocess
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -206,6 +207,16 @@ _pending_cc_values: dict[tuple[str, Optional[int], str], int] = {}
 _debounce_handles: dict[tuple[str, Optional[int], str], asyncio.TimerHandle] = {}
 KNOB_DEBOUNCE_SECONDS = 0.3
 
+# Some physical buttons (observed on the SMC-PAD) send TWO genuine Note On
+# messages, both with real velocity, for a single physical press - not the
+# already-handled velocity<=0 release encoding, just a hardware/firmware
+# double-fire a few ms apart. For a note bound to a toggle-style controller
+# action (kit_browse_toggle, panic, ...) that turns one press into an
+# immediate on/off no-op, so the SAME note re-dispatching within this window
+# is swallowed. Far below any realistic human tap_tempo interval.
+_bound_note_last_dispatch: dict[int, float] = {}
+BOUND_NOTE_DEBOUNCE_SECONDS = 0.15
+
 
 def _frac_to_cutoff(frac: float) -> Optional[float]:
     """0..1 -> 200Hz..20kHz log scale. >=0.99 means "fully open" (no filter)."""
@@ -251,6 +262,11 @@ def _handle_note(note: int, velocity: int) -> None:
 
     bound_action = storage.get_action_for_signal("note", note)
     if bound_action is not None:
+        now = time.monotonic()
+        last = _bound_note_last_dispatch.get(note, 0.0)
+        _bound_note_last_dispatch[note] = now
+        if now - last < BOUND_NOTE_DEBOUNCE_SECONDS:
+            return
         asyncio.create_task(_dispatch_controller_action(bound_action))
         return
 

@@ -221,6 +221,63 @@ class LooperOverdubTests(unittest.TestCase):
         self.assertEqual(looper._events, [])
 
 
+class LooperQuantizeTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        LooperOverdubTests._reset_looper()
+
+    def tearDown(self):
+        LooperOverdubTests._reset_looper()
+
+    def test_quantize_to_bar_rounds_to_the_nearest_whole_bar(self):
+        settings = {"sequencer_bpm": "120", "metronome_signature": "4_4"}
+        # bar = 4 pulses * 60/120 = 2.0s
+        self.assertAlmostEqual(looper._quantize_to_bar(3.1, settings), 4.0)  # rounds up to 2 bars
+        self.assertAlmostEqual(looper._quantize_to_bar(0.9, settings), 2.0)  # rounds down to 1 bar
+        self.assertAlmostEqual(looper._quantize_to_bar(2.0, settings), 2.0)  # exact bar, unchanged
+
+    def test_quantize_to_bar_never_rounds_down_to_zero(self):
+        settings = {"sequencer_bpm": "120", "metronome_signature": "4_4"}
+        self.assertAlmostEqual(looper._quantize_to_bar(0.05, settings), 2.0)  # min 1 bar
+
+    def test_quantize_to_bar_respects_the_time_signature_pulse_count(self):
+        settings = {"sequencer_bpm": "120", "metronome_signature": "3_4"}
+        # bar = 3 pulses * 60/120 = 1.5s
+        self.assertAlmostEqual(looper._quantize_to_bar(1.6, settings), 1.5)
+
+    def test_quantize_to_bar_falls_back_to_raw_duration_on_bad_bpm(self):
+        self.assertEqual(looper._quantize_to_bar(3.1, {"sequencer_bpm": "not-a-number"}), 3.1)
+        self.assertEqual(looper._quantize_to_bar(3.1, {"sequencer_bpm": "0"}), 3.1)
+
+    async def test_record_stop_snaps_loop_duration_to_a_bar_when_enabled(self):
+        settings = {
+            "sequencer_bpm": "120", "metronome_signature": "4_4",
+            "looper_quantize_enabled": "1",
+        }
+        looper._state = "recording"
+        looper._events = [{"offset": 0.05, "pad_number": 1, "velocity": 100}]
+        looper._record_start = time.monotonic() - 3.1  # ~1.55 bars held
+
+        with patch("engine.trigger.trigger_pad", new=AsyncMock()):
+            await looper.record_stop([], settings)
+
+        self.assertEqual(looper.get_state()["state"], "playing")
+        self.assertAlmostEqual(looper._loop_duration, 4.0, delta=0.05)  # snapped to 2 bars
+
+    async def test_record_stop_keeps_raw_duration_when_disabled(self):
+        settings = {
+            "sequencer_bpm": "120", "metronome_signature": "4_4",
+            "looper_quantize_enabled": "0",
+        }
+        looper._state = "recording"
+        looper._events = [{"offset": 0.05, "pad_number": 1, "velocity": 100}]
+        looper._record_start = time.monotonic() - 3.1
+
+        with patch("engine.trigger.trigger_pad", new=AsyncMock()):
+            await looper.record_stop([], settings)
+
+        self.assertAlmostEqual(looper._loop_duration, 3.1, delta=0.05)  # untouched
+
+
 class LooperPlayToggleTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         LooperOverdubTests._reset_looper()

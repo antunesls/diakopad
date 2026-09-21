@@ -285,8 +285,10 @@ tempo real com o Sequencer e com o alvo Tempo da aba Knobs.
 
 Aba **Looper**: um loop único e compartilhado, estilo pedal de loop. Grava o
 que você toca em qualquer pad enquanto está gravando; ao fechar a gravação,
-a duração do loop fica fixa (sem quantização por tempo) e ele passa a
-repetir sozinho. Sem overdub por enquanto.
+a duração do loop é arredondada pro compasso mais próximo (BPM e compasso do
+Metrônomo — desligável em Config > "Loop no compasso", aí volta a valer
+exatamente o tempo que o botão ficou pressionado) e ele passa a repetir
+sozinho.
 
 Os dois disparam os pads programaticamente pela porta MIDI virtual
 `DiakoPad-trigger-out` (`backend/engine/trigger.py`), conectada pelo

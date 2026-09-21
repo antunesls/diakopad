@@ -14,7 +14,7 @@
     pendingLearn: null,
     pendingNoteLearn: null,
     selectedPad: null,
-    settings: { sustain_mode: "1", velocity_sensitive: "0", kit_browse_preview_enabled: "1" },
+    settings: { sustain_mode: "1", velocity_sensitive: "0", kit_browse_preview_enabled: "1", looper_quantize_enabled: "1" },
     padEffects: [],
     effectsCatalog: [],
     sequencer: { running: false, current_step: 0, steps: [] },
@@ -106,6 +106,7 @@
     settingSustain: document.getElementById("setting-sustain"),
     settingVelocity: document.getElementById("setting-velocity"),
     settingKitBrowsePreview: document.getElementById("setting-kit-browse-preview"),
+    settingLooperQuantize: document.getElementById("setting-looper-quantize"),
     fullRestartBtn: document.getElementById("full-restart-btn"),
     clearAllPadsBtn: document.getElementById("clear-all-pads-btn"),
     controllerBindingsLooperRecordToggle: document.getElementById("controller-bindings-looper_record_toggle"),
@@ -1383,6 +1384,7 @@
     el.settingSustain.checked = state.settings.sustain_mode === "1";
     el.settingVelocity.checked = state.settings.velocity_sensitive === "1";
     el.settingKitBrowsePreview.checked = state.settings.kit_browse_preview_enabled === "1";
+    el.settingLooperQuantize.checked = state.settings.looper_quantize_enabled === "1";
   }
 
   el.settingSustain.addEventListener("change", () => {
@@ -1408,6 +1410,16 @@
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: el.settingKitBrowsePreview.checked }),
+    });
+  });
+  // Plain persistent toggle - snaps the Looper's recorded length to the
+  // nearest bar on stop instead of using the raw hold time (see
+  // engine/looper.py's record_stop/_quantize_to_bar).
+  el.settingLooperQuantize.addEventListener("change", () => {
+    fetch("/api/settings/looper_quantize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: el.settingLooperQuantize.checked }),
     });
   });
 

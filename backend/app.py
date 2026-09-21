@@ -123,6 +123,10 @@ class KitBrowsePreviewRequest(BaseModel):
     enabled: bool
 
 
+class LooperQuantizeRequest(BaseModel):
+    enabled: bool
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self.active: list[WebSocket] = []
@@ -1466,6 +1470,13 @@ async def kit_browse_preview(pad_number: int):
 @app.post("/api/settings/kit_browse_preview")
 async def set_kit_browse_preview(body: KitBrowsePreviewRequest):
     storage.set_setting("kit_browse_preview_enabled", "1" if body.enabled else "0")
+    await _broadcast_settings()
+    return {"ok": True}
+
+
+@app.post("/api/settings/looper_quantize")
+async def set_looper_quantize(body: LooperQuantizeRequest):
+    storage.set_setting("looper_quantize_enabled", "1" if body.enabled else "0")
     await _broadcast_settings()
     return {"ok": True}
 

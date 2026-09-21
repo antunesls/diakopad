@@ -1,8 +1,7 @@
 """Live looper: ONE shared recording (not per-pad), like a classic loop
 pedal - record whatever pads get hit while recording, stop fixes the loop's
-length to however long that took (no tempo quantization for now), then it
-repeats automatically. In-memory only (loop content doesn't need to survive
-a server restart).
+length, then it repeats automatically. In-memory only (loop content doesn't
+need to survive a server restart).
 
 Once playing, an overdub pass layers more hits onto the SAME loop length
 without restarting playback: the events already looping keep playing while
@@ -13,6 +12,14 @@ the pass ends.
 Recording is fed by app.py's live note-on observer (see midi.py/app.py's
 _on_midi_note); playback reuses the same engine/trigger.py primitive as the
 step sequencer, on its own absolute-time-rescheduled loop to bound drift.
+
+Loop-length quantization (record_stop): the raw held-down duration almost
+never lands on an exact number of bars, so left alone the loop very
+audibly drifts out of sync with the beat a little more on every repeat.
+When looper_quantize_enabled (default on), the loop's *length* is snapped
+to the nearest whole bar at the current sequencer_bpm/metronome_signature -
+the notes themselves keep the exact offsets you actually played (no
+retiming/robotic feel), only the cycle point moves to the bar boundary.
 """
 from __future__ import annotations
 
@@ -20,7 +27,7 @@ import asyncio
 import time
 from typing import Optional
 
-from engine import trigger
+from engine import time_signatures, trigger
 
 _state = "stopped"  # "stopped" | "recording" | "playing" | "overdubbing"
 _events: list[dict] = []  # [{"offset": float, "pad_number": int, "velocity": int}]
@@ -86,12 +93,35 @@ def record_event(pad_number: int, velocity: int) -> None:
 _ACTIVE_STATES = ("playing", "overdubbing")
 
 
+def _quantize_to_bar(duration: float, settings: dict) -> float:
+    """Rounds duration up/down to the nearest whole bar at the current
+    tempo/signature (minimum one bar), so the loop repeats in sync with the
+    beat instead of drifting by whatever the raw hold time was. Falls back
+    to the raw duration if bpm/settings are somehow unusable (defensive -
+    should never actually happen, sequencer_bpm always has a default)."""
+    try:
+        bpm = float(settings.get("sequencer_bpm", 100))
+    except (TypeError, ValueError):
+        return duration
+    if bpm <= 0:
+        return duration
+    signature = settings.get("metronome_signature", time_signatures.DEFAULT_SIGNATURE)
+    pulses = time_signatures.get(signature)["pulses"]
+    bar_duration = pulses * (60.0 / bpm)
+    if bar_duration <= 0:
+        return duration
+    bars = max(1, round(duration / bar_duration))
+    return bars * bar_duration
+
+
 async def record_stop(pads: list[dict], settings: dict) -> None:
     global _state, _loop_duration, _started_at, _task
     if _state != "recording" or _record_start is None:
         return
     duration = time.monotonic() - _record_start
     if _events and duration > 0:
+        if settings.get("looper_quantize_enabled", "1") == "1":
+            duration = _quantize_to_bar(duration, settings)
         _loop_duration = duration
         _state = "playing"
         _started_at = time.time()

@@ -257,6 +257,11 @@ DEFAULT_SETTINGS = {
     # none yet - a fresh session then starts at the first kit of the first
     # category. Kept server-side, same rationale as current_scene_id.
     "kit_browse_last_kit_id": "",
+    # Whether stopping a Looper recording snaps the loop length to the
+    # nearest whole bar (sequencer_bpm/metronome_signature), so repeats stay
+    # in sync with the beat instead of drifting by however long the record
+    # button happened to be held. See engine/looper.py's record_stop().
+    "looper_quantize_enabled": "1",
 }
 
 # Default note layout: sequential from 36 (C1), matches a typical MPC-style

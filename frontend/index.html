@@ -310,122 +310,18 @@
       </li>
     </ul>
 
-    <h2 class="tab-note">Controles dedicados do SMC-PAD</h2>
-    <p class="tab-note">Vincule botões físicos sem tela equivalente a uma ação do app. Aperte "Aprender" e depois o botão/pad no controlador.</p>
-    <ul class="settings-list">
-      <li class="settings-row" data-controller-action="panic">
-        <div class="settings-text">
-          <span class="settings-label">Panic</span>
-          <span class="settings-desc">Silencia tudo, para transports e muta o master, igual ao botão PANIC.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-panic"></div>
-        </div>
-        <button class="secondary-btn" id="controller-learn-btn-panic" type="button">Aprender</button>
-      </li>
-      <li class="settings-row" data-controller-action="tap_tempo">
-        <div class="settings-text">
-          <span class="settings-label">Tap do metrônomo</span>
-          <span class="settings-desc">Bata no botão físico no tempo da música para ajustar o BPM global, igual ao botão TAP da tela.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-tap_tempo"></div>
-        </div>
-        <button class="secondary-btn" id="controller-learn-btn-tap_tempo" type="button">Aprender</button>
-      </li>
-      <li class="settings-row" data-controller-action="looper_record_toggle">
-        <div class="settings-text">
-          <span class="settings-label">Gravar (Looper)</span>
-          <span class="settings-desc">Abre a aba Looper e inicia/para a gravação, igual ao botão "● Gravar" da tela.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-looper_record_toggle"></div>
-        </div>
-        <button class="secondary-btn" id="controller-learn-btn-looper_record_toggle" type="button">Aprender</button>
-      </li>
-      <li class="settings-row" data-controller-action="looper_play_toggle">
-        <div class="settings-text">
-          <span class="settings-label">Play (Looper)</span>
-          <span class="settings-desc">Toca o loop gravado; se já estiver tocando, para. Não apaga a gravação — "Limpar" apaga.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-looper_play_toggle"></div>
-        </div>
-        <button class="secondary-btn" id="controller-learn-btn-looper_play_toggle" type="button">Aprender</button>
-      </li>
-      <li class="settings-row" data-controller-action="looper_overdub_toggle">
-        <div class="settings-text">
-          <span class="settings-label">Sobrepor (Looper)</span>
-          <span class="settings-desc">Entra/sai da sobreposição sobre o loop que está tocando, igual ao botão "+ Sobrepor" da tela.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-looper_overdub_toggle"></div>
-        </div>
-        <button class="secondary-btn" id="controller-learn-btn-looper_overdub_toggle" type="button">Aprender</button>
-      </li>
-      <li class="settings-row" data-controller-action="scene_next">
-        <div class="settings-text">
-          <span class="settings-label">Próxima cena</span>
-          <span class="settings-desc">Avança para a próxima cena da aba Performance em segundo plano, sem trocar de aba. Pode vincular mais de um botão (ex.: a seta e o pad "bak") à mesma ação.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-scene_next"></div>
-        </div>
-        <button class="secondary-btn" id="controller-learn-btn-scene_next" type="button">Aprender</button>
-      </li>
-      <li class="settings-row" data-controller-action="scene_prev">
-        <div class="settings-text">
-          <span class="settings-label">Cena anterior</span>
-          <span class="settings-desc">Volta para a cena anterior da aba Performance em segundo plano, sem trocar de aba. Pode vincular mais de um botão à mesma ação.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-scene_prev"></div>
-        </div>
-        <button class="secondary-btn" id="controller-learn-btn-scene_prev" type="button">Aprender</button>
-      </li>
-      <li class="settings-row" data-controller-action="kit_browse_toggle">
-        <div class="settings-text">
-          <span class="settings-label">Navegar kits</span>
-          <span class="settings-desc">Aperte pra escolher qual pad você quer editar (toque nele em seguida). Depois, cima/baixo trocam de kit (cada pasta importada, ex. "Akai MPC-60") e esquerda/direita trocam de som dentro do kit atual — pelos cantos do grid ou pelos botões dedicados abaixo, se preferir aprendê-los. Também dá pra tocar direto num dos outros pads pra pular pro som daquela posição. Confirme pra aplicar só no pad selecionado — voltar cancela sem mudar nada.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-kit_browse_toggle"></div>
-        </div>
-        <button class="secondary-btn" id="controller-learn-btn-kit_browse_toggle" type="button">Aprender</button>
-      </li>
-      <li class="settings-row" data-controller-action="kit_browse_up">
-        <div class="settings-text">
-          <span class="settings-label">Navegar kits: kit anterior</span>
-          <span class="settings-desc">Opcional — só funciona enquanto está navegando. Por padrão já é o canto superior-esquerdo do grid (pad 13); aprenda aqui só se preferir usar um botão dedicado (ex. a seta física) em vez de repor um pad.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-kit_browse_up"></div>
-        </div>
-        <button class="secondary-btn" id="controller-learn-btn-kit_browse_up" type="button">Aprender</button>
-      </li>
-      <li class="settings-row" data-controller-action="kit_browse_down">
-        <div class="settings-text">
-          <span class="settings-label">Navegar kits: próximo kit</span>
-          <span class="settings-desc">Opcional — padrão é o canto superior-direito (pad 16). Aprenda um botão dedicado se preferir.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-kit_browse_down"></div>
-        </div>
-        <button class="secondary-btn" id="controller-learn-btn-kit_browse_down" type="button">Aprender</button>
-      </li>
-      <li class="settings-row" data-controller-action="kit_browse_left">
-        <div class="settings-text">
-          <span class="settings-label">Navegar kits: som anterior</span>
-          <span class="settings-desc">Opcional — padrão é o topo, segunda posição (pad 14). Aprenda um botão dedicado se preferir.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-kit_browse_left"></div>
-        </div>
-        <button class="secondary-btn" id="controller-learn-btn-kit_browse_left" type="button">Aprender</button>
-      </li>
-      <li class="settings-row" data-controller-action="kit_browse_right">
-        <div class="settings-text">
-          <span class="settings-label">Navegar kits: próximo som</span>
-          <span class="settings-desc">Opcional — padrão é o topo, terceira posição (pad 15). Aprenda um botão dedicado se preferir.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-kit_browse_right"></div>
-        </div>
-        <button class="secondary-btn" id="controller-learn-btn-kit_browse_right" type="button">Aprender</button>
-      </li>
-      <li class="settings-row" data-controller-action="kit_browse_confirm">
-        <div class="settings-text">
-          <span class="settings-label">Navegar kits: confirmar</span>
-          <span class="settings-desc">Opcional — padrão é o canto inferior-direito (pad 4). Aprenda um botão dedicado se preferir.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-kit_browse_confirm"></div>
-        </div>
-        <button class="secondary-btn" id="controller-learn-btn-kit_browse_confirm" type="button">Aprender</button>
-      </li>
-      <li class="settings-row" data-controller-action="kit_browse_back">
-        <div class="settings-text">
-          <span class="settings-label">Navegar kits: voltar</span>
-          <span class="settings-desc">Opcional — padrão é o canto inferior-esquerdo (pad 1). Aprenda um botão dedicado se preferir.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-kit_browse_back"></div>
-        </div>
-        <button class="secondary-btn" id="controller-learn-btn-kit_browse_back" type="button">Aprender</button>
-      </li>
-    </ul>
+    <h2 class="tab-note">Mapa MIDI</h2>
+    <div class="midi-map">
+      <div class="midi-map-toolbar">
+        <input type="search" id="midi-map-filter" class="scene-search midi-map-search" placeholder="Filtrar: ação, pad, parâmetro, nota ou CC...">
+        <button id="midi-map-add-knob-btn" class="secondary-btn" type="button">+ Novo knob</button>
+      </div>
+      <div class="midi-learn-banner hidden" id="midi-learn-banner">
+        <span id="midi-learn-banner-text"></span>
+        <button id="midi-learn-cancel-btn" class="secondary-btn" type="button">Cancelar</button>
+      </div>
+      <div id="midi-map-sections"></div>
+    </div>
   </main>
 
   <div id="assign-modal" class="modal hidden">

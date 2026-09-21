@@ -46,6 +46,7 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
         return sample
 
     def setUp(self):
+        diakopad_app._note_last_dispatch.clear()
         self._original_pad_notes = diakopad_app._pad_notes
         # Matches the DEFAULT_BASE_NOTE=36 sequential layout (pad n -> note
         # 35+n) for exactly the pads this feature cares about.
@@ -57,6 +58,7 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
         diakopad_app._kit_browse_state = None
 
     def tearDown(self):
+        diakopad_app._note_last_dispatch.clear()
         diakopad_app._pad_notes = self._original_pad_notes
         diakopad_app._kit_browse_state = self._original_kit_browse_state
 

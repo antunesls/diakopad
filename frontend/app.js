@@ -109,34 +109,12 @@
     settingLooperQuantize: document.getElementById("setting-looper-quantize"),
     fullRestartBtn: document.getElementById("full-restart-btn"),
     clearAllPadsBtn: document.getElementById("clear-all-pads-btn"),
-    controllerBindingsLooperRecordToggle: document.getElementById("controller-bindings-looper_record_toggle"),
-    controllerLearnBtnLooperRecordToggle: document.getElementById("controller-learn-btn-looper_record_toggle"),
-    controllerBindingsPanic: document.getElementById("controller-bindings-panic"),
-    controllerLearnBtnPanic: document.getElementById("controller-learn-btn-panic"),
-    controllerBindingsTapTempo: document.getElementById("controller-bindings-tap_tempo"),
-    controllerLearnBtnTapTempo: document.getElementById("controller-learn-btn-tap_tempo"),
-    controllerBindingsLooperPlayToggle: document.getElementById("controller-bindings-looper_play_toggle"),
-    controllerLearnBtnLooperPlayToggle: document.getElementById("controller-learn-btn-looper_play_toggle"),
-    controllerBindingsLooperOverdubToggle: document.getElementById("controller-bindings-looper_overdub_toggle"),
-    controllerLearnBtnLooperOverdubToggle: document.getElementById("controller-learn-btn-looper_overdub_toggle"),
-    controllerBindingsSceneNext: document.getElementById("controller-bindings-scene_next"),
-    controllerLearnBtnSceneNext: document.getElementById("controller-learn-btn-scene_next"),
-    controllerBindingsScenePrev: document.getElementById("controller-bindings-scene_prev"),
-    controllerLearnBtnScenePrev: document.getElementById("controller-learn-btn-scene_prev"),
-    controllerBindingsKitBrowseToggle: document.getElementById("controller-bindings-kit_browse_toggle"),
-    controllerLearnBtnKitBrowseToggle: document.getElementById("controller-learn-btn-kit_browse_toggle"),
-    controllerBindingsKitBrowseUp: document.getElementById("controller-bindings-kit_browse_up"),
-    controllerLearnBtnKitBrowseUp: document.getElementById("controller-learn-btn-kit_browse_up"),
-    controllerBindingsKitBrowseDown: document.getElementById("controller-bindings-kit_browse_down"),
-    controllerLearnBtnKitBrowseDown: document.getElementById("controller-learn-btn-kit_browse_down"),
-    controllerBindingsKitBrowseLeft: document.getElementById("controller-bindings-kit_browse_left"),
-    controllerLearnBtnKitBrowseLeft: document.getElementById("controller-learn-btn-kit_browse_left"),
-    controllerBindingsKitBrowseRight: document.getElementById("controller-bindings-kit_browse_right"),
-    controllerLearnBtnKitBrowseRight: document.getElementById("controller-learn-btn-kit_browse_right"),
-    controllerBindingsKitBrowseConfirm: document.getElementById("controller-bindings-kit_browse_confirm"),
-    controllerLearnBtnKitBrowseConfirm: document.getElementById("controller-learn-btn-kit_browse_confirm"),
-    controllerBindingsKitBrowseBack: document.getElementById("controller-bindings-kit_browse_back"),
-    controllerLearnBtnKitBrowseBack: document.getElementById("controller-learn-btn-kit_browse_back"),
+    midiMapFilter: document.getElementById("midi-map-filter"),
+    midiMapAddKnobBtn: document.getElementById("midi-map-add-knob-btn"),
+    midiLearnBanner: document.getElementById("midi-learn-banner"),
+    midiLearnBannerText: document.getElementById("midi-learn-banner-text"),
+    midiLearnCancelBtn: document.getElementById("midi-learn-cancel-btn"),
+    midiMapSections: document.getElementById("midi-map-sections"),
     kitBrowseBanner: document.getElementById("kit-browse-banner"),
     kitBrowseModal: document.getElementById("kit-browse-modal"),
     kitBrowseModalEyebrow: document.getElementById("kit-browse-modal-eyebrow"),
@@ -1551,93 +1529,270 @@
     });
   });
 
-  const CONTROLLER_ACTION_ELS = {
-    panic: {
-      chips: el.controllerBindingsPanic,
-      btn: el.controllerLearnBtnPanic,
-    },
-    tap_tempo: {
-      chips: el.controllerBindingsTapTempo,
-      btn: el.controllerLearnBtnTapTempo,
-    },
-    looper_record_toggle: {
-      chips: el.controllerBindingsLooperRecordToggle,
-      btn: el.controllerLearnBtnLooperRecordToggle,
-    },
-    looper_play_toggle: {
-      chips: el.controllerBindingsLooperPlayToggle,
-      btn: el.controllerLearnBtnLooperPlayToggle,
-    },
-    looper_overdub_toggle: {
-      chips: el.controllerBindingsLooperOverdubToggle,
-      btn: el.controllerLearnBtnLooperOverdubToggle,
-    },
-    scene_next: {
-      chips: el.controllerBindingsSceneNext,
-      btn: el.controllerLearnBtnSceneNext,
-    },
-    scene_prev: {
-      chips: el.controllerBindingsScenePrev,
-      btn: el.controllerLearnBtnScenePrev,
-    },
-    kit_browse_toggle: {
-      chips: el.controllerBindingsKitBrowseToggle,
-      btn: el.controllerLearnBtnKitBrowseToggle,
-    },
-    kit_browse_up: {
-      chips: el.controllerBindingsKitBrowseUp,
-      btn: el.controllerLearnBtnKitBrowseUp,
-    },
-    kit_browse_down: {
-      chips: el.controllerBindingsKitBrowseDown,
-      btn: el.controllerLearnBtnKitBrowseDown,
-    },
-    kit_browse_left: {
-      chips: el.controllerBindingsKitBrowseLeft,
-      btn: el.controllerLearnBtnKitBrowseLeft,
-    },
-    kit_browse_right: {
-      chips: el.controllerBindingsKitBrowseRight,
-      btn: el.controllerLearnBtnKitBrowseRight,
-    },
-    kit_browse_confirm: {
-      chips: el.controllerBindingsKitBrowseConfirm,
-      btn: el.controllerLearnBtnKitBrowseConfirm,
-    },
-    kit_browse_back: {
-      chips: el.controllerBindingsKitBrowseBack,
-      btn: el.controllerLearnBtnKitBrowseBack,
-    },
-  };
+  // Single registry for every dedicated controller action, rendered (with the
+  // pads' notes and the knob CCs) in the Config tab's unified MIDI map. The
+  // old design kept one static HTML row, two el.* bindings and a
+  // CONTROLLER_ACTION_ELS entry per action - three places to edit by hand
+  // for every new action; here it's one.
+  const MIDI_ACTIONS = [
+    { action: "looper_record_toggle", label: "Gravar (Looper)", desc: "Abre a aba Looper e inicia/para a gravação da trilha armada.", category: "looper" },
+    { action: "looper_play_toggle", label: "Play (Looper)", desc: "Toca/para o ciclo do looper sem apagar nada — \"Limpar\" apaga.", category: "looper" },
+    { action: "looper_overdub_toggle", label: "Sobrepor (Looper)", desc: "Entra/sai da sobreposição sobre a trilha armada que já está tocando.", category: "looper" },
+    { action: "scene_next", label: "Próxima cena", desc: "Avança a cena da aba Performance em segundo plano, sem trocar de aba. Aceita vários botões.", category: "scenes" },
+    { action: "scene_prev", label: "Cena anterior", desc: "Volta a cena da aba Performance em segundo plano. Aceita vários botões.", category: "scenes" },
+    { action: "panic", label: "Panic", desc: "Silencia tudo, para transports e muta o master, igual ao botão PANIC.", category: "system" },
+    { action: "tap_tempo", label: "Tap do metrônomo", desc: "Bata no botão físico no tempo da música para ajustar o BPM global.", category: "system" },
+    { action: "kit_browse_toggle", label: "Navegar kits", desc: "Abre a navegação de kits: escolha o pad a editar, troque kit/som nele e confirme.", category: "kit_browse" },
+    { action: "kit_browse_up", label: "Navegar kits: kit anterior", desc: "Opcional — padrão já é o canto superior-esquerdo do grid (pad 13).", category: "kit_browse" },
+    { action: "kit_browse_down", label: "Navegar kits: próximo kit", desc: "Opcional — padrão é o canto superior-direito (pad 16).", category: "kit_browse" },
+    { action: "kit_browse_left", label: "Navegar kits: som anterior", desc: "Opcional — padrão é o topo, segunda posição (pad 14).", category: "kit_browse" },
+    { action: "kit_browse_right", label: "Navegar kits: próximo som", desc: "Opcional — padrão é o topo, terceira posição (pad 15).", category: "kit_browse" },
+    { action: "kit_browse_confirm", label: "Navegar kits: confirmar", desc: "Opcional — padrão é o canto inferior-direito (pad 4).", category: "kit_browse" },
+    { action: "kit_browse_back", label: "Navegar kits: voltar", desc: "Opcional — padrão é o canto inferior-esquerdo (pad 1).", category: "kit_browse" },
+  ];
 
-  function renderControllerActions() {
-    for (const [action, els] of Object.entries(CONTROLLER_ACTION_ELS)) {
-      const bindings = state.controllerActions.bindings[action] || [];
-      els.chips.innerHTML = bindings.length
-        ? ""
-        : `<span class="controller-binding-empty">Nenhum controle vinculado ainda.</span>`;
+  const MIDI_SECTIONS = [
+    { key: "looper", title: "Looper" },
+    { key: "scenes", title: "Cenas" },
+    { key: "system", title: "Sistema" },
+    { key: "kit_browse", title: "Navegação de kits (opcional)" },
+    { key: "pads", title: "Pads — notas" },
+    { key: "knobs", title: "Knobs — CCs" },
+  ];
+
+  // In-memory only: the kit-browse group starts collapsed so the optional
+  // navigation buttons don't push Panic/Looper/Scenes below the fold.
+  const midiSectionCollapsed = { kit_browse: true };
+  let midiLearnCancelHandler = null;
+
+  // Same octave math as the topbar's live MIDI indicator (showMidiNote).
+  function midiNoteChipLabel(number) {
+    return `Nota ${number} · Oitava ${Math.floor(number / 12) - 2}`;
+  }
+
+  function midiFilterText() {
+    return el.midiMapFilter.value.trim().toLowerCase();
+  }
+
+  function renderMidiMap() {
+    const filter = midiFilterText();
+    el.midiMapSections.innerHTML = "";
+    for (const section of MIDI_SECTIONS) {
+      const cards = midiSectionCards(section.key, filter);
+      if (filter && cards.length === 0) continue; // a filter hides empty sections
+      el.midiMapSections.appendChild(midiSectionEl(section, cards, filter));
+    }
+    updateMidiLearnBanner();
+  }
+
+  function midiSectionCards(key, filter) {
+    if (key === "pads") return state.pads.map((pad) => midiPadCard(pad, filter)).filter(Boolean);
+    if (key === "knobs") return state.knobs.map((k) => midiKnobCard(k, filter)).filter(Boolean);
+    return MIDI_ACTIONS.filter((a) => a.category === key)
+      .map((a) => midiActionCard(a, filter))
+      .filter(Boolean);
+  }
+
+  function midiSectionEl(section, cards, filter) {
+    const wrap = document.createElement("section");
+    wrap.className = "midi-map-section";
+    // While filtering, collapse is suspended: matches must stay visible.
+    wrap.classList.toggle("collapsed", !filter && !!midiSectionCollapsed[section.key]);
+
+    const header = document.createElement("button");
+    header.type = "button";
+    header.className = "midi-map-section-header";
+    const title = document.createElement("span");
+    title.textContent = section.title;
+    const count = document.createElement("span");
+    count.className = "midi-map-section-count";
+    count.textContent = `${cards.length}`;
+    const chevron = document.createElement("span");
+    chevron.className = "midi-map-chevron";
+    chevron.textContent = "▾";
+    header.append(title, count, chevron);
+    header.addEventListener("click", () => {
+      midiSectionCollapsed[section.key] = !midiSectionCollapsed[section.key];
+      renderMidiMap();
+    });
+
+    const grid = document.createElement("div");
+    grid.className = "midi-map-cards";
+    for (const card of cards) grid.appendChild(card);
+
+    wrap.append(header, grid);
+    return wrap;
+  }
+
+  function midiActionCard(entry, filter) {
+    const bindings = state.controllerActions.bindings[entry.action] || [];
+    const searchable = [entry.label, entry.action, ...bindings.map((b) => `${b.midi_type} ${b.number}`)]
+      .join(" ")
+      .toLowerCase();
+    if (filter && !searchable.includes(filter)) return null;
+
+    const card = document.createElement("div");
+    card.className = "midi-card";
+    const waiting = state.controllerActions.pending_learn === entry.action;
+    if (waiting) card.classList.add("waiting");
+
+    const title = document.createElement("div");
+    title.className = "midi-card-title";
+    title.textContent = entry.label;
+
+    const desc = document.createElement("div");
+    desc.className = "midi-card-desc";
+    desc.textContent = entry.desc;
+
+    const chips = document.createElement("div");
+    chips.className = "controller-bindings-chips";
+    if (!bindings.length) {
+      chips.innerHTML = `<span class="controller-binding-empty">Nenhum controle vinculado.</span>`;
+    } else {
       for (const b of bindings) {
         const chip = document.createElement("span");
         chip.className = "controller-binding-chip";
-        chip.innerHTML = `${b.midi_type === "note" ? "Nota" : "CC"} ${b.number} <button class="icon-btn delete-btn" title="Remover">✕</button>`;
+        chip.innerHTML = `${b.midi_type === "note" ? midiNoteChipLabel(b.number) : `CC ${b.number}`} <button class="icon-btn delete-btn" title="Remover">✕</button>`;
         chip.querySelector(".delete-btn").addEventListener("click", () => {
           fetch(`/api/controller-actions/bindings/${b.id}`, { method: "DELETE" });
         });
-        els.chips.appendChild(chip);
+        chips.appendChild(chip);
       }
-      const waiting = state.controllerActions.pending_learn === action;
-      els.btn.textContent = waiting ? "Aperte o botão..." : "Aprender";
-      els.btn.classList.toggle("waiting", waiting);
     }
-  }
 
-  for (const [action, els] of Object.entries(CONTROLLER_ACTION_ELS)) {
-    els.btn.addEventListener("click", () => {
-      const waiting = state.controllerActions.pending_learn === action;
-      const endpoint = waiting ? "/api/controller-actions/learn/cancel" : `/api/controller-actions/${action}/learn`;
+    const actions = document.createElement("div");
+    actions.className = "midi-card-actions";
+    const learnBtn = document.createElement("button");
+    learnBtn.type = "button";
+    learnBtn.className = "secondary-btn";
+    learnBtn.classList.toggle("waiting", waiting);
+    learnBtn.textContent = waiting ? "Aperte o botão..." : "Aprender";
+    learnBtn.addEventListener("click", () => {
+      const endpoint = waiting
+        ? "/api/controller-actions/learn/cancel"
+        : `/api/controller-actions/${entry.action}/learn`;
       fetch(endpoint, { method: "POST" });
     });
+    actions.appendChild(learnBtn);
+    if (bindings.length) {
+      const clearBtn = document.createElement("button");
+      clearBtn.type = "button";
+      clearBtn.className = "secondary-btn";
+      clearBtn.textContent = "Limpar";
+      clearBtn.addEventListener("click", () => {
+        for (const b of bindings) fetch(`/api/controller-actions/bindings/${b.id}`, { method: "DELETE" });
+      });
+      actions.appendChild(clearBtn);
+    }
+
+    card.append(title, desc, chips, actions);
+    return card;
   }
+
+  function midiPadCard(pad, filter) {
+    const searchable = `pad ${pad.pad_number} ${pad.display_name || ""} nota ${pad.midi_note ?? ""}`
+      .trim()
+      .toLowerCase();
+    if (filter && !searchable.includes(filter)) return null;
+
+    const card = document.createElement("div");
+    card.className = "midi-card";
+    const waiting = state.pendingNoteLearn === pad.pad_number;
+    if (waiting) card.classList.add("waiting");
+
+    const title = document.createElement("div");
+    title.className = "midi-card-title";
+    title.textContent = `Pad ${pad.pad_number}${pad.display_name ? ` · ${pad.display_name}` : ""}`;
+
+    const desc = document.createElement("div");
+    desc.className = "midi-card-desc";
+    desc.textContent = "Nota MIDI que dispara este pad.";
+
+    const chips = document.createElement("div");
+    chips.className = "controller-bindings-chips";
+    chips.innerHTML = pad.midi_note == null
+      ? `<span class="controller-binding-empty">Sem nota aprendida.</span>`
+      : `<span class="controller-binding-chip">${midiNoteChipLabel(pad.midi_note)}</span>`;
+
+    const actions = document.createElement("div");
+    actions.className = "midi-card-actions";
+    const learnBtn = document.createElement("button");
+    learnBtn.type = "button";
+    learnBtn.className = "secondary-btn";
+    learnBtn.classList.toggle("waiting", waiting);
+    learnBtn.textContent = waiting ? "Bata o pad..." : "Aprender";
+    learnBtn.addEventListener("click", () => {
+      const endpoint = waiting
+        ? `/api/pads/${pad.pad_number}/note/learn/cancel`
+        : `/api/pads/${pad.pad_number}/note/learn`;
+      fetch(endpoint, { method: "POST" });
+    });
+    actions.appendChild(learnBtn);
+
+    card.append(title, desc, chips, actions);
+    return card;
+  }
+
+  function midiKnobCard(k, filter) {
+    const searchable = `cc ${k.cc_number} ${k.label}`.toLowerCase();
+    if (filter && !searchable.includes(filter)) return null;
+
+    const card = document.createElement("div");
+    card.className = "midi-card";
+
+    const title = document.createElement("div");
+    title.className = "midi-card-title";
+    title.textContent = `CC ${k.cc_number}`;
+
+    const desc = document.createElement("div");
+    desc.className = "midi-card-desc";
+    desc.textContent = k.label;
+
+    const actions = document.createElement("div");
+    actions.className = "midi-card-actions";
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "secondary-btn";
+    removeBtn.textContent = "Remover";
+    removeBtn.addEventListener("click", () => {
+      fetch(`/api/knobs/${k.cc_number}`, { method: "DELETE" });
+    });
+    actions.appendChild(removeBtn);
+
+    card.append(title, desc, actions);
+    return card;
+  }
+
+  // One banner for the three learn flows (controller action, pad note, knob
+  // capture) so any pending assignment is always visible with a cancel at
+  // hand, no matter which section started it.
+  function updateMidiLearnBanner() {
+    const pendingAction = state.controllerActions.pending_learn;
+    const pendingPad = state.pendingNoteLearn;
+    let text = null;
+    let cancel = null;
+    if (pendingAction) {
+      const entry = MIDI_ACTIONS.find((a) => a.action === pendingAction);
+      text = `Aperte o botão/pad físico para vincular: ${entry ? entry.label : pendingAction}`;
+      cancel = () => fetch("/api/controller-actions/learn/cancel", { method: "POST" });
+    } else if (pendingPad != null) {
+      text = `Bata no pad físico para aprender a nota do Pad ${pendingPad}`;
+      cancel = () => fetch(`/api/pads/${pendingPad}/note/learn/cancel`, { method: "POST" });
+    } else if (state.pendingLearn && knobPicker.step === "capture") {
+      text = "Gire o knob físico para concluir a atribuição";
+      cancel = () => closeKnobModal();
+    }
+    midiLearnCancelHandler = cancel;
+    el.midiLearnBanner.classList.toggle("hidden", !text);
+    if (text) el.midiLearnBannerText.textContent = text;
+  }
+
+  el.midiLearnCancelBtn.addEventListener("click", () => {
+    if (midiLearnCancelHandler) midiLearnCancelHandler();
+  });
+  el.midiMapFilter.addEventListener("input", renderMidiMap);
+  // Reuses the Knobs tab's two-step picker modal (target -> param -> capture).
+  el.midiMapAddKnobBtn.addEventListener("click", openKnobStepTarget);
 
   function playPreview(soundId) {
     el.previewAudio.src = `/api/sounds/${soundId}/audio`;
@@ -1979,9 +2134,11 @@
         renderSoundList();
         renderVolumes();
         renderEffects();
+        renderMidiMap();
         if (!el.modal.classList.contains("hidden")) renderNoteLearnButton();
       } else if (msg.type === "note_learn") {
         state.pendingNoteLearn = msg.pending_pad;
+        renderMidiMap();
         if (!el.modal.classList.contains("hidden")) renderNoteLearnButton();
       } else if (msg.type === "pad_hit") {
         flashPadHit(msg.pad_number);
@@ -1995,6 +2152,7 @@
         state.pendingLearn = msg.pending_learn;
         renderKnobs();
         renderEffects();
+        renderMidiMap();
         if (knobPicker.step === "capture" && !state.pendingLearn) {
           el.knobModal.classList.add("hidden");
           knobPicker.step = null;
@@ -2059,7 +2217,7 @@
         renderLooper();
       } else if (msg.type === "controller_actions") {
         state.controllerActions = { bindings: msg.bindings, pending_learn: msg.pending_learn };
-        renderControllerActions();
+        renderMidiMap();
       } else if (msg.type === "navigate") {
         switchView(msg.view);
       } else if (msg.type === "kit_browse") {
@@ -2115,13 +2273,17 @@
     counter.textContent = `Kit ${kb.kit_index + 1}/${kb.kit_count} · Som ${soundPosition}/${kb.sound_count}`;
     el.kitBrowseModalCategories.appendChild(counter);
 
+    let currentKitItem = null;
     kb.kits.forEach((kit, idx) => {
       const li = document.createElement("li");
-      li.className = "kit-browse-modal-list-item" + (idx === kb.kit_index ? " current" : "");
+      const isCurrent = idx === kb.kit_index;
+      li.className = "kit-browse-modal-list-item" + (isCurrent ? " current" : "");
       li.textContent = kit.name;
       el.kitBrowseModalKitList.appendChild(li);
+      if (isCurrent) currentKitItem = li;
     });
 
+    let currentSoundItem = null;
     if (kb.sounds.length === 0) {
       const li = document.createElement("li");
       li.className = "kit-browse-modal-list-empty";
@@ -2134,7 +2296,13 @@
       li.className = "kit-browse-modal-list-item" + (isCandidate ? " current" : "");
       li.innerHTML = `<span class="kit-browse-modal-sound-pad">#${sound.pad_number}</span> ${sound.display_name}`;
       el.kitBrowseModalSoundList.appendChild(li);
+      if (isCandidate) currentSoundItem = li;
     }
+
+    // Kit browsing is driven by physical controls, so keep both highlighted
+    // entries visible without moving lists whose selection is already shown.
+    if (currentKitItem) currentKitItem.scrollIntoView({ block: "nearest" });
+    if (currentSoundItem) currentSoundItem.scrollIntoView({ block: "nearest" });
   }
 
   // Purely visual aid so the pad grid reflects kit-browse mode even when
@@ -2215,7 +2383,7 @@
     renderSceneStrip();
     renderSceneList();
     renderPatternStrip();
-    renderControllerActions();
+    renderMidiMap();
     await loadSoundBrowser();
     renderVolumes();
     renderSettings();

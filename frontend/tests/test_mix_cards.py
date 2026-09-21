@@ -144,21 +144,42 @@ class MixCardsTest(unittest.TestCase):
             html,
         )
 
-    def test_config_expoe_midi_learn_para_panic(self):
+    def test_config_tem_mapa_midi_unificado_com_filtro_e_banner(self):
         html = (FRONTEND / "index.html").read_text(encoding="utf-8")
         app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+        css = (FRONTEND / "style.css").read_text(encoding="utf-8")
 
-        self.assertIn('data-controller-action="panic"', html)
-        self.assertIn('id="controller-learn-btn-panic"', html)
-        self.assertIn("panic:", app)
+        self.assertIn('id="midi-map-filter"', html)
+        self.assertIn('id="midi-learn-banner"', html)
+        self.assertIn('id="midi-map-sections"', html)
+        self.assertIn('id="midi-map-add-knob-btn"', html)
+        # As ações agora vêm do registry em JS, não de linhas estáticas no HTML.
+        self.assertNotIn('data-controller-action="panic"', html)
+        self.assertIn("const MIDI_ACTIONS = [", app)
+        self.assertIn('action: "panic"', app)
+        self.assertIn('action: "tap_tempo"', app)
+        self.assertIn("function renderMidiMap()", app)
+        self.assertIn("function midiNoteChipLabel(number)", app)
+        self.assertIn("· Oitava ${Math.floor(number / 12) - 2}", app)
+        self.assertIn("updateMidiLearnBanner", app)
+        self.assertIn(".midi-map-cards", css)
+        self.assertIn(".midi-map-section.collapsed .midi-map-cards { display: none; }", css)
+        self.assertIn(".midi-learn-banner", css)
 
-    def test_config_expoe_midi_learn_para_o_tap_do_metronomo(self):
-        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+    def test_mapa_midi_cobre_pads_e_knobs_e_colapsa_kit_browse(self):
         app = (FRONTEND / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('data-controller-action="tap_tempo"', html)
-        self.assertIn('id="controller-learn-btn-tap_tempo"', html)
-        self.assertIn("tap_tempo:", app)
+        # Seção de pads reusa o note-learn existente.
+        self.assertIn("function midiPadCard(", app)
+        self.assertIn("`/api/pads/${pad.pad_number}/note/learn`", app)
+        self.assertIn("`/api/pads/${pendingPad}/note/learn/cancel`", app)
+        # Seção de knobs lista os CCs com remoção individual.
+        self.assertIn("function midiKnobCard(", app)
+        self.assertIn("`/api/knobs/${k.cc_number}`", app)
+        # Navegação de kits começa colapsada.
+        self.assertIn("kit_browse: true", app)
+        # "Limpar" remove todos os vínculos de uma ação de uma vez.
+        self.assertIn("clearBtn.textContent = \"Limpar\"", app)
 
     def test_biblioteca_divide_a_tela_entre_sons_e_lista_de_cenas(self):
         html = (FRONTEND / "index.html").read_text(encoding="utf-8")
@@ -211,6 +232,14 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn(".looper-track.selected", css)
         self.assertIn(".looper-track.muted", css)
         self.assertIn(".looper-volume", css)
+
+    def test_modal_de_kits_mantem_as_selecoes_atuais_visiveis(self):
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("let currentKitItem = null;", app)
+        self.assertIn("let currentSoundItem = null;", app)
+        self.assertIn('currentKitItem.scrollIntoView({ block: "nearest" })', app)
+        self.assertIn('currentSoundItem.scrollIntoView({ block: "nearest" })', app)
 
 
 if __name__ == "__main__":

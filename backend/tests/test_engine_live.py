@@ -648,9 +648,77 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
 
                 dispatch.assert_awaited_once_with("kit_browse_toggle")
         finally:
-            diakopad_app._bound_note_last_dispatch.clear()
+            diakopad_app._note_last_dispatch.clear()
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
+
+    @staticmethod
+    def _browsing_state_with_three_sounds():
+        # Pad 15 maps to "right" (next sound); three sounds so a single step
+        # (1 -> 2) is distinguishable from an undebounced double step (1 -> 3)
+        # without any wraparound muddying the assertion.
+        return {
+            "target_pad": 1,
+            "kits": [
+                {
+                    "id": 1,
+                    "name": "Kit",
+                    "pads": [
+                        {"pad_number": 1, "sample_id": 11},
+                        {"pad_number": 2, "sample_id": 12},
+                        {"pad_number": 3, "sample_id": 13},
+                    ],
+                }
+            ],
+            "kit_idx": 0,
+            "candidate_pad_number": 1,
+        }
+
+    def _with_kit_browse_right_pad(self):
+        original_notes = diakopad_app._pad_notes
+        diakopad_app._pad_notes = {36: [15]}  # 15 = right (next sound)
+        return original_notes
+
+    async def test_kit_browse_note_debounces_hardware_double_fire(self):
+        # The same SMC-PAD firmware double-fire as the bound-action debounce
+        # above, on the kit-browse navigation path: undebounced, every
+        # physical tap stepped kits/sounds twice ("jumping two by two").
+        original_notes = self._with_kit_browse_right_pad()
+        diakopad_app._kit_browse_state = self._browsing_state_with_three_sounds()
+        try:
+            with (
+                patch("app._broadcast_kit_browse", new=AsyncMock()),
+                patch("app._kit_browse_maybe_preview", new=AsyncMock()),
+            ):
+                diakopad_app._handle_note(36, 100)
+                diakopad_app._handle_note(36, 100)  # firmware double-fire, ms later
+                await asyncio.sleep(0)
+
+            self.assertEqual(diakopad_app._kit_browse_state["candidate_pad_number"], 2)
+        finally:
+            diakopad_app._pad_notes = original_notes
+            diakopad_app._kit_browse_state = None
+            diakopad_app._note_last_dispatch.clear()
+
+    async def test_kit_browse_note_redispatches_after_the_debounce_window(self):
+        original_notes = self._with_kit_browse_right_pad()
+        diakopad_app._kit_browse_state = self._browsing_state_with_three_sounds()
+        try:
+            with (
+                patch("app._broadcast_kit_browse", new=AsyncMock()),
+                patch("app._kit_browse_maybe_preview", new=AsyncMock()),
+            ):
+                diakopad_app._handle_note(36, 100)
+                await asyncio.sleep(0)
+                time.sleep(diakopad_app.BOUND_NOTE_DEBOUNCE_SECONDS + 0.01)  # past the window
+                diakopad_app._handle_note(36, 100)  # a deliberate second tap
+                await asyncio.sleep(0)
+
+            self.assertEqual(diakopad_app._kit_browse_state["candidate_pad_number"], 3)
+        finally:
+            diakopad_app._pad_notes = original_notes
+            diakopad_app._kit_browse_state = None
+            diakopad_app._note_last_dispatch.clear()
 
     async def test_handle_note_captures_a_pending_learn_instead_of_dispatching(self):
         temp_ctx, original_db_path = self._with_temp_db()

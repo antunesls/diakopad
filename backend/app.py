@@ -226,9 +226,12 @@ KNOB_DEBOUNCE_SECONDS = 0.3
 # already-handled velocity<=0 release encoding, just a hardware/firmware
 # double-fire a few ms apart. For a note bound to a toggle-style controller
 # action (kit_browse_toggle, panic, ...) that turns one press into an
-# immediate on/off no-op, so the SAME note re-dispatching within this window
-# is swallowed. Far below any realistic human tap_tempo interval.
-_bound_note_last_dispatch: dict[int, float] = {}
+# immediate on/off no-op, and in kit-browse navigation it steps kits/sounds
+# two at a time - so the SAME note re-dispatching within this window is
+# swallowed, in both paths. Far below any realistic human tap_tempo interval,
+# and menu navigation has no legitimate repeats this fast (playing pads
+# deliberately stays undebounced: a fast drum roll is real musical input).
+_note_last_dispatch: dict[int, float] = {}
 BOUND_NOTE_DEBOUNCE_SECONDS = 0.15
 
 
@@ -277,14 +280,22 @@ def _handle_note(note: int, velocity: int) -> None:
     bound_action = storage.get_action_for_signal("note", note)
     if bound_action is not None:
         now = time.monotonic()
-        last = _bound_note_last_dispatch.get(note, 0.0)
-        _bound_note_last_dispatch[note] = now
+        last = _note_last_dispatch.get(note, 0.0)
+        _note_last_dispatch[note] = now
         if now - last < BOUND_NOTE_DEBOUNCE_SECONDS:
             return
         asyncio.create_task(_dispatch_controller_action(bound_action))
         return
 
     if _kit_browse_state is not None:
+        # Same genuine-double-Note-On suppression as the bound-action branch
+        # above: without it each physical tap stepped kits/sounds two at a
+        # time in the browse modal.
+        now = time.monotonic()
+        last = _note_last_dispatch.get(note, 0.0)
+        _note_last_dispatch[note] = now
+        if now - last < BOUND_NOTE_DEBOUNCE_SECONDS:
+            return
         asyncio.create_task(_handle_kit_browse_note(note))
         return
 

@@ -312,6 +312,29 @@ todos os mapeamentos atuais, com opção de remover um por um ou limpar todos.
 Trocar/esvaziar um slot de efeito remove automaticamente qualquer knob que
 apontava pra um parâmetro dele.
 
+## Config e Mapa MIDI
+
+A aba **Config** reúne os ajustes do app (sustain, sensibilidade à força do
+toque, preview na navegação de kits, quantização do looper, limpar pads,
+reinício completo) e o **Mapa MIDI**: uma visão unificada de todo sinal
+MIDI vinculado ao controlador, com filtro por texto (ação, pad, parâmetro,
+nota ou CC). Os grupos são seções de cards:
+
+- **Ações dedicadas** (Looper, Cenas, Sistema): vinculam botões físicos
+  sem equivalente na tela (gravar/play/sobrepor do looper, trocar de cena,
+  Panic, tap tempo). Cada card mostra os vínculos como chips ("Nota 44 ·
+  Oitava 2" ou "CC 20"), com remoção individual, "Limpar" pra remover todos
+  de uma vez e "Aprender" pra vincular um novo.
+- **Navegação de kits** (7 ações opcionais, colapsada por padrão).
+- **Pads — notas**: a nota MIDI de cada um dos 16 pads, com aprendizado
+  direto pelo mapa (além do caminho pelo modal do pad).
+- **Knobs — CCs**: cada CC atribuído com seu alvo (ex.: "Global · Tempo"),
+  remoção individual e "+ Novo knob" que abre o mesmo seletor da aba Knobs.
+
+Durante qualquer aprendizado (ação, nota de pad ou captura de knob) um
+banner fixo mostra o que está pendente e um atalho pra cancelar, com o card
+correspondente destacado.
+
 ## Estrutura
 
 ```

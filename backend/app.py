@@ -189,7 +189,7 @@ _KIT_BROWSE_CONFIRM_PAD = 4
 # pad-note-learn/pad-trigger in _handle_note and before knob-learn/CC-target
 # in _handle_cc, so a dedicated control never accidentally plays a pad or
 # tweaks a knob.
-CONTROLLER_ACTIONS = ("scene_next", "scene_prev", "looper_record_toggle", "looper_play_toggle", "looper_overdub_toggle", "panic", "tap_tempo", "kit_browse_toggle")
+CONTROLLER_ACTIONS = ("scene_next", "scene_prev", "looper_record_toggle", "looper_play_toggle", "looper_overdub_toggle", "panic", "tap_tempo", "kit_browse_toggle", "kit_browse_up", "kit_browse_down", "kit_browse_left", "kit_browse_right", "kit_browse_confirm", "kit_browse_back")
 _pending_controller_learn: Optional[str] = None  # action waiting for a physical signal, or None
 _scene_switch_lock = asyncio.Lock()
 # Last CC value seen per CC-bound controller action. Buttons fire on the
@@ -588,6 +588,16 @@ async def _dispatch_controller_action(action: str) -> None:
             await _kit_browse_arm()
         else:
             await _kit_browse_back()
+    elif action in ("kit_browse_up", "kit_browse_down", "kit_browse_left", "kit_browse_right"):
+        # Optional alternative to the fixed pad-corner layout: bind a
+        # dedicated physical control (e.g. the SMC-PAD's side arrow) to one
+        # of these instead of repurposing a pad. A no-op while not actively
+        # browsing (_kit_browse_nav's own guard).
+        await _kit_browse_nav(action.removeprefix("kit_browse_"))
+    elif action == "kit_browse_confirm":
+        await _kit_browse_confirm()
+    elif action == "kit_browse_back":
+        await _kit_browse_back()
 
 
 def _handle_cc(control: int, value: int) -> None:

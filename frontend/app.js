@@ -124,7 +124,24 @@
     controllerLearnBtnScenePrev: document.getElementById("controller-learn-btn-scene_prev"),
     controllerBindingsKitBrowseToggle: document.getElementById("controller-bindings-kit_browse_toggle"),
     controllerLearnBtnKitBrowseToggle: document.getElementById("controller-learn-btn-kit_browse_toggle"),
+    controllerBindingsKitBrowseUp: document.getElementById("controller-bindings-kit_browse_up"),
+    controllerLearnBtnKitBrowseUp: document.getElementById("controller-learn-btn-kit_browse_up"),
+    controllerBindingsKitBrowseDown: document.getElementById("controller-bindings-kit_browse_down"),
+    controllerLearnBtnKitBrowseDown: document.getElementById("controller-learn-btn-kit_browse_down"),
+    controllerBindingsKitBrowseLeft: document.getElementById("controller-bindings-kit_browse_left"),
+    controllerLearnBtnKitBrowseLeft: document.getElementById("controller-learn-btn-kit_browse_left"),
+    controllerBindingsKitBrowseRight: document.getElementById("controller-bindings-kit_browse_right"),
+    controllerLearnBtnKitBrowseRight: document.getElementById("controller-learn-btn-kit_browse_right"),
+    controllerBindingsKitBrowseConfirm: document.getElementById("controller-bindings-kit_browse_confirm"),
+    controllerLearnBtnKitBrowseConfirm: document.getElementById("controller-learn-btn-kit_browse_confirm"),
+    controllerBindingsKitBrowseBack: document.getElementById("controller-bindings-kit_browse_back"),
+    controllerLearnBtnKitBrowseBack: document.getElementById("controller-learn-btn-kit_browse_back"),
     kitBrowseBanner: document.getElementById("kit-browse-banner"),
+    kitBrowseModal: document.getElementById("kit-browse-modal"),
+    kitBrowseModalEyebrow: document.getElementById("kit-browse-modal-eyebrow"),
+    kitBrowseModalKit: document.getElementById("kit-browse-modal-kit"),
+    kitBrowseModalCategory: document.getElementById("kit-browse-modal-category"),
+    kitBrowseModalSound: document.getElementById("kit-browse-modal-sound"),
     sequencerPlayBtn: document.getElementById("sequencer-play-btn"),
     sequencerBpm: document.getElementById("sequencer-bpm"),
     sequencerClearBtn: document.getElementById("sequencer-clear-btn"),
@@ -1426,6 +1443,30 @@
       chips: el.controllerBindingsKitBrowseToggle,
       btn: el.controllerLearnBtnKitBrowseToggle,
     },
+    kit_browse_up: {
+      chips: el.controllerBindingsKitBrowseUp,
+      btn: el.controllerLearnBtnKitBrowseUp,
+    },
+    kit_browse_down: {
+      chips: el.controllerBindingsKitBrowseDown,
+      btn: el.controllerLearnBtnKitBrowseDown,
+    },
+    kit_browse_left: {
+      chips: el.controllerBindingsKitBrowseLeft,
+      btn: el.controllerLearnBtnKitBrowseLeft,
+    },
+    kit_browse_right: {
+      chips: el.controllerBindingsKitBrowseRight,
+      btn: el.controllerLearnBtnKitBrowseRight,
+    },
+    kit_browse_confirm: {
+      chips: el.controllerBindingsKitBrowseConfirm,
+      btn: el.controllerLearnBtnKitBrowseConfirm,
+    },
+    kit_browse_back: {
+      chips: el.controllerBindingsKitBrowseBack,
+      btn: el.controllerLearnBtnKitBrowseBack,
+    },
   };
 
   function renderControllerActions() {
@@ -1881,6 +1922,7 @@
       } else if (msg.type === "kit_browse") {
         state.kitBrowse = msg;
         renderKitBrowseBanner();
+        renderKitBrowseModal();
         renderKitBrowseGridState();
       }
     });
@@ -1902,6 +1944,29 @@
     el.kitBrowseBanner.textContent =
       `Editando pad ${kb.target_pad} — ${kb.category} (${kb.category_index + 1}/${kb.category_count}) · ` +
       `${kb.kit.name} (${kb.kit_index + 1}/${kb.kit_count}) · som: ${soundLabel}`;
+  }
+
+  // Big, read-from-across-the-room overlay with the same info as the header
+  // banner - doesn't intercept clicks (pointer-events:none in CSS) so the
+  // pad grid underneath stays tappable for the no-hardware dev/test path.
+  function renderKitBrowseModal() {
+    const kb = state.kitBrowse;
+    if (!kb || !kb.active) {
+      el.kitBrowseModal.classList.add("hidden");
+      return;
+    }
+    el.kitBrowseModal.classList.remove("hidden");
+    if (kb.phase === "armed") {
+      el.kitBrowseModalEyebrow.textContent = "Navegar kits";
+      el.kitBrowseModalKit.textContent = "Selecione o pad pra editar";
+      el.kitBrowseModalCategory.textContent = "";
+      el.kitBrowseModalSound.textContent = "";
+      return;
+    }
+    el.kitBrowseModalEyebrow.textContent = `Editando pad ${kb.target_pad}`;
+    el.kitBrowseModalKit.textContent = `${kb.kit.name} (${kb.kit_index + 1}/${kb.kit_count})`;
+    el.kitBrowseModalCategory.textContent = `${kb.category} (${kb.category_index + 1}/${kb.category_count})`;
+    el.kitBrowseModalSound.textContent = `Som: ${kb.candidate_display_name || "nenhum"}`;
   }
 
   // Purely visual aid so the pad grid reflects kit-browse mode even when

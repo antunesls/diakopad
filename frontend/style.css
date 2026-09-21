@@ -114,6 +114,58 @@ html, body {
   white-space: nowrap;
 }
 
+/* Big, read-from-across-the-room overlay of the current kit-browse state -
+   same data as .kit-browse-banner, just large enough to see without leaning
+   over the screen. pointer-events:none so it never blocks taps on the pad
+   grid underneath (needed for the no-hardware dev/test path). */
+.kit-browse-modal {
+  position: fixed;
+  top: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  pointer-events: none;
+  background: var(--panel);
+  border: 2px solid var(--accent);
+  border-radius: 18px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  padding: 20px 32px;
+  min-width: 320px;
+  max-width: 90vw;
+  text-align: center;
+}
+.kit-browse-modal.hidden { display: none; }
+.kit-browse-modal-eyebrow {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.kit-browse-modal-kit {
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.2;
+}
+.kit-browse-modal-category {
+  font-size: 15px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+.kit-browse-modal-sound {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-top: 10px;
+}
+@media (max-width: 640px) {
+  .kit-browse-modal { top: 68px; padding: 14px 20px; min-width: 0; width: 92vw; }
+  .kit-browse-modal-kit { font-size: 22px; }
+  .kit-browse-modal-sound { font-size: 17px; }
+}
+
 .midi-note-indicator.hit {
   animation: midi-note-hit 180ms ease-out;
   border-color: #ffe36e;

@@ -2,7 +2,7 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 
 from fastapi import HTTPException
 
@@ -153,6 +153,44 @@ class KitBrowseTests(unittest.IsolatedAsyncioTestCase):
                 await diakopad_app._dispatch_controller_action("kit_browse_toggle")
             self.assertIsNone(diakopad_app._kit_browse_state)
             stop_preview.assert_awaited_once()
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    async def test_dedicated_nav_actions_route_to_the_same_nav_confirm_back_functions(self):
+        """Optional alternative to the pad-corner layout: a dedicated
+        physical control learned as kit_browse_up/down/left/right/confirm/
+        back must drive the exact same functions the pad corners do."""
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            with (
+                patch("app._kit_browse_nav", new=AsyncMock()) as nav,
+                patch("app._kit_browse_confirm", new=AsyncMock()) as confirm,
+                patch("app._kit_browse_back", new=AsyncMock()) as back,
+            ):
+                await diakopad_app._dispatch_controller_action("kit_browse_up")
+                await diakopad_app._dispatch_controller_action("kit_browse_down")
+                await diakopad_app._dispatch_controller_action("kit_browse_left")
+                await diakopad_app._dispatch_controller_action("kit_browse_right")
+                await diakopad_app._dispatch_controller_action("kit_browse_confirm")
+                await diakopad_app._dispatch_controller_action("kit_browse_back")
+
+            nav.assert_has_awaits([call("up"), call("down"), call("left"), call("right")])
+            confirm.assert_awaited_once()
+            back.assert_awaited_once()
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    async def test_dedicated_nav_actions_are_a_no_op_while_idle(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            self.assertIsNone(diakopad_app._kit_browse_state)
+            with patch("app.storage.assign_sample") as assign_sample:
+                await diakopad_app._dispatch_controller_action("kit_browse_confirm")
+                await diakopad_app._dispatch_controller_action("kit_browse_up")
+            assign_sample.assert_not_called()
+            self.assertIsNone(diakopad_app._kit_browse_state)
         finally:
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()

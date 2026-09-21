@@ -89,81 +89,105 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
--- Performance kits: a named snapshot of the full pad state (assignment +
+-- Performance scenes: a named snapshot of the full pad state (assignment +
 -- volume/pan/tone) and the per-pad effect chains, for quick switching
 -- during a show. midi_note is NOT captured - it belongs to the physical
--- controller mapping, not to the kit's sound.
-CREATE TABLE IF NOT EXISTS kits (
+-- controller mapping, not to the scene's sound.
+CREATE TABLE IF NOT EXISTS scenes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     created_at REAL NOT NULL,
     -- 1 = scene available for live Performance navigation, 0 = saved but
-    -- kept out of the live list (see list_active_kits).
+    -- kept out of the live list (see list_active_scenes).
     active INTEGER NOT NULL DEFAULT 1
 );
 
 -- Global (non-pad) part of a scene snapshot: the shared tempo, the metronome
 -- configuration and both transports' running state, so loading a scene
 -- restores the whole set, not just the 16 pads.
-CREATE TABLE IF NOT EXISTS kit_state (
-    kit_id INTEGER PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS scene_state (
+    scene_id INTEGER PRIMARY KEY,
     sequencer_bpm TEXT NOT NULL DEFAULT '100',
     metronome_style TEXT NOT NULL DEFAULT 'digital',
     metronome_signature TEXT NOT NULL DEFAULT '4_4',
     metronome_running TEXT NOT NULL DEFAULT '0',
     sequencer_running TEXT NOT NULL DEFAULT '0',
-    FOREIGN KEY (kit_id) REFERENCES kits(id) ON DELETE CASCADE
+    FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
 );
 
 -- Sequencer grid captured with the scene (16 x 16), same relationship
 -- pattern_steps has to patterns.
-CREATE TABLE IF NOT EXISTS kit_steps (
-    kit_id INTEGER NOT NULL,
+CREATE TABLE IF NOT EXISTS scene_steps (
+    scene_id INTEGER NOT NULL,
     pad_number INTEGER NOT NULL,
     step_index INTEGER NOT NULL,
     active INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (kit_id, pad_number, step_index),
-    FOREIGN KEY (kit_id) REFERENCES kits(id) ON DELETE CASCADE
+    PRIMARY KEY (scene_id, pad_number, step_index),
+    FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS scene_pads (
+    scene_id INTEGER NOT NULL,
+    pad_number INTEGER NOT NULL,
+    sample_id INTEGER,
+    volume_db REAL NOT NULL DEFAULT 6,
+    pan REAL NOT NULL DEFAULT 0,
+    cutoff_hz REAL,
+    PRIMARY KEY (scene_id, pad_number),
+    FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS scene_effects (
+    scene_id INTEGER NOT NULL,
+    pad_number INTEGER NOT NULL,
+    slot_index INTEGER NOT NULL,
+    plugin_id TEXT,
+    params TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (scene_id, pad_number, slot_index),
+    FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
+);
+
+-- Knob (CC) mappings captured with the scene, so switching scenes also flips
+-- the physical-knob layout that was set up for it (same one-knob-per-target,
+-- one-target-per-knob semantics as the live knob_mappings table).
+CREATE TABLE IF NOT EXISTS scene_knobs (
+    scene_id INTEGER NOT NULL,
+    cc_number INTEGER NOT NULL,
+    scope TEXT NOT NULL,
+    pad_number INTEGER,
+    param TEXT NOT NULL,
+    PRIMARY KEY (scene_id, cc_number),
+    FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
+);
+
+-- Kits: curated sound sets, distinct from scenes above - just a name plus
+-- which sample goes on which pad (up to 16, fewer is fine - a kit that only
+-- fills pads 1-8 has an "octapad feel"). No effects/knobs/volume/tempo, no
+-- active flag (hardware kit-browse mode always walks the whole catalog by
+-- category, there's no "live subset" concept the way scenes have one).
+CREATE TABLE IF NOT EXISTS kits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    category TEXT NOT NULL DEFAULT '',
+    sort_index INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    source_path TEXT
 );
 
 CREATE TABLE IF NOT EXISTS kit_pads (
     kit_id INTEGER NOT NULL,
     pad_number INTEGER NOT NULL,
     sample_id INTEGER,
-    volume_db REAL NOT NULL DEFAULT 6,
-    pan REAL NOT NULL DEFAULT 0,
-    cutoff_hz REAL,
+    display_name TEXT,
     PRIMARY KEY (kit_id, pad_number),
-    FOREIGN KEY (kit_id) REFERENCES kits(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS kit_effects (
-    kit_id INTEGER NOT NULL,
-    pad_number INTEGER NOT NULL,
-    slot_index INTEGER NOT NULL,
-    plugin_id TEXT,
-    params TEXT NOT NULL DEFAULT '{}',
-    PRIMARY KEY (kit_id, pad_number, slot_index),
-    FOREIGN KEY (kit_id) REFERENCES kits(id) ON DELETE CASCADE
-);
-
--- Knob (CC) mappings captured with the kit, so switching kits also flips
--- the physical-knob layout that was set up for it (same one-knob-per-target,
--- one-target-per-knob semantics as the live knob_mappings table).
-CREATE TABLE IF NOT EXISTS kit_knobs (
-    kit_id INTEGER NOT NULL,
-    cc_number INTEGER NOT NULL,
-    scope TEXT NOT NULL,
-    pad_number INTEGER,
-    param TEXT NOT NULL,
-    PRIMARY KEY (kit_id, cc_number),
-    FOREIGN KEY (kit_id) REFERENCES kits(id) ON DELETE CASCADE
+    FOREIGN KEY (kit_id) REFERENCES kits(id) ON DELETE CASCADE,
+    FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE SET NULL
 );
 
 -- Binds a physical MIDI signal (note or CC) to a fixed logical action, for
 -- SMC-PAD controls that have no on-screen equivalent (the "Gravar" button,
 -- the side arrow, the "bak" pad). One action can have several bindings
--- (e.g. both the arrow and "bak" pointing at "kit_next"); one signal can
+-- (e.g. both the arrow and "bak" pointing at "scene_next"); one signal can
 -- only point at one action - re-learning a signal replaces its old binding
 -- instead of adding a second one.
 CREATE TABLE IF NOT EXISTS controller_bindings (
@@ -175,7 +199,7 @@ CREATE TABLE IF NOT EXISTS controller_bindings (
 );
 
 -- Named snapshots of the sequencer_steps grid (same relationship as
--- kits/kit_pads have to pads), so a set can flip between programmed
+-- scenes/scene_pads have to pads), so a set can flip between programmed
 -- patterns instead of only ever editing the one live grid.
 CREATE TABLE IF NOT EXISTS patterns (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -219,11 +243,20 @@ DEFAULT_SETTINGS = {
     "master_muted": "0",
     "master_limiter_enabled": "1",
     "master_limiter_threshold_db": "-1",
-    # Which kit is currently loaded in the engine. Empty string = none/
-    # unknown (fresh install, or a kit deleted while it was current) - kept
-    # server-side so a hardware-triggered "next kit" knows where to advance
+    # Which scene is currently loaded in the engine. Empty string = none/
+    # unknown (fresh install, or a scene deleted while it was current) - kept
+    # server-side so a hardware-triggered "next scene" knows where to advance
     # from without depending on any one browser tab's local state.
-    "current_kit_id": "",
+    "current_scene_id": "",
+    # Kit-browse mode (see app.py's _kit_browse_* state machine): whether
+    # navigating/picking a candidate sound auto-plays it through the preview
+    # engine. Off before a performance so browsing/confirming never makes
+    # unwanted noise - a plain persistent toggle, not a MIDI-learned action.
+    "kit_browse_preview_enabled": "1",
+    # Which kit a per-pad kit-browse session last confirmed. Empty string =
+    # none yet - a fresh session then starts at the first kit of the first
+    # category. Kept server-side, same rationale as current_scene_id.
+    "kit_browse_last_kit_id": "",
 }
 
 # Default note layout: sequential from 36 (C1), matches a typical MPC-style
@@ -251,10 +284,10 @@ _SAMPLES_MIGRATIONS = [
     "ALTER TABLE samples ADD COLUMN folder TEXT NOT NULL DEFAULT ''",
 ]
 
-# kits.active was added when kits grew into full scenes with an active/inactive
-# flag; already-deployed kits default to active so the live list is unchanged.
-_KITS_MIGRATIONS = [
-    "ALTER TABLE kits ADD COLUMN active INTEGER NOT NULL DEFAULT 1",
+# scenes.active was added when scenes grew an active/inactive flag;
+# already-deployed scenes default to active so the live list is unchanged.
+_SCENES_MIGRATIONS = [
+    "ALTER TABLE scenes ADD COLUMN active INTEGER NOT NULL DEFAULT 1",
 ]
 
 
@@ -271,10 +304,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if col not in existing_sample_cols:
             conn.execute(stmt)
 
-    existing_kit_cols = {row["name"] for row in conn.execute("PRAGMA table_info(kits)")}
-    for stmt in _KITS_MIGRATIONS:
+    existing_scene_cols = {row["name"] for row in conn.execute("PRAGMA table_info(scenes)")}
+    for stmt in _SCENES_MIGRATIONS:
         col = stmt.split("ADD COLUMN")[1].split()[0]
-        if col not in existing_kit_cols:
+        if col not in existing_scene_cols:
             conn.execute(stmt)
 
     # knob_mappings gained a "scope" column (pad vs. global targets like
@@ -832,37 +865,37 @@ def apply_pattern(pattern_id: int) -> Optional[dict]:
         conn.close()
 
 
-# ── Performance kits ─────────────────────────────────────────────────────────
+# ── Performance scenes ───────────────────────────────────────────────────────
 
 
-def list_kits() -> list[dict]:
+def list_scenes() -> list[dict]:
     conn = get_connection()
     try:
         rows = conn.execute(
-            "SELECT id, name, created_at, active FROM kits ORDER BY name"
+            "SELECT id, name, created_at, active FROM scenes ORDER BY name"
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
 
 
-def list_active_kits() -> list[dict]:
+def list_active_scenes() -> list[dict]:
     """Scenes available for live Performance navigation (active = 1)."""
     conn = get_connection()
     try:
         rows = conn.execute(
-            "SELECT id, name, created_at, active FROM kits WHERE active = 1 ORDER BY name"
+            "SELECT id, name, created_at, active FROM scenes WHERE active = 1 ORDER BY name"
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
 
 
-def set_kit_active(kit_id: int, active: bool) -> bool:
+def set_scene_active(scene_id: int, active: bool) -> bool:
     conn = get_connection()
     try:
         cur = conn.execute(
-            "UPDATE kits SET active = ? WHERE id = ?", (1 if active else 0, kit_id)
+            "UPDATE scenes SET active = ? WHERE id = ?", (1 if active else 0, scene_id)
         )
         conn.commit()
         return cur.rowcount > 0
@@ -870,7 +903,7 @@ def set_kit_active(kit_id: int, active: bool) -> bool:
         conn.close()
 
 
-def save_kit(
+def save_scene(
     name: str,
     pads: list[dict],
     pad_effects: list[dict],
@@ -884,34 +917,34 @@ def save_kit(
     active flag is preserved)."""
     conn = get_connection()
     try:
-        kit_id = conn.execute("SELECT id FROM kits WHERE name = ?", (name,)).fetchone()
-        if kit_id is None:
+        scene_id = conn.execute("SELECT id FROM scenes WHERE name = ?", (name,)).fetchone()
+        if scene_id is None:
             cur = conn.execute(
-                "INSERT INTO kits (name, created_at) VALUES (?, ?)", (name, time.time())
+                "INSERT INTO scenes (name, created_at) VALUES (?, ?)", (name, time.time())
             )
-            kit_id_val = int(cur.lastrowid)
+            scene_id_val = int(cur.lastrowid)
         else:
-            kit_id_val = kit_id["id"]
-            conn.execute("DELETE FROM kit_pads WHERE kit_id = ?", (kit_id_val,))
-            conn.execute("DELETE FROM kit_effects WHERE kit_id = ?", (kit_id_val,))
-            conn.execute("DELETE FROM kit_knobs WHERE kit_id = ?", (kit_id_val,))
-            conn.execute("DELETE FROM kit_state WHERE kit_id = ?", (kit_id_val,))
-            conn.execute("DELETE FROM kit_steps WHERE kit_id = ?", (kit_id_val,))
+            scene_id_val = scene_id["id"]
+            conn.execute("DELETE FROM scene_pads WHERE scene_id = ?", (scene_id_val,))
+            conn.execute("DELETE FROM scene_effects WHERE scene_id = ?", (scene_id_val,))
+            conn.execute("DELETE FROM scene_knobs WHERE scene_id = ?", (scene_id_val,))
+            conn.execute("DELETE FROM scene_state WHERE scene_id = ?", (scene_id_val,))
+            conn.execute("DELETE FROM scene_steps WHERE scene_id = ?", (scene_id_val,))
         conn.executemany(
-            "INSERT INTO kit_pads (kit_id, pad_number, sample_id, volume_db, pan, cutoff_hz) "
+            "INSERT INTO scene_pads (scene_id, pad_number, sample_id, volume_db, pan, cutoff_hz) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             [
-                (kit_id_val, p["pad_number"], p.get("sample_id"), p.get("volume_db", 6),
+                (scene_id_val, p["pad_number"], p.get("sample_id"), p.get("volume_db", 6),
                  p.get("pan", 0), p.get("cutoff_hz"))
                 for p in pads
             ],
         )
         conn.executemany(
-            "INSERT INTO kit_effects (kit_id, pad_number, slot_index, plugin_id, params) "
+            "INSERT INTO scene_effects (scene_id, pad_number, slot_index, plugin_id, params) "
             "VALUES (?, ?, ?, ?, ?)",
             [
                 (
-                    kit_id_val,
+                    scene_id_val,
                     e["pad_number"],
                     e["slot_index"],
                     e.get("plugin_id"),
@@ -921,11 +954,11 @@ def save_kit(
             ],
         )
         conn.executemany(
-            "INSERT INTO kit_knobs (kit_id, cc_number, scope, pad_number, param) "
+            "INSERT INTO scene_knobs (scene_id, cc_number, scope, pad_number, param) "
             "VALUES (?, ?, ?, ?, ?)",
             [
                 (
-                    kit_id_val,
+                    scene_id_val,
                     k["cc_number"],
                     k["scope"],
                     k["pad_number"],
@@ -936,11 +969,11 @@ def save_kit(
         )
         if scene_state is not None:
             conn.execute(
-                "INSERT INTO kit_state "
-                "(kit_id, sequencer_bpm, metronome_style, metronome_signature, "
+                "INSERT INTO scene_state "
+                "(scene_id, sequencer_bpm, metronome_style, metronome_signature, "
                 "metronome_running, sequencer_running) VALUES (?, ?, ?, ?, ?, ?)",
                 (
-                    kit_id_val,
+                    scene_id_val,
                     str(scene_state.get("sequencer_bpm", "100")),
                     str(scene_state.get("metronome_style", "digital")),
                     str(scene_state.get("metronome_signature", "4_4")),
@@ -950,15 +983,15 @@ def save_kit(
             )
         if sequencer_steps is not None:
             conn.executemany(
-                "INSERT INTO kit_steps (kit_id, pad_number, step_index, active) "
+                "INSERT INTO scene_steps (scene_id, pad_number, step_index, active) "
                 "VALUES (?, ?, ?, ?)",
                 [
-                    (kit_id_val, s["pad_number"], s["step_index"], 1 if s.get("active") else 0)
+                    (scene_id_val, s["pad_number"], s["step_index"], 1 if s.get("active") else 0)
                     for s in sequencer_steps
                 ],
             )
         conn.commit()
-        return kit_id_val
+        return scene_id_val
     except Exception:
         conn.rollback()
         raise
@@ -966,23 +999,23 @@ def save_kit(
         conn.close()
 
 
-def get_kit(kit_id: int) -> Optional[dict]:
+def get_scene(scene_id: int) -> Optional[dict]:
     conn = get_connection()
     try:
         row = conn.execute(
-            "SELECT id, name, created_at, active FROM kits WHERE id = ?", (kit_id,)
+            "SELECT id, name, created_at, active FROM scenes WHERE id = ?", (scene_id,)
         ).fetchone()
         if row is None:
             return None
         pads = conn.execute(
-            "SELECT pad_number, sample_id, volume_db, pan, cutoff_hz FROM kit_pads "
-            "WHERE kit_id = ? ORDER BY pad_number",
-            (kit_id,),
+            "SELECT pad_number, sample_id, volume_db, pan, cutoff_hz FROM scene_pads "
+            "WHERE scene_id = ? ORDER BY pad_number",
+            (scene_id,),
         ).fetchall()
         effects = conn.execute(
-            "SELECT pad_number, slot_index, plugin_id, params FROM kit_effects "
-            "WHERE kit_id = ? ORDER BY pad_number, slot_index",
-            (kit_id,),
+            "SELECT pad_number, slot_index, plugin_id, params FROM scene_effects "
+            "WHERE scene_id = ? ORDER BY pad_number, slot_index",
+            (scene_id,),
         ).fetchall()
         effects_parsed = []
         for r in effects:
@@ -992,23 +1025,23 @@ def get_kit(kit_id: int) -> Optional[dict]:
         knobs = [
             dict(r)
             for r in conn.execute(
-                "SELECT cc_number, scope, pad_number, param FROM kit_knobs "
-                "WHERE kit_id = ? ORDER BY cc_number",
-                (kit_id,),
+                "SELECT cc_number, scope, pad_number, param FROM scene_knobs "
+                "WHERE scene_id = ? ORDER BY cc_number",
+                (scene_id,),
             ).fetchall()
         ]
         state_row = conn.execute(
             "SELECT sequencer_bpm, metronome_style, metronome_signature, "
-            "metronome_running, sequencer_running FROM kit_state WHERE kit_id = ?",
-            (kit_id,),
+            "metronome_running, sequencer_running FROM scene_state WHERE scene_id = ?",
+            (scene_id,),
         ).fetchone()
         state = dict(state_row) if state_row is not None else None
         steps = [
             dict(r)
             for r in conn.execute(
-                "SELECT pad_number, step_index, active FROM kit_steps "
-                "WHERE kit_id = ? ORDER BY pad_number, step_index",
-                (kit_id,),
+                "SELECT pad_number, step_index, active FROM scene_steps "
+                "WHERE scene_id = ? ORDER BY pad_number, step_index",
+                (scene_id,),
             ).fetchall()
         ]
         return {
@@ -1026,6 +1059,134 @@ def get_kit(kit_id: int) -> Optional[dict]:
         conn.close()
 
 
+def delete_scene(scene_id: int) -> bool:
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM scenes WHERE id = ?", (scene_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+# ── Kits (sound sets) ────────────────────────────────────────────────────────
+
+
+def list_kit_categories() -> list[str]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT category FROM kits ORDER BY category"
+        ).fetchall()
+        return [r["category"] for r in rows]
+    finally:
+        conn.close()
+
+
+def _kit_pads(conn: sqlite3.Connection, kit_id: int) -> list[dict]:
+    rows = conn.execute(
+        "SELECT kp.pad_number, kp.sample_id, kp.display_name, s.filename "
+        "FROM kit_pads kp LEFT JOIN samples s ON s.id = kp.sample_id "
+        "WHERE kp.kit_id = ? ORDER BY kp.pad_number",
+        (kit_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _kit_row_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "category": row["category"],
+        "sort_index": row["sort_index"],
+        "created_at": row["created_at"],
+        "source_path": row["source_path"],
+        "pads": _kit_pads(conn, row["id"]),
+    }
+
+
+def list_kits_in_category(category: str) -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, name, category, sort_index, created_at, source_path FROM kits "
+            "WHERE category = ? ORDER BY sort_index, name",
+            (category,),
+        ).fetchall()
+        return [_kit_row_to_dict(conn, r) for r in rows]
+    finally:
+        conn.close()
+
+
+def list_kits() -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, name, category, sort_index, created_at, source_path FROM kits "
+            "ORDER BY category, sort_index, name"
+        ).fetchall()
+        return [_kit_row_to_dict(conn, r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_kit(kit_id: int) -> Optional[dict]:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, name, category, sort_index, created_at, source_path FROM kits WHERE id = ?",
+            (kit_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return _kit_row_to_dict(conn, row)
+    finally:
+        conn.close()
+
+
+def create_kit(
+    name: str,
+    category: str,
+    sort_index: int,
+    pads: list[dict],
+    source_path: str | None = None,
+) -> int:
+    """Creates (or, if `name` already exists, replaces the contents of) a
+    kit. Upsert-by-name, same convention as save_scene, so re-importing a
+    pack after editing its manifest is safe to run again."""
+    conn = get_connection()
+    try:
+        kit_row = conn.execute("SELECT id FROM kits WHERE name = ?", (name,)).fetchone()
+        if kit_row is None:
+            cur = conn.execute(
+                "INSERT INTO kits (name, category, sort_index, created_at, source_path) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (name, category, sort_index, time.time(), source_path),
+            )
+            kit_id = int(cur.lastrowid)
+        else:
+            kit_id = kit_row["id"]
+            conn.execute(
+                "UPDATE kits SET category = ?, sort_index = ?, source_path = ? WHERE id = ?",
+                (category, sort_index, source_path, kit_id),
+            )
+            conn.execute("DELETE FROM kit_pads WHERE kit_id = ?", (kit_id,))
+        conn.executemany(
+            "INSERT INTO kit_pads (kit_id, pad_number, sample_id, display_name) VALUES (?, ?, ?, ?)",
+            [
+                (kit_id, p["pad_number"], p.get("sample_id"), p.get("display_name"))
+                for p in pads
+            ],
+        )
+        conn.commit()
+        return kit_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def delete_kit(kit_id: int) -> bool:
     conn = get_connection()
     try:
@@ -1036,21 +1197,21 @@ def delete_kit(kit_id: int) -> bool:
         conn.close()
 
 
-def load_kit(kit_id: int) -> Optional[dict]:
+def load_scene(scene_id: int) -> Optional[dict]:
     """Copies a scene onto the live state (single transaction). midi_note is
     preserved (physical controller mapping). The scene's knob mappings replace
     the live ones wholesale, so the physical knobs follow the scene - except a
-    scene saved before knob mappings joined the snapshot (no kit_knobs rows),
+    scene saved before knob mappings joined the snapshot (no scene_knobs rows),
     which leaves the current mappings untouched. The global tempo/metronome
     settings and the sequencer grid are restored too when the scene carries
     them (scenes saved before scenes grew a global state leave them as-is).
     Returns the scene dict, or None if it doesn't exist."""
-    kit = get_kit(kit_id)
-    if kit is None:
+    scene = get_scene(scene_id)
+    if scene is None:
         return None
     conn = get_connection()
     try:
-        for p in kit["pads"]:
+        for p in scene["pads"]:
             conn.execute(
                 "UPDATE pads SET sample_id = ?, volume_db = ?, pan = ?, cutoff_hz = ? "
                 "WHERE pad_number = ?",
@@ -1066,28 +1227,28 @@ def load_kit(kit_id: int) -> Optional[dict]:
                     e["plugin_id"],
                     json.dumps(e.get("params") or {}),
                 )
-                for e in kit["effects"]
+                for e in scene["effects"]
             ],
         )
-        if kit["knobs"]:
+        if scene["knobs"]:
             conn.execute("DELETE FROM knob_mappings")
             conn.executemany(
                 "INSERT INTO knob_mappings (cc_number, scope, pad_number, param) VALUES (?, ?, ?, ?)",
                 [
                     (k["cc_number"], k["scope"], k["pad_number"], k["param"])
-                    for k in kit["knobs"]
+                    for k in scene["knobs"]
                 ],
             )
-        if kit["state"] is not None:
+        if scene["state"] is not None:
             for key in ("sequencer_bpm", "metronome_style", "metronome_signature"):
                 conn.execute(
                     "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-                    (key, kit["state"][key]),
+                    (key, scene["state"][key]),
                 )
-        if kit["steps"]:
+        if scene["steps"]:
             active = {
                 (s["pad_number"], s["step_index"]): 1 if s["active"] else 0
-                for s in kit["steps"]
+                for s in scene["steps"]
             }
             conn.execute("DELETE FROM sequencer_steps")
             conn.executemany(
@@ -1104,4 +1265,4 @@ def load_kit(kit_id: int) -> Optional[dict]:
         raise
     finally:
         conn.close()
-    return kit
+    return scene

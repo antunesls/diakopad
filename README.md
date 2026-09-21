@@ -69,7 +69,7 @@ deploy de laptop abaixo), aponte-o para o bank certo com
 Mesmo motor de áudio (um `sfizz_jack` por pad + `mod-host` para efeitos),
 rodando nativo num desktop Linux em vez da imagem do Zynthian — útil pra
 não depender do Pi (que satura ~1 núcleo de CPU por pad carregado, ver
-"Performance e Kits" abaixo) ou pra desenvolver com áudio real sem estar
+"Performance e Cenas" abaixo) ou pra desenvolver com áudio real sem estar
 perto do hardware.
 
 1. Copie o repositório para o laptop (ou rode em-place num checkout já
@@ -189,7 +189,7 @@ Chorus/Flanger/Phaser LSP, Delay, Compressor, Overdrive, EQ 3 bandas, ver
 Trocar o plugin de um slot recria a cadeia no mod-host (`sfizz → slot 1 →
 slot 2 → slot 3 → master`); mudar só um parâmetro é um `param_set` barato,
 sem reiniciar nada. Params salvos de uma versão anterior do catálogo (ex.:
-kits gravados com o mda/Ambience) são filtrados no carregamento — símbolos
+cenas gravadas com o mda/Ambience) são filtrados no carregamento — símbolos
 que não pertencem ao plugin atual caem fora e os defaults completam.
 
 Os defaults do catálogo foram validados no-device no deploy de laptop

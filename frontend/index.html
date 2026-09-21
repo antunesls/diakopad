@@ -23,6 +23,7 @@
     </nav>
     <div class="live-controls">
       <output id="midi-note-indicator" class="midi-note-indicator" aria-live="polite">MIDI: --</output>
+      <output id="kit-browse-banner" class="kit-browse-banner hidden" aria-live="polite"></output>
       <button id="global-tap-btn" class="global-tap-btn" type="button" aria-label="Tap tempo">
         <strong id="global-bpm">100</strong> BPM · TAP
       </button>
@@ -50,15 +51,15 @@
   </main>
 
   <main id="view-performance" class="view hidden">
-    <div class="kit-strip">
-      <button id="kit-prev" class="kit-nav" type="button" aria-label="Cena anterior">◀</button>
-      <div class="kit-current">
-        <span id="kit-name" class="kit-name">Nenhuma cena salva</span>
-        <span id="kit-count" class="kit-count"></span>
+    <div class="carousel-strip">
+      <button id="scene-prev" class="carousel-nav" type="button" aria-label="Cena anterior">◀</button>
+      <div class="carousel-current">
+        <span id="scene-name" class="carousel-name">Nenhuma cena salva</span>
+        <span id="scene-count" class="carousel-count"></span>
       </div>
-      <button id="kit-next" class="kit-nav" type="button" aria-label="Próxima cena">▶</button>
-      <button id="kit-save" class="kit-action" type="button">Salvar</button>
-      <button id="kit-delete" class="kit-action danger" type="button">Excluir</button>
+      <button id="scene-next" class="carousel-nav" type="button" aria-label="Próxima cena">▶</button>
+      <button id="scene-save" class="carousel-action" type="button">Salvar</button>
+      <button id="scene-delete" class="carousel-action danger" type="button">Excluir</button>
     </div>
     <p class="pad-live-hint">Toque para tocar, segure para trocar o som. ◀ ▶ troca a cena ao vivo (só as ativas).</p>
     <div id="perf-pad-grid" class="pad-grid perf-grid"></div>
@@ -133,15 +134,15 @@
   </main>
 
   <main id="view-sequencer" class="view hidden">
-    <div class="kit-strip pattern-strip">
-      <button id="pattern-prev" class="kit-nav" type="button" aria-label="Padrão anterior">◀</button>
-      <div class="kit-current">
-        <span id="pattern-name" class="kit-name">Padrão sem salvar</span>
-        <span id="pattern-count" class="kit-count"></span>
+    <div class="carousel-strip pattern-strip">
+      <button id="pattern-prev" class="carousel-nav" type="button" aria-label="Padrão anterior">◀</button>
+      <div class="carousel-current">
+        <span id="pattern-name" class="carousel-name">Padrão sem salvar</span>
+        <span id="pattern-count" class="carousel-count"></span>
       </div>
-      <button id="pattern-next" class="kit-nav" type="button" aria-label="Próximo padrão">▶</button>
-      <button id="pattern-save" class="kit-action" type="button">Salvar</button>
-      <button id="pattern-delete" class="kit-action danger" type="button">Excluir</button>
+      <button id="pattern-next" class="carousel-nav" type="button" aria-label="Próximo padrão">▶</button>
+      <button id="pattern-save" class="carousel-action" type="button">Salvar</button>
+      <button id="pattern-delete" class="carousel-action danger" type="button">Excluir</button>
     </div>
     <div class="sequencer-toolbar">
       <button id="sequencer-play-btn" class="accent-btn" type="button">▶ Tocar</button>
@@ -239,6 +240,16 @@
           <span class="switch-slider"></span>
         </label>
       </li>
+      <li class="settings-row">
+        <div class="settings-text">
+          <span class="settings-label">Preview ao navegar kits</span>
+          <span class="settings-desc">Toca o som candidato ao navegar/escolher dentro de um kit. Desligue antes de uma apresentação pra navegar em silêncio sem soar nada indesejado.</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="setting-kit-browse-preview">
+          <span class="switch-slider"></span>
+        </label>
+      </li>
     </ul>
 
     <h2 class="tab-note">Pads</h2>
@@ -306,21 +317,29 @@
         </div>
         <button class="secondary-btn" id="controller-learn-btn-looper_overdub_toggle" type="button">Aprender</button>
       </li>
-      <li class="settings-row" data-controller-action="kit_next">
+      <li class="settings-row" data-controller-action="scene_next">
         <div class="settings-text">
-          <span class="settings-label">Próximo kit</span>
-          <span class="settings-desc">Avança para o próximo kit da aba Performance em segundo plano, sem trocar de aba. Pode vincular mais de um botão (ex.: a seta e o pad "bak") à mesma ação.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-kit_next"></div>
+          <span class="settings-label">Próxima cena</span>
+          <span class="settings-desc">Avança para a próxima cena da aba Performance em segundo plano, sem trocar de aba. Pode vincular mais de um botão (ex.: a seta e o pad "bak") à mesma ação.</span>
+          <div class="controller-bindings-chips" id="controller-bindings-scene_next"></div>
         </div>
-        <button class="secondary-btn" id="controller-learn-btn-kit_next" type="button">Aprender</button>
+        <button class="secondary-btn" id="controller-learn-btn-scene_next" type="button">Aprender</button>
       </li>
-      <li class="settings-row" data-controller-action="kit_prev">
+      <li class="settings-row" data-controller-action="scene_prev">
         <div class="settings-text">
-          <span class="settings-label">Kit anterior</span>
-          <span class="settings-desc">Volta para o kit anterior da aba Performance em segundo plano, sem trocar de aba. Pode vincular mais de um botão à mesma ação.</span>
-          <div class="controller-bindings-chips" id="controller-bindings-kit_prev"></div>
+          <span class="settings-label">Cena anterior</span>
+          <span class="settings-desc">Volta para a cena anterior da aba Performance em segundo plano, sem trocar de aba. Pode vincular mais de um botão à mesma ação.</span>
+          <div class="controller-bindings-chips" id="controller-bindings-scene_prev"></div>
         </div>
-        <button class="secondary-btn" id="controller-learn-btn-kit_prev" type="button">Aprender</button>
+        <button class="secondary-btn" id="controller-learn-btn-scene_prev" type="button">Aprender</button>
+      </li>
+      <li class="settings-row" data-controller-action="kit_browse_toggle">
+        <div class="settings-text">
+          <span class="settings-label">Navegar kits</span>
+          <span class="settings-desc">Aperte pra escolher qual pad você quer editar (toque nele em seguida), depois navegue kits com os cantos do grid (cima/baixo = categoria, esquerda/direita = kit), toque em outro pad pra ouvir/trocar o som candidato, e confirme (canto inferior direito) pra aplicar só naquele pad — voltar (canto inferior esquerdo) cancela sem mudar nada. Aprenda aqui o botão físico que você usa pra abrir esse fluxo.</span>
+          <div class="controller-bindings-chips" id="controller-bindings-kit_browse_toggle"></div>
+        </div>
+        <button class="secondary-btn" id="controller-learn-btn-kit_browse_toggle" type="button">Aprender</button>
       </li>
     </ul>
   </main>

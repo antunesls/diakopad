@@ -251,7 +251,7 @@ def default_params(plugin_id: str) -> dict[str, float]:
 
 def effective_params(plugin_id: str, stored: dict | None) -> dict[str, float]:
     """Plugin defaults overlaid with stored values, dropping symbols that no
-    longer belong to the plugin (e.g. a kit saved with mda/Ambience's
+    longer belong to the plugin (e.g. a scene saved with mda/Ambience's
     mix/size/hf_damp against today's Dragonfly reverb) and clamping to each
     parameter's LV2 range, so stale rows never reach mod-host's param_set."""
     plugin = PLUGIN_CATALOG.get(plugin_id)

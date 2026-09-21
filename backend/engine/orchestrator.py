@@ -105,6 +105,10 @@ async def _recover_sfizz(client: str) -> bool:
         settings = await asyncio.to_thread(storage.get_settings)
         if client == METRONOME_CLIENT:
             return await apply_metronome_style(settings.get("metronome_style", metronome_sounds.DEFAULT_STYLE))
+        if client == PREVIEW_CLIENT:
+            if _last_preview_kit is None:
+                return False
+            return await apply_preview_kit(_last_preview_kit)
         match = re.fullmatch(r"diakopad_pad(\d{2})", client)
         if match is None:
             return False
@@ -129,6 +133,11 @@ def _refresh_hardware_connections() -> None:
 
 
 def _schedule_players_without_ports() -> None:
+    # PREVIEW_CLIENT is deliberately NOT included here: unlike the 16 pads
+    # and the metronome, it only exists transiently while kit-browse mode is
+    # active (see apply_preview_kit/stop_preview) - the Pi already saturates
+    # ~1 CPU core per loaded pad, so keeping an 18th sfizz process alive at
+    # idle just to watch its ports would be pure waste.
     clients = [sfizz_proc.client_name(n) for n in range(1, 17)] + [METRONOME_CLIENT]
     for client in clients:
         if sfizz_proc.is_running(client) and not jackgraph.has_port(f"{client}:output_1"):
@@ -349,12 +358,12 @@ async def apply_pad(pad_number: int, pads: list[dict], settings: dict, pad_effec
 
 async def apply_all_pads(pads: list[dict], settings: dict, pad_effects: list[dict]) -> None:
     """Used after a global settings change (sustain/velocity, affects every
-    pad's rendered .sfz) and after a kit switch (which can also CLEAR a
+    pad's rendered .sfz) and after a scene switch (which can also CLEAR a
     pad's sample). Must call apply_pad() for every pad, not just the ones
     that currently have a filename - apply_pad() is what actually stops a
     pad's sfizz instance when it has none, and skipping that call for an
     empty pad here used to leave a just-cleared pad's old instance running
-    (and still wired to hardware MIDI), silently playing the previous kit's
+    (and still wired to hardware MIDI), silently playing the previous scene's
     sample forever. apply_pad() no-ops cheaply for a pad that's already
     stopped, so calling it for all 16 costs nothing extra."""
     async def apply_one(pad: dict) -> None:
@@ -396,7 +405,7 @@ async def _apply_pad_effects_unlocked(pad_number: int, pad_effects: list[dict]) 
             _live_slot_plugin[key] = plugin_id if loaded else None
         if _live_slot_plugin.get(key):
             # effective_params(): defaults + stored values, dropping symbols
-            # that no longer belong to the current plugin (kits saved before
+            # that no longer belong to the current plugin (scenes saved before
             # a catalog swap, e.g. mda/Ambience -> Dragonfly reverb) and
             # clamping to each param's LV2 range.
             for symbol, value in effects_catalog.effective_params(plugin_id, row["params"]).items():
@@ -492,6 +501,49 @@ def _apply_metronome_style_sync(style: str) -> bool:
     )
     sfizz_proc.mark_recovered(METRONOME_CLIENT)
     return audio_left and audio_right and midi_connected
+
+
+PREVIEW_CLIENT = "diakopad_preview"
+_last_preview_kit: dict | None = None
+
+
+async def apply_preview_kit(kit: dict) -> bool:
+    """(Re)spawns the dedicated kit-browse preview sfizz instance with every
+    populated pad-role of `kit` as its own fixed-note region (see
+    sfz.write_preview_kit) and wires it into the graph - same pattern as the
+    metronome, but respawned once per navigation step (not once per preview
+    hit) so auditioning individual sounds stays cheap. Never touches the 16
+    live pads or DiakoPad-in."""
+    global _last_preview_kit
+    _last_preview_kit = kit
+    async with _graph_lock:
+        return await asyncio.to_thread(_apply_preview_kit_sync, kit)
+
+
+def _apply_preview_kit_sync(kit: dict) -> bool:
+    sfz_path = sfz.write_preview_kit(kit)
+    if not sfizz_proc.spawn(PREVIEW_CLIENT, sfz_path):
+        return False
+    if not jackgraph.wait_for_port(f"{PREVIEW_CLIENT}:output_1"):
+        logger.warning("sfizz JACK ports for the kit preview never appeared")
+        sfizz_proc.schedule_recovery(PREVIEW_CLIENT)
+        return False
+    master_l, master_r = _master_destinations()
+    audio_left = jackgraph.connect(f"{PREVIEW_CLIENT}:output_1", master_l)
+    audio_right = jackgraph.connect(f"{PREVIEW_CLIENT}:output_2", master_r)
+    midi_connected = jackgraph.connect_pattern_to_all(
+        rf"{re.escape(midi.PREVIEW_OUTPUT_PORT_NAME)}$", f"^{re.escape(PREVIEW_CLIENT)}:input$"
+    )
+    sfizz_proc.mark_recovered(PREVIEW_CLIENT)
+    return audio_left and audio_right and midi_connected
+
+
+async def stop_preview() -> None:
+    """Stops the kit-browse preview instance - called unconditionally on both
+    Confirm and Back, so it never lingers once browsing ends."""
+    global _last_preview_kit
+    _last_preview_kit = None
+    await asyncio.to_thread(sfizz_proc.stop, PREVIEW_CLIENT)
 
 
 async def shutdown() -> None:

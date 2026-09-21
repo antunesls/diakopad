@@ -9,3 +9,5 @@ backend/sfz_bank/*
 !backend/sfz_bank/.gitkeep
 backend/generated/*
 !backend/generated/.gitkeep
+/kit_pack_staging/
+/kit_pack_*.zip

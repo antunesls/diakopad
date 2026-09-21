@@ -103,6 +103,17 @@ html, body {
   white-space: nowrap;
 }
 
+.kit-browse-banner {
+  padding: 7px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: #2a2410;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .midi-note-indicator.hit {
   animation: midi-note-hit 180ms ease-out;
   border-color: #ffe36e;
@@ -274,7 +285,7 @@ html, body {
   text-align: center;
 }
 
-.kit-strip {
+.carousel-strip {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -285,13 +296,13 @@ html, body {
   border-radius: 12px;
 }
 
-.kit-current {
+.carousel-current {
   flex: 1;
   min-width: 0;
   text-align: center;
 }
 
-.kit-name {
+.carousel-name {
   display: block;
   font-size: 19px;
   font-weight: 600;
@@ -300,12 +311,12 @@ html, body {
   text-overflow: ellipsis;
 }
 
-.kit-count {
+.carousel-count {
   font-size: 11px;
   color: var(--text-dim);
 }
 
-.kit-nav {
+.carousel-nav {
   min-width: 58px;
   height: 50px;
   font-size: 20px;
@@ -316,9 +327,9 @@ html, body {
   cursor: pointer;
 }
 
-.kit-nav:active { border-color: var(--accent); }
+.carousel-nav:active { border-color: var(--accent); }
 
-.kit-action {
+.carousel-action {
   height: 50px;
   padding: 0 14px;
   background: var(--panel-alt);
@@ -329,10 +340,10 @@ html, body {
   font-family: inherit;
 }
 
-.kit-action:active { border-color: var(--accent); }
-.kit-action.danger { color: #ff8a8a; }
-.kit-action:disabled,
-.kit-nav:disabled { opacity: 0.35; cursor: default; }
+.carousel-action:active { border-color: var(--accent); }
+.carousel-action.danger { color: #ff8a8a; }
+.carousel-action:disabled,
+.carousel-nav:disabled { opacity: 0.35; cursor: default; }
 
 /* Biblioteca: sounds and the scene list share the screen, each pane with
    its own scroll (the view itself doesn't scroll). */
@@ -491,6 +502,19 @@ html, body {
 
 .pad.filled {
   background: var(--pad-filled);
+}
+
+/* Kit-browse visual aid: selecting the target pad happens on the physical
+   controller, so the grid mirrors it for anyone watching the screen (see
+   renderKitBrowseGridState() in app.js). */
+.pad.awaiting-target {
+  border-color: var(--accent);
+  animation: pulse 900ms ease-in-out infinite;
+}
+
+.pad.kit-browse-target {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
 }
 
 .pad-number {
@@ -1463,6 +1487,7 @@ html, body {
   .engine-status { padding-inline: 7px; }
   .panic-btn { padding-inline: 7px; }
   .midi-note-indicator { min-width: 92px; padding-inline: 6px; font-size: 11px; }
+  .kit-browse-banner { padding-inline: 6px; font-size: 11px; white-space: normal; }
   .mix-card-header { padding: 8px; }
   .mix-card .pad-sound,
   .mix-card-summary { display: none; }

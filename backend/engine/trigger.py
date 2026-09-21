@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 
 import midi
+import sfz
 
 
 def _note_for_pad(pad_number: int, pads: list[dict]) -> int | None:
@@ -42,3 +43,12 @@ async def trigger_note(note: int, velocity: int = 100) -> bool:
     note, with no pad lookup and no note-off (for one-shot-only players like
     the metronome's click, see engine/metronome.py)."""
     return midi.note_on(midi.MIDI_CHANNEL, note, velocity)
+
+
+async def trigger_preview(pad_number: int) -> bool:
+    """Auditions this pad-role's sample in the kit currently highlighted by
+    kit-browse mode (see app.py's _kit_browse_state / engine/orchestrator.py's
+    apply_preview_kit). Sent over the isolated DiakoPad-preview-out port -
+    never the 16 live pads, never recorded by the looper."""
+    note = sfz.PREVIEW_NOTE_BASE + pad_number - 1
+    return midi.preview_note_on(midi.MIDI_CHANNEL, note)

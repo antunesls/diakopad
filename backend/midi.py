@@ -17,6 +17,11 @@ with no MIDI hardware):
 - A second OUTPUT port (`DiakoPad-metronome-out`) dedicated to the metronome,
   so its fixed click notes can never trigger a pad configured to the same
   MIDI note (or vice versa).
+- A third OUTPUT port (`DiakoPad-preview-out`) dedicated to the kit-browse
+  preview instance (see engine/orchestrator.py's apply_preview_kit). Same
+  isolation rule as trigger-out: never wired back into `DiakoPad-in` and
+  never fanned into the 16 real pads' sfizz inputs, so auditioning a
+  candidate kit's sounds while browsing never touches the live pads.
 """
 from __future__ import annotations
 
@@ -34,12 +39,16 @@ HARDWARE_OUTPUT_PORT_NAME = os.environ.get(
 METRONOME_OUTPUT_PORT_NAME = os.environ.get(
     "DIAKOPAD_METRONOME_MIDI_OUTPUT_PORT_NAME", "DiakoPad-metronome-out"
 )
+PREVIEW_OUTPUT_PORT_NAME = os.environ.get(
+    "DIAKOPAD_PREVIEW_MIDI_OUTPUT_PORT_NAME", "DiakoPad-preview-out"
+)
 MIDI_CHANNEL = int(os.environ.get("DIAKOPAD_MIDI_CHANNEL", "10")) - 1  # 0-indexed
 
 _input_port = None
 _output_port = None
 _hardware_output_port = None
 _metronome_output_port = None
+_preview_output_port = None
 _output_unavailable_logged = False
 
 
@@ -72,15 +81,18 @@ def open_input(on_cc: Callable[[int, int], None], on_note: Optional[Callable[[in
 
 
 def open_output() -> bool:
-    """Opens the isolated virtual outputs for pads and the metronome."""
-    global _output_port, _metronome_output_port, _output_unavailable_logged
+    """Opens the isolated virtual outputs for pads, the metronome and the
+    kit-browse preview instance."""
+    global _output_port, _metronome_output_port, _preview_output_port, _output_unavailable_logged
     try:
         import mido
 
         _output_port = mido.open_output(OUTPUT_PORT_NAME, virtual=True)
         _metronome_output_port = mido.open_output(METRONOME_OUTPUT_PORT_NAME, virtual=True)
+        _preview_output_port = mido.open_output(PREVIEW_OUTPUT_PORT_NAME, virtual=True)
         logger.info("Opened virtual MIDI output port %r", OUTPUT_PORT_NAME)
         logger.info("Opened virtual MIDI output port %r", METRONOME_OUTPUT_PORT_NAME)
+        logger.info("Opened virtual MIDI output port %r", PREVIEW_OUTPUT_PORT_NAME)
         return True
     except Exception as exc:  # pragma: no cover - environment dependent
         if not _output_unavailable_logged:
@@ -116,9 +128,18 @@ def metronome_note_on(channel: int, note: int, velocity: int = 100) -> bool:
     return True
 
 
+def preview_note_on(channel: int, note: int, velocity: int = 100) -> bool:
+    if _preview_output_port is None:
+        return False
+    import mido
+
+    _preview_output_port.send(mido.Message("note_on", channel=channel, note=note, velocity=velocity))
+    return True
+
+
 def all_notes_off(channel: int) -> bool:
-    """Sends the MIDI all-notes-off controller to both engine outputs."""
-    ports = [port for port in (_output_port, _metronome_output_port) if port is not None]
+    """Sends the MIDI all-notes-off controller to every engine output."""
+    ports = [port for port in (_output_port, _metronome_output_port, _preview_output_port) if port is not None]
     if not ports:
         return False
     import mido

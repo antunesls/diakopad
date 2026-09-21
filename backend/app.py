@@ -9,6 +9,7 @@ import asyncio
 import logging
 import re
 import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -18,6 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import kit_import
 import midi
 import storage
 from engine import effects_catalog, knob_registry, looper, metronome, metronome_sounds, orchestrator, sequencer, tempo, time_signatures, trigger
@@ -100,12 +102,24 @@ class MasterRequest(BaseModel):
     limiter_threshold_db: Optional[float] = None
 
 
-class KitRequest(BaseModel):
+class SceneRequest(BaseModel):
     name: str
 
 
 class PatternRequest(BaseModel):
     name: str
+
+
+class KitBrowseNavRequest(BaseModel):
+    direction: str
+
+
+class KitBrowseSelectTargetRequest(BaseModel):
+    pad_number: int
+
+
+class KitBrowsePreviewRequest(BaseModel):
+    enabled: bool
 
 
 class ConnectionManager:
@@ -143,6 +157,30 @@ _pending_pad_hits: dict[int, int] = {}
 _pad_hit_task: Optional[asyncio.Task] = None
 _pending_note_learn: Optional[int] = None  # pad_number waiting for a physical hit, or None
 
+# --- Kit browse mode ---------------------------------------------------------
+# Lets a physical pad's sound be reassigned from the `kits` catalog (curated
+# sound sets, distinct from scenes - see storage.py) without ever touching
+# the touchscreen. Two-step, per-pad flow, not a global "browse everything"
+# mode:
+#   IDLE   -[press the learned toggle]->  ARMED (waiting for a pad tap)
+#   ARMED  -[tap any pad, 1-16]->         BROWSING, that pad is the target
+#   ARMED  -[press the toggle again]->    IDLE (cancel, nothing happened)
+# Once BROWSING, on the 4x4 grid (top row = 13,14,15,16; ...; bottom row =
+# 1,2,3,4 - see frontend/app.js's displayOrder()):
+#   13 Up (prev category)   14 Left (prev kit)  15 Right (next kit)  16 Down (next category)
+#   1 Back (cancel, target pad keeps its old sound)
+#   4 Confirm (apply the candidate sound to the target pad only, remember
+#              this kit, exit)
+#   everything else: picks THAT pad-role's sound in the highlighted kit as
+#              the new candidate (previewed if the setting allows - see
+#              _kit_browse_maybe_preview) - overrides the default candidate.
+# None = IDLE (pads behave normally). See _handle_kit_browse_note,
+# _kit_browse_arm/_select_target/_nav/_select_candidate/_confirm/_back below.
+_kit_browse_state: Optional[dict] = None
+_KIT_BROWSE_NAV_PADS = {13: "up", 14: "left", 15: "right", 16: "down"}
+_KIT_BROWSE_BACK_PAD = 1
+_KIT_BROWSE_CONFIRM_PAD = 4
+
 # --- Controller action bindings ---------------------------------------------
 # Dedicated SMC-PAD controls with no on-screen equivalent (the "Gravar"
 # button, the side arrow, the "bak" pad, a panic button) get bound here to a
@@ -150,13 +188,13 @@ _pending_note_learn: Optional[int] = None  # pad_number waiting for a physical h
 # pad-note-learn/pad-trigger in _handle_note and before knob-learn/CC-target
 # in _handle_cc, so a dedicated control never accidentally plays a pad or
 # tweaks a knob.
-CONTROLLER_ACTIONS = ("kit_next", "kit_prev", "looper_record_toggle", "looper_play_toggle", "looper_overdub_toggle", "panic", "tap_tempo")
+CONTROLLER_ACTIONS = ("scene_next", "scene_prev", "looper_record_toggle", "looper_play_toggle", "looper_overdub_toggle", "panic", "tap_tempo", "kit_browse_toggle")
 _pending_controller_learn: Optional[str] = None  # action waiting for a physical signal, or None
-_kit_switch_lock = asyncio.Lock()
+_scene_switch_lock = asyncio.Lock()
 # Last CC value seen per CC-bound controller action. Buttons fire on the
 # rising edge (0 -> nonzero) only: a momentary button sends a burst of
 # nonzero values while held and 0 on release, and each message must NOT
-# re-trigger the action or a single press would switch kits repeatedly.
+# re-trigger the action or a single press would switch scenes repeatedly.
 _cc_action_last_values: dict[int, int] = {}
 
 # --- Knob MIDI-learn state -------------------------------------------------
@@ -195,8 +233,14 @@ def _handle_note(note: int, velocity: int) -> None:
     """Feeds the live looper's recorder and per-pad MIDI-note learn. Only
     ever sees genuine hardware hits - sequencer/looper-triggered notes go
     out DiakoPad-trigger-out straight into each pad's sfizz instance, never
-    back through this input port."""
+    back through this input port.
+
+    A velocity of 0 is the common "note off" encoding and must never trigger
+    a pad, a knob-learn or a controller action (e.g. tap tempo) - some
+    controllers send the release that way instead of a real Note Off."""
     global _pending_note_learn, _pending_controller_learn
+    if velocity <= 0:
+        return
     asyncio.create_task(_broadcast_midi_note(note, velocity))
 
     if _pending_controller_learn is not None:
@@ -208,6 +252,10 @@ def _handle_note(note: int, velocity: int) -> None:
     bound_action = storage.get_action_for_signal("note", note)
     if bound_action is not None:
         asyncio.create_task(_dispatch_controller_action(bound_action))
+        return
+
+    if _kit_browse_state is not None:
+        asyncio.create_task(_handle_kit_browse_note(note))
         return
 
     if _pending_note_learn is not None:
@@ -255,6 +303,221 @@ async def _broadcast_controller_actions() -> None:
     )
 
 
+# --- Kit browse mode ---------------------------------------------------------
+
+
+async def _handle_kit_browse_note(note: int) -> None:
+    """Interprets a pad hit while kit-browse mode is active (_kit_browse_state
+    is not None), per the fixed layout documented next to _kit_browse_state
+    above. Reuses each pad's already-configured live MIDI note (via
+    _pad_notes) - no separate learn step - so the same physical taps work
+    whether or not the pad currently has a sound assigned."""
+    pad_numbers = _pad_notes.get(note, [])
+    if not pad_numbers:
+        return
+    pad_number = pad_numbers[0]
+
+    if _kit_browse_state.get("target_pad") is None:
+        await _kit_browse_select_target(pad_number)
+        return
+
+    if pad_number == _KIT_BROWSE_BACK_PAD:
+        await _kit_browse_back()
+    elif pad_number == _KIT_BROWSE_CONFIRM_PAD:
+        await _kit_browse_confirm()
+    elif pad_number in _KIT_BROWSE_NAV_PADS:
+        await _kit_browse_nav(_KIT_BROWSE_NAV_PADS[pad_number])
+    else:
+        await _kit_browse_select_candidate(pad_number)
+
+
+def _kit_browse_default_candidate(kit: dict, target_pad: int) -> Optional[int]:
+    """A kit's own pad_number numbering has no relation to which physical pad
+    is being edited - it's just the order curate_kit_pack.py happened to find
+    sounds in. Default to "the kit's sound at the same number as the target
+    pad" when it has one (the common case: filling pads in the kit's own
+    order), else the kit's first populated sound, else None (empty kit)."""
+    pads = kit.get("pads") or []
+    if any(p["pad_number"] == target_pad for p in pads):
+        return target_pad
+    return pads[0]["pad_number"] if pads else None
+
+
+async def _kit_browse_maybe_preview(kit: dict, candidate_pad_number: Optional[int]) -> None:
+    """Plays the candidate sound through the isolated preview engine, but
+    only when the persistent "preview ao navegar kits" setting is on AND the
+    kit actually has a sound at that number - stays silent (but still updates
+    state) otherwise, e.g. mid-performance with preview turned off."""
+    if candidate_pad_number is None:
+        return
+    if storage.get_settings().get("kit_browse_preview_enabled") != "1":
+        return
+    entry = next((p for p in kit.get("pads", []) if p["pad_number"] == candidate_pad_number), None)
+    if entry is None or entry.get("sample_id") is None:
+        return
+    await trigger.trigger_preview(candidate_pad_number)
+
+
+def _kit_browse_payload() -> dict:
+    if _kit_browse_state is None:
+        return {"type": "kit_browse", "active": False}
+    state = _kit_browse_state
+    target_pad = state.get("target_pad")
+    if target_pad is None:
+        return {"type": "kit_browse", "active": True, "phase": "armed", "target_pad": None}
+    kit = state["kits"][state["kit_idx"]]
+    candidate_pad_number = state.get("candidate_pad_number")
+    candidate_entry = next((p for p in kit.get("pads", []) if p["pad_number"] == candidate_pad_number), None)
+    return {
+        "type": "kit_browse",
+        "active": True,
+        "phase": "browsing",
+        "target_pad": target_pad,
+        "category": state["categories"][state["category_idx"]],
+        "category_index": state["category_idx"],
+        "category_count": len(state["categories"]),
+        "kit": {"id": kit["id"], "name": kit["name"]},
+        "kit_index": state["kit_idx"],
+        "kit_count": len(state["kits"]),
+        "candidate_pad_number": candidate_pad_number,
+        "candidate_display_name": candidate_entry["display_name"] if candidate_entry else None,
+    }
+
+
+async def _broadcast_kit_browse() -> None:
+    await manager.broadcast(_kit_browse_payload())
+
+
+async def _kit_browse_arm() -> None:
+    """First step of the flow: wait for a tap on the pad the user wants to
+    reassign. No engine work yet - there's no kit in destaque without a
+    target pad to compute a default candidate against."""
+    global _kit_browse_state
+    _kit_browse_state = {"target_pad": None}
+    await _broadcast_kit_browse()
+
+
+async def _kit_browse_select_target(pad_number: int) -> None:
+    """Second step: pad_number becomes the pad being edited. Starts browsing
+    at the last kit a confirm actually used (kit_browse_last_kit_id), since
+    the tendency is to fill several pads from the same kit in a row, falling
+    back to the first kit of the first category the first time ever / if
+    that kit was deleted since. A no-op back to IDLE when the catalog is
+    empty - nothing to browse yet."""
+    global _kit_browse_state
+    categories = storage.list_kit_categories()
+    if not categories:
+        _kit_browse_state = None
+        await _broadcast_kit_browse()
+        return
+
+    category_idx = 0
+    kit_idx = 0
+    kits = storage.list_kits_in_category(categories[0])
+    last_kit_id = storage.get_settings().get("kit_browse_last_kit_id") or ""
+    if last_kit_id:
+        for c_idx, category in enumerate(categories):
+            candidates = kits if c_idx == 0 else storage.list_kits_in_category(category)
+            match_idx = next((i for i, k in enumerate(candidates) if str(k["id"]) == last_kit_id), -1)
+            if match_idx != -1:
+                category_idx, kits, kit_idx = c_idx, candidates, match_idx
+                break
+
+    if not kits:
+        _kit_browse_state = None
+        await _broadcast_kit_browse()
+        return
+
+    kit = kits[kit_idx]
+    _kit_browse_state = {
+        "target_pad": pad_number,
+        "categories": categories,
+        "category_idx": category_idx,
+        "kits": kits,
+        "kit_idx": kit_idx,
+        "candidate_pad_number": _kit_browse_default_candidate(kit, pad_number),
+    }
+    await orchestrator.apply_preview_kit(kit)
+    await _kit_browse_maybe_preview(kit, _kit_browse_state["candidate_pad_number"])
+    await _broadcast_kit_browse()
+
+
+async def _kit_browse_nav(direction: str) -> None:
+    """left/right move within the current category's kit list; up/down move
+    to the previous/next category and land on its first kit. All four wrap
+    around. Recomputes the default candidate for the newly-highlighted kit
+    (see _kit_browse_default_candidate) - any candidate picked by hand on the
+    previous kit doesn't carry over."""
+    state = _kit_browse_state
+    if state is None or state.get("target_pad") is None:
+        return
+    if direction in ("left", "right"):
+        delta = 1 if direction == "right" else -1
+        state["kit_idx"] = (state["kit_idx"] + delta) % len(state["kits"])
+    else:
+        delta = 1 if direction == "down" else -1
+        state["category_idx"] = (state["category_idx"] + delta) % len(state["categories"])
+        state["kits"] = storage.list_kits_in_category(state["categories"][state["category_idx"]])
+        state["kit_idx"] = 0
+    kit = state["kits"][state["kit_idx"]]
+    state["candidate_pad_number"] = _kit_browse_default_candidate(kit, state["target_pad"])
+    await orchestrator.apply_preview_kit(kit)
+    await _kit_browse_maybe_preview(kit, state["candidate_pad_number"])
+    await _broadcast_kit_browse()
+
+
+async def _kit_browse_select_candidate(pad_number: int) -> None:
+    """Tapping one of the "free" pads while browsing overrides the default
+    candidate with that specific sound from the highlighted kit - lets you
+    pick any of the kit's sounds for the target pad, not just the one at the
+    same number. Doesn't change kit/category or leave browsing."""
+    state = _kit_browse_state
+    if state is None or state.get("target_pad") is None:
+        return
+    state["candidate_pad_number"] = pad_number
+    kit = state["kits"][state["kit_idx"]]
+    await _kit_browse_maybe_preview(kit, pad_number)
+    await _broadcast_kit_browse()
+
+
+async def _kit_browse_confirm() -> None:
+    """Applies the current candidate sound onto the target pad ONLY - every
+    other live pad is untouched, unlike the old whole-kit apply. A candidate
+    number the kit has no sound at (or no candidate at all, e.g. an empty
+    kit) clears the target pad instead, which also doubles as a deliberate
+    way to empty a pad by browsing to a gap. Remembers this kit for next
+    time (see _kit_browse_select_target) before leaving."""
+    global _kit_browse_state
+    state = _kit_browse_state
+    if state is None or state.get("target_pad") is None:
+        return
+    target_pad = state["target_pad"]
+    kit = state["kits"][state["kit_idx"]]
+    entry = next((p for p in kit.get("pads", []) if p["pad_number"] == state.get("candidate_pad_number")), None)
+    sample_id = entry["sample_id"] if entry is not None else None
+
+    storage.assign_sample(target_pad, sample_id)
+    settings = storage.get_settings()
+    pad_effects = storage.list_pad_effects()
+    pads_after = storage.list_pads()
+    await orchestrator.apply_pad(target_pad, pads_after, settings, pad_effects)
+    storage.set_setting("kit_browse_last_kit_id", str(kit["id"]))
+
+    await orchestrator.stop_preview()
+    _kit_browse_state = None
+    await _broadcast_pads()
+    await _broadcast_kit_browse()
+
+
+async def _kit_browse_back() -> None:
+    """Cancels out of ARMED or BROWSING with no changes to any live pad -
+    only the preview instance (if it was ever started) is touched."""
+    global _kit_browse_state
+    await orchestrator.stop_preview()
+    _kit_browse_state = None
+    await _broadcast_kit_browse()
+
+
 async def _dispatch_controller_action(action: str) -> None:
     if action == "panic":
         await orchestrator.panic(storage.list_pads())
@@ -288,22 +551,27 @@ async def _dispatch_controller_action(action: str) -> None:
             looper.overdub_start()
         await _broadcast_looper()
         await manager.broadcast({"type": "navigate", "view": "looper"})
-    elif action in ("kit_next", "kit_prev"):
-        async with _kit_switch_lock:
-            kits = storage.list_active_kits()
-            if not kits:
+    elif action in ("scene_next", "scene_prev"):
+        async with _scene_switch_lock:
+            scenes = storage.list_active_scenes()
+            if not scenes:
                 return
-            current_id = storage.get_settings().get("current_kit_id") or ""
-            idx = next((i for i, k in enumerate(kits) if str(k["id"]) == current_id), -1)
+            current_id = storage.get_settings().get("current_scene_id") or ""
+            idx = next((i for i, s in enumerate(scenes) if str(s["id"]) == current_id), -1)
             if idx == -1:
-                # No current kit: land on the first one going forward, the
+                # No current scene: land on the first one going forward, the
                 # last one going backward.
-                idx = len(kits) if action == "kit_prev" else 0
-            next_kit_id = kits[(idx + 1) % len(kits)]["id"] if action == "kit_next" else kits[(idx - 1) % len(kits)]["id"]
-            kit = storage.load_kit(next_kit_id)
-            storage.set_setting("current_kit_id", str(next_kit_id))
-            await _apply_kit_and_broadcast(kit)
-            await _broadcast_kits()
+                idx = len(scenes) if action == "scene_prev" else 0
+            next_scene_id = scenes[(idx + 1) % len(scenes)]["id"] if action == "scene_next" else scenes[(idx - 1) % len(scenes)]["id"]
+            scene = storage.load_scene(next_scene_id)
+            storage.set_setting("current_scene_id", str(next_scene_id))
+            await _apply_scene_and_broadcast(scene)
+            await _broadcast_scenes()
+    elif action == "kit_browse_toggle":
+        if _kit_browse_state is None:
+            await _kit_browse_arm()
+        else:
+            await _kit_browse_back()
 
 
 def _handle_cc(control: int, value: int) -> None:
@@ -924,11 +1192,11 @@ async def set_pad_effect_param(pad_number: int, slot_index: int, body: EffectPar
     return {"ok": True}
 
 
-# ── Performance kits ─────────────────────────────────────────────────────────
+# ── Performance scenes ───────────────────────────────────────────────────────
 
 
-async def _apply_kit_and_broadcast(kit: dict) -> None:
-    """Reapplies an already-loaded (storage.load_kit) scene onto the engine
+async def _apply_scene_and_broadcast(scene: dict) -> None:
+    """Reapplies an already-loaded (storage.load_scene) scene onto the engine
     and broadcasts pads/pad_effects/knobs/tempo/sequencer/metronome - shared
     by the REST load endpoint and the hardware-triggered scene navigation, so
     neither duplicates the other's engine-reload logic. The scene's global
@@ -936,7 +1204,7 @@ async def _apply_kit_and_broadcast(kit: dict) -> None:
     carries one (scenes saved before that joined the snapshot leave it as-is).
     """
     global _pad_notes
-    state = kit.get("state")
+    state = scene.get("state")
     if state is not None:
         tempo.set(float(state["sequencer_bpm"]))
         metronome.set_signature(state["metronome_signature"])
@@ -963,28 +1231,28 @@ async def _apply_kit_and_broadcast(kit: dict) -> None:
     await _broadcast_metronome()
 
 
-async def _broadcast_kits() -> None:
+async def _broadcast_scenes() -> None:
     await manager.broadcast(
         {
-            "type": "kits",
-            "kits": storage.list_kits(),
-            "current_kit_id": storage.get_settings().get("current_kit_id"),
+            "type": "scenes",
+            "scenes": storage.list_scenes(),
+            "current_scene_id": storage.get_settings().get("current_scene_id"),
         }
     )
 
 
-@app.get("/api/kits")
-def list_kits():
-    return storage.list_kits()
+@app.get("/api/scenes")
+def list_scenes():
+    return storage.list_scenes()
 
 
-@app.post("/api/kits")
-async def save_kit(body: KitRequest):
+@app.post("/api/scenes")
+async def save_scene(body: SceneRequest):
     name = body.name.strip()
     if not name:
         raise HTTPException(400, "name must not be empty")
     settings = storage.get_settings()
-    kit_id = storage.save_kit(
+    scene_id = storage.save_scene(
         name,
         storage.list_pads(),
         storage.list_pad_effects(),
@@ -998,40 +1266,160 @@ async def save_kit(body: KitRequest):
         },
         sequencer_steps=storage.list_sequencer_steps(),
     )
-    await _broadcast_kits()
-    return {"ok": True, "kit": {"id": kit_id, "name": name}}
+    await _broadcast_scenes()
+    return {"ok": True, "scene": {"id": scene_id, "name": name}}
 
 
 class SceneActiveRequest(BaseModel):
     active: bool
 
 
-@app.post("/api/kits/{kit_id}/active")
-async def set_kit_active(kit_id: int, body: SceneActiveRequest):
-    if not storage.set_kit_active(kit_id, body.active):
-        raise HTTPException(404, "kit not found")
-    await _broadcast_kits()
+@app.post("/api/scenes/{scene_id}/active")
+async def set_scene_active(scene_id: int, body: SceneActiveRequest):
+    if not storage.set_scene_active(scene_id, body.active):
+        raise HTTPException(404, "scene not found")
+    await _broadcast_scenes()
     return {"ok": True}
+
+
+@app.delete("/api/scenes/{scene_id}")
+async def delete_scene(scene_id: int):
+    if not storage.delete_scene(scene_id):
+        raise HTTPException(404, "scene not found")
+    await _broadcast_scenes()
+    return {"ok": True}
+
+
+@app.post("/api/scenes/{scene_id}/load")
+async def load_scene(scene_id: int):
+    scene = storage.load_scene(scene_id)
+    if scene is None:
+        raise HTTPException(404, "scene not found")
+
+    storage.set_setting("current_scene_id", str(scene_id))
+    await _apply_scene_and_broadcast(scene)
+    await _broadcast_scenes()
+    return {"ok": True, "scene": {"id": scene["id"], "name": scene["name"]}}
+
+
+# ── Kits (curated sound sets, catalog CRUD - no live WS sync, same as /api/sounds) ──
+
+
+@app.get("/api/kits")
+def list_kits():
+    return storage.list_kits()
+
+
+@app.get("/api/kits/categories")
+def list_kit_categories():
+    return storage.list_kit_categories()
+
+
+@app.get("/api/kits/{kit_id}")
+def get_kit(kit_id: int):
+    kit = storage.get_kit(kit_id)
+    if kit is None:
+        raise HTTPException(404, "kit not found")
+    return kit
 
 
 @app.delete("/api/kits/{kit_id}")
-async def delete_kit(kit_id: int):
+def delete_kit(kit_id: int):
     if not storage.delete_kit(kit_id):
         raise HTTPException(404, "kit not found")
-    await _broadcast_kits()
     return {"ok": True}
 
 
-@app.post("/api/kits/{kit_id}/load")
-async def load_kit(kit_id: int):
-    kit = storage.load_kit(kit_id)
-    if kit is None:
-        raise HTTPException(404, "kit not found")
+@app.post("/api/kits/import")
+async def import_kit_pack(file: UploadFile):
+    """Uploads a kit pack (.zip, see curate_kit_pack.py) - the primary way to
+    add kits on the Pi, from the Config tab, without SSH/laptop access."""
+    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+        while chunk := await file.read(1024 * 1024):
+            tmp.write(chunk)
+    try:
+        kit_ids = kit_import.import_pack(tmp_path)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(400, str(exc))
+    finally:
+        tmp_path.unlink(missing_ok=True)
+    return {"kit_ids": kit_ids}
 
-    storage.set_setting("current_kit_id", str(kit_id))
-    await _apply_kit_and_broadcast(kit)
-    await _broadcast_kits()
-    return {"ok": True, "kit": {"id": kit["id"], "name": kit["name"]}}
+
+# ── Kit browse mode (touchscreen test endpoints - the real UX is hardware-driven,
+#    these exist so the feature is exercisable end-to-end without a physical SMC-PAD) ──
+
+
+def _require_armed() -> None:
+    if _kit_browse_state is None or _kit_browse_state.get("target_pad") is not None:
+        raise HTTPException(409, "not armed (call toggle first)")
+
+
+def _require_browsing() -> None:
+    if _kit_browse_state is None or _kit_browse_state.get("target_pad") is None:
+        raise HTTPException(409, "not browsing (select a target pad first)")
+
+
+@app.post("/api/kit-browse/toggle")
+async def kit_browse_toggle():
+    if _kit_browse_state is None:
+        await _kit_browse_arm()
+    else:
+        await _kit_browse_back()
+    return _kit_browse_payload()
+
+
+@app.post("/api/kit-browse/select-target")
+async def kit_browse_select_target(body: KitBrowseSelectTargetRequest):
+    _require_armed()
+    if not 1 <= body.pad_number <= 16:
+        raise HTTPException(400, "pad_number must be between 1 and 16")
+    await _kit_browse_select_target(body.pad_number)
+    return _kit_browse_payload()
+
+
+@app.post("/api/kit-browse/nav")
+async def kit_browse_nav(body: KitBrowseNavRequest):
+    _require_browsing()
+    if body.direction not in ("up", "down", "left", "right"):
+        raise HTTPException(400, "direction must be up/down/left/right")
+    await _kit_browse_nav(body.direction)
+    return _kit_browse_payload()
+
+
+@app.post("/api/kit-browse/confirm")
+async def kit_browse_confirm_endpoint():
+    _require_browsing()
+    await _kit_browse_confirm()
+    return _kit_browse_payload()
+
+
+@app.post("/api/kit-browse/back")
+async def kit_browse_back_endpoint():
+    if _kit_browse_state is None:
+        raise HTTPException(409, "not browsing")
+    await _kit_browse_back()
+    return _kit_browse_payload()
+
+
+@app.post("/api/kit-browse/preview/{pad_number}")
+async def kit_browse_preview(pad_number: int):
+    """Despite the name (kept for URL stability), this now picks pad_number's
+    sound as the browsing candidate - not a bare one-off preview note - since
+    kit-browse mode is per-target-pad now: see _kit_browse_select_candidate."""
+    _require_browsing()
+    if not 1 <= pad_number <= 16:
+        raise HTTPException(400, "pad_number must be between 1 and 16")
+    await _kit_browse_select_candidate(pad_number)
+    return _kit_browse_payload()
+
+
+@app.post("/api/settings/kit_browse_preview")
+async def set_kit_browse_preview(body: KitBrowsePreviewRequest):
+    storage.set_setting("kit_browse_preview_enabled", "1" if body.enabled else "0")
+    await _broadcast_settings()
+    return {"ok": True}
 
 
 # ── Controller actions (dedicated SMC-PAD controls) ──────────────────────────
@@ -1263,9 +1651,9 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.send_json({"type": "engine_status", **(await asyncio.to_thread(orchestrator.engine_status))})
         await ws.send_json(
             {
-                "type": "kits",
-                "kits": storage.list_kits(),
-                "current_kit_id": storage.get_settings().get("current_kit_id"),
+                "type": "scenes",
+                "scenes": storage.list_scenes(),
+                "current_scene_id": storage.get_settings().get("current_scene_id"),
             }
         )
         await ws.send_json({"type": "patterns", "patterns": storage.list_patterns()})
@@ -1284,6 +1672,7 @@ async def websocket_endpoint(ws: WebSocket):
                 "style": storage.get_settings().get("metronome_style", metronome_sounds.DEFAULT_STYLE),
             }
         )
+        await ws.send_json(_kit_browse_payload())
         while True:
             await ws.receive_text()  # client doesn't send anything meaningful; just keep alive
     except WebSocketDisconnect:

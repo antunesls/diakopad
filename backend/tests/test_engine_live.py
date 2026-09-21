@@ -70,10 +70,10 @@ class PadApplyResponsivenessTests(unittest.IsolatedAsyncioTestCase):
 class ApplyAllPadsClearsEmptyPadsTests(unittest.IsolatedAsyncioTestCase):
     async def test_apply_all_pads_stops_a_pad_that_lost_its_sample(self):
         """Regression: apply_all_pads used to only call apply_pad() for pads
-        that currently have a filename, so a pad cleared by a kit switch
-        (had a sample in the old kit, none in the new one) was never told
+        that currently have a filename, so a pad cleared by a scene switch
+        (had a sample in the old scene, none in the new one) was never told
         to stop - its old sfizz instance kept running, still wired to
-        hardware MIDI, and kept playing the previous kit's sample forever."""
+        hardware MIDI, and kept playing the previous scene's sample forever."""
         pads = [
             {"pad_number": 1, "filename": "kick.wav"},
             {"pad_number": 16, "filename": None},
@@ -360,7 +360,7 @@ class PanicTests(unittest.IsolatedAsyncioTestCase):
         emergency_stop_all.assert_called_once()
 
 
-class KitRoundtripTests(unittest.TestCase):
+class SceneRoundtripTests(unittest.TestCase):
     def _with_temp_db(self):
         temp_ctx = tempfile.TemporaryDirectory()
         original_db_path = storage.DB_PATH
@@ -368,17 +368,17 @@ class KitRoundtripTests(unittest.TestCase):
         storage.init_db()
         return temp_ctx, original_db_path
 
-    def test_save_and_load_kit_restores_pads_and_effects(self):
+    def test_save_and_load_scene_restores_pads_and_effects(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
             storage.set_pad_effect_slot(1, 1, "reverb")
             pads_before = storage.list_pads()
-            kit_id = storage.save_kit("show-a", pads_before, storage.list_pad_effects())
+            scene_id = storage.save_scene("show-a", pads_before, storage.list_pad_effects())
 
             storage.set_pad_effect_slot(1, 1, None)
             storage.set_pad_effect_slot(2, 2, "delay")
             storage.set_pad_mix(1, volume_db=-3, pan=0.5)
-            loaded = storage.load_kit(kit_id)
+            loaded = storage.load_scene(scene_id)
 
             self.assertIsNotNone(loaded)
             restored = {
@@ -392,13 +392,13 @@ class KitRoundtripTests(unittest.TestCase):
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
 
-    def test_load_kit_preserves_midi_notes(self):
+    def test_load_scene_preserves_midi_notes(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
             storage.set_pad_note(3, 99)
-            kit_id = storage.save_kit("notes", storage.list_pads(), storage.list_pad_effects())
+            scene_id = storage.save_scene("notes", storage.list_pads(), storage.list_pad_effects())
 
-            storage.load_kit(kit_id)
+            storage.load_scene(scene_id)
 
             self.assertEqual(
                 next(p["midi_note"] for p in storage.list_pads() if p["pad_number"] == 3), 99
@@ -407,19 +407,19 @@ class KitRoundtripTests(unittest.TestCase):
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
 
-    def test_save_and_load_kit_roundtrips_knob_mappings(self):
+    def test_save_and_load_scene_roundtrips_knob_mappings(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
             storage.set_pad_effect_slot(1, 1, "reverb")
             storage.set_knob_mapping(74, "global", None, "tempo")
             storage.set_knob_mapping(71, "pad", 1, "slot1:decay")
-            kit_id = storage.save_kit(
+            scene_id = storage.save_scene(
                 "knobs", storage.list_pads(), storage.list_pad_effects(), storage.list_knob_mappings()
             )
 
             storage.delete_knob_mapping(74)
             storage.set_knob_mapping(75, "global", None, "tempo")
-            loaded = storage.load_kit(kit_id)
+            loaded = storage.load_scene(scene_id)
 
             self.assertIsNotNone(loaded)
             mappings = {
@@ -433,14 +433,14 @@ class KitRoundtripTests(unittest.TestCase):
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
 
-    def test_legacy_kit_without_knobs_leaves_current_mappings_untouched(self):
+    def test_legacy_scene_without_knobs_leaves_current_mappings_untouched(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
             # Saved before knobs joined the snapshot: no knob rows captured.
-            kit_id = storage.save_kit("legacy", storage.list_pads(), storage.list_pad_effects())
+            scene_id = storage.save_scene("legacy", storage.list_pads(), storage.list_pad_effects())
 
             storage.set_knob_mapping(74, "global", None, "tempo")
-            loaded = storage.load_kit(kit_id)
+            loaded = storage.load_scene(scene_id)
 
             self.assertIsNotNone(loaded)
             mappings = {m["cc_number"] for m in storage.list_knob_mappings()}
@@ -449,28 +449,28 @@ class KitRoundtripTests(unittest.TestCase):
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
 
-    def test_save_kit_overwrites_same_name(self):
+    def test_save_scene_overwrites_same_name(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
             storage.set_pad_effect_slot(1, 1, "reverb")
-            first = storage.save_kit("dup", storage.list_pads(), storage.list_pad_effects())
+            first = storage.save_scene("dup", storage.list_pads(), storage.list_pad_effects())
             storage.set_pad_effect_slot(1, 1, None)
-            second = storage.save_kit("dup", storage.list_pads(), storage.list_pad_effects())
+            second = storage.save_scene("dup", storage.list_pads(), storage.list_pad_effects())
 
             self.assertEqual(first, second)
-            kit = storage.get_kit(first)
+            scene = storage.get_scene(first)
             plugin = next(
-                e["plugin_id"] for e in kit["effects"] if e["pad_number"] == 1 and e["slot_index"] == 1
+                e["plugin_id"] for e in scene["effects"] if e["pad_number"] == 1 and e["slot_index"] == 1
             )
             self.assertIsNone(plugin)
-            self.assertEqual(len(storage.list_kits()), 1)
+            self.assertEqual(len(storage.list_scenes()), 1)
         finally:
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
 
 
-class KitLoadEndpointTests(unittest.IsolatedAsyncioTestCase):
-    async def test_load_kit_applies_engine_and_rebuilds_note_map(self):
+class SceneLoadEndpointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_load_scene_applies_engine_and_rebuilds_note_map(self):
         original_notes = diakopad_app._pad_notes
         temp_ctx = tempfile.TemporaryDirectory()
         original_db_path = storage.DB_PATH
@@ -478,13 +478,13 @@ class KitLoadEndpointTests(unittest.IsolatedAsyncioTestCase):
         storage.init_db()
         try:
             storage.set_pad_note(3, 99)
-            kit_id = storage.save_kit("live", storage.list_pads(), storage.list_pad_effects())
+            scene_id = storage.save_scene("live", storage.list_pads(), storage.list_pad_effects())
             with (
                 patch("app.orchestrator.apply_all_pads", new=AsyncMock()) as apply_all,
                 patch("app._broadcast_pads", new=AsyncMock()) as broadcast_pads,
                 patch("app._broadcast_pad_effects", new=AsyncMock()),
             ):
-                result = await diakopad_app.load_kit(kit_id)
+                result = await diakopad_app.load_scene(scene_id)
 
             self.assertTrue(result["ok"])
             apply_all.assert_awaited_once()
@@ -498,7 +498,7 @@ class KitLoadEndpointTests(unittest.IsolatedAsyncioTestCase):
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
 
-    async def test_load_kit_missing_returns_404(self):
+    async def test_load_scene_missing_returns_404(self):
         from fastapi import HTTPException
 
         temp_ctx = tempfile.TemporaryDirectory()
@@ -507,7 +507,7 @@ class KitLoadEndpointTests(unittest.IsolatedAsyncioTestCase):
         storage.init_db()
         try:
             with self.assertRaises(HTTPException) as ctx:
-                await diakopad_app.load_kit(999)
+                await diakopad_app.load_scene(999)
             self.assertEqual(ctx.exception.status_code, 404)
         finally:
             storage.DB_PATH = original_db_path
@@ -525,15 +525,15 @@ class ControllerBindingStorageTests(unittest.TestCase):
     def test_relearning_a_signal_replaces_its_old_binding_only(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
-            storage.add_controller_binding("kit_next", "note", 45)
-            storage.add_controller_binding("kit_next", "cc", 20)
+            storage.add_controller_binding("scene_next", "note", 45)
+            storage.add_controller_binding("scene_next", "cc", 20)
 
             storage.add_controller_binding("looper_record_toggle", "note", 45)
 
             self.assertEqual(storage.get_action_for_signal("note", 45), "looper_record_toggle")
-            self.assertEqual(storage.get_action_for_signal("cc", 20), "kit_next")
+            self.assertEqual(storage.get_action_for_signal("cc", 20), "scene_next")
             bindings = storage.list_controller_bindings()
-            self.assertEqual(len(bindings["kit_next"]), 1)
+            self.assertEqual(len(bindings["scene_next"]), 1)
             self.assertEqual(len(bindings["looper_record_toggle"]), 1)
         finally:
             storage.DB_PATH = original_db_path
@@ -542,10 +542,10 @@ class ControllerBindingStorageTests(unittest.TestCase):
     def test_one_action_can_have_several_bindings(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
-            storage.add_controller_binding("kit_next", "note", 10)
-            storage.add_controller_binding("kit_next", "note", 11)
+            storage.add_controller_binding("scene_next", "note", 10)
+            storage.add_controller_binding("scene_next", "note", 11)
 
-            bindings = storage.list_controller_bindings()["kit_next"]
+            bindings = storage.list_controller_bindings()["scene_next"]
             self.assertEqual({b["number"] for b in bindings}, {10, 11})
         finally:
             storage.DB_PATH = original_db_path
@@ -554,7 +554,7 @@ class ControllerBindingStorageTests(unittest.TestCase):
     def test_delete_controller_binding(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
-            binding_id = storage.add_controller_binding("kit_next", "note", 10)
+            binding_id = storage.add_controller_binding("scene_next", "note", 10)
 
             self.assertTrue(storage.delete_controller_binding(binding_id))
             self.assertIsNone(storage.get_action_for_signal("note", 10))
@@ -575,7 +575,7 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
     async def test_handle_note_dispatches_bound_action_instead_of_a_pad(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
-            storage.add_controller_binding("kit_next", "note", 45)
+            storage.add_controller_binding("scene_next", "note", 45)
             with (
                 patch("app._dispatch_controller_action", new=AsyncMock()) as dispatch,
                 patch("app._queue_pad_hit") as queue_hit,
@@ -584,7 +584,7 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
                 diakopad_app._handle_note(45, 100)
                 await asyncio.sleep(0)
 
-            dispatch.assert_awaited_once_with("kit_next")
+            dispatch.assert_awaited_once_with("scene_next")
             queue_hit.assert_not_called()
         finally:
             storage.DB_PATH = original_db_path
@@ -610,7 +610,7 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
     async def test_handle_cc_bound_action_fires_once_per_button_press(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
-            storage.add_controller_binding("kit_next", "cc", 20)
+            storage.add_controller_binding("scene_next", "cc", 20)
             with patch("app._dispatch_controller_action", new=AsyncMock()) as dispatch:
                 # A momentary button: a burst of nonzero values while held,
                 # then 0 on release - must dispatch exactly once.
@@ -620,7 +620,7 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
                 diakopad_app._handle_cc(20, 0)
                 await asyncio.sleep(0)
 
-                dispatch.assert_awaited_once_with("kit_next")
+                dispatch.assert_awaited_once_with("scene_next")
 
                 # Re-armed by the release: a new press dispatches again.
                 diakopad_app._handle_cc(20, 127)
@@ -634,13 +634,13 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_handle_note_captures_a_pending_learn_instead_of_dispatching(self):
         temp_ctx, original_db_path = self._with_temp_db()
-        diakopad_app._pending_controller_learn = "kit_next"
+        diakopad_app._pending_controller_learn = "scene_next"
         try:
             with patch("app.manager.broadcast", new=AsyncMock()) as broadcast:
                 diakopad_app._handle_note(77, 100)
                 await asyncio.sleep(0)
 
-            self.assertEqual(storage.get_action_for_signal("note", 77), "kit_next")
+            self.assertEqual(storage.get_action_for_signal("note", 77), "scene_next")
             self.assertIsNone(diakopad_app._pending_controller_learn)
             broadcast.assert_any_await(
                 {
@@ -737,63 +737,63 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
         overdub_stop.assert_called_once()
         overdub_start.assert_not_called()
 
-    async def test_kit_next_advances_and_wraps_around_to_the_first_kit(self):
+    async def test_scene_next_advances_and_wraps_around_to_the_first_scene(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
-            kit_a = storage.save_kit("a", storage.list_pads(), storage.list_pad_effects())
-            kit_b = storage.save_kit("b", storage.list_pads(), storage.list_pad_effects())
-            storage.set_setting("current_kit_id", str(kit_b))
+            scene_a = storage.save_scene("a", storage.list_pads(), storage.list_pad_effects())
+            scene_b = storage.save_scene("b", storage.list_pads(), storage.list_pad_effects())
+            storage.set_setting("current_scene_id", str(scene_b))
 
-            with patch("app._apply_kit_and_broadcast", new=AsyncMock()) as apply_kit:
-                await diakopad_app._dispatch_controller_action("kit_next")
+            with patch("app._apply_scene_and_broadcast", new=AsyncMock()) as apply_scene:
+                await diakopad_app._dispatch_controller_action("scene_next")
 
-            apply_kit.assert_awaited_once()
-            self.assertEqual(storage.get_settings()["current_kit_id"], str(kit_a))
+            apply_scene.assert_awaited_once()
+            self.assertEqual(storage.get_settings()["current_scene_id"], str(scene_a))
         finally:
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
 
-    async def test_kit_prev_moves_backwards_and_wraps_around_to_the_last_kit(self):
+    async def test_scene_prev_moves_backwards_and_wraps_around_to_the_last_scene(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
-            kit_a = storage.save_kit("a", storage.list_pads(), storage.list_pad_effects())
-            kit_b = storage.save_kit("b", storage.list_pads(), storage.list_pad_effects())
-            storage.set_setting("current_kit_id", str(kit_a))
+            scene_a = storage.save_scene("a", storage.list_pads(), storage.list_pad_effects())
+            scene_b = storage.save_scene("b", storage.list_pads(), storage.list_pad_effects())
+            storage.set_setting("current_scene_id", str(scene_a))
 
-            with patch("app._apply_kit_and_broadcast", new=AsyncMock()) as apply_kit:
-                await diakopad_app._dispatch_controller_action("kit_prev")
+            with patch("app._apply_scene_and_broadcast", new=AsyncMock()) as apply_scene:
+                await diakopad_app._dispatch_controller_action("scene_prev")
 
-            apply_kit.assert_awaited_once()
-            self.assertEqual(storage.get_settings()["current_kit_id"], str(kit_b))
+            apply_scene.assert_awaited_once()
+            self.assertEqual(storage.get_settings()["current_scene_id"], str(scene_b))
         finally:
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
 
-    async def test_kit_next_is_a_noop_when_there_are_no_kits(self):
+    async def test_scene_next_is_a_noop_when_there_are_no_scenes(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
-            with patch("app._apply_kit_and_broadcast", new=AsyncMock()) as apply_kit:
-                await diakopad_app._dispatch_controller_action("kit_next")
+            with patch("app._apply_scene_and_broadcast", new=AsyncMock()) as apply_scene:
+                await diakopad_app._dispatch_controller_action("scene_next")
 
-            apply_kit.assert_not_awaited()
+            apply_scene.assert_not_awaited()
         finally:
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
 
-    async def test_kit_next_skips_inactive_scenes(self):
+    async def test_scene_next_skips_inactive_scenes(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
-            kit_a = storage.save_kit("a", storage.list_pads(), storage.list_pad_effects())
-            kit_b = storage.save_kit("b", storage.list_pads(), storage.list_pad_effects())
-            storage.set_kit_active(kit_a, False)
-            storage.set_setting("current_kit_id", str(kit_b))
+            scene_a = storage.save_scene("a", storage.list_pads(), storage.list_pad_effects())
+            scene_b = storage.save_scene("b", storage.list_pads(), storage.list_pad_effects())
+            storage.set_scene_active(scene_a, False)
+            storage.set_setting("current_scene_id", str(scene_b))
 
-            with patch("app._apply_kit_and_broadcast", new=AsyncMock()) as apply_kit:
-                await diakopad_app._dispatch_controller_action("kit_next")
+            with patch("app._apply_scene_and_broadcast", new=AsyncMock()) as apply_scene:
+                await diakopad_app._dispatch_controller_action("scene_next")
 
-            apply_kit.assert_awaited_once()
-            # Only kit_b is active, so next wraps back onto itself.
-            self.assertEqual(storage.get_settings()["current_kit_id"], str(kit_b))
+            apply_scene.assert_awaited_once()
+            # Only scene_b is active, so next wraps back onto itself.
+            self.assertEqual(storage.get_settings()["current_scene_id"], str(scene_b))
         finally:
             storage.DB_PATH = original_db_path
             temp_ctx.cleanup()
@@ -835,13 +835,47 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
         tempo_set.assert_not_called()
         broadcast_tempo.assert_not_awaited()
 
+    async def test_note_bound_tap_registers_once_per_note_on(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            storage.add_controller_binding("tap_tempo", "note", 54)
+            with (
+                patch("app.tempo.register_tap", return_value=None) as register_tap,
+                patch("app._broadcast_midi_note", new=AsyncMock()),
+            ):
+                diakopad_app._handle_note(54, 127)
+                await asyncio.sleep(0)
+
+            register_tap.assert_called_once()
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
+    async def test_zero_velocity_note_never_dispatches_a_controller_action(self):
+        temp_ctx, original_db_path = self._with_temp_db()
+        try:
+            storage.add_controller_binding("tap_tempo", "note", 54)
+            with (
+                patch("app.tempo.register_tap", return_value=None) as register_tap,
+                patch("app._broadcast_midi_note", new=AsyncMock()),
+            ):
+                # A release encoded as "Note On velocity 0" must never count as
+                # a tap (only a genuine Note On does).
+                diakopad_app._handle_note(54, 0)
+                await asyncio.sleep(0)
+
+            register_tap.assert_not_called()
+        finally:
+            storage.DB_PATH = original_db_path
+            temp_ctx.cleanup()
+
     async def test_apply_scene_restores_global_state_and_transports(self):
         temp_ctx, original_db_path = self._with_temp_db()
         try:
             storage.set_setting("sequencer_bpm", "150")
             storage.set_setting("metronome_signature", "5_4")
             storage.set_sequencer_step(2, 3, True)
-            kit_id = storage.save_kit(
+            scene_id = storage.save_scene(
                 "cena",
                 storage.list_pads(),
                 storage.list_pad_effects(),
@@ -855,7 +889,7 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
                 },
                 sequencer_steps=storage.list_sequencer_steps(),
             )
-            kit = storage.load_kit(kit_id)
+            scene = storage.load_scene(scene_id)
 
             with (
                 patch("app.tempo.set") as tempo_set,
@@ -872,7 +906,7 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
                 patch("app._broadcast_sequencer", new=AsyncMock()),
                 patch("app._broadcast_metronome", new=AsyncMock()),
             ):
-                await diakopad_app._apply_kit_and_broadcast(kit)
+                await diakopad_app._apply_scene_and_broadcast(scene)
 
             tempo_set.assert_called_once_with(150.0)
             set_signature.assert_called_once_with("5_4")
@@ -885,7 +919,7 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
 
 
 class EffectSlotApplyTests(unittest.IsolatedAsyncioTestCase):
-    """Kits saved before a catalog swap (e.g. mda/Ambience -> Dragonfly
+    """Scenes saved before a catalog swap (e.g. mda/Ambience -> Dragonfly
     reverb) carry param symbols the new plugin doesn't have - they must be
     filtered out (with defaults filling in) before reaching param_set."""
 

@@ -14,7 +14,7 @@
     pendingLearn: null,
     pendingNoteLearn: null,
     selectedPad: null,
-    settings: { sustain_mode: "1", velocity_sensitive: "0" },
+    settings: { sustain_mode: "1", velocity_sensitive: "0", kit_browse_preview_enabled: "1" },
     padEffects: [],
     effectsCatalog: [],
     sequencer: { running: false, current_step: 0, steps: [] },
@@ -25,13 +25,16 @@
     timeSignatures: [],
     master: { available: false, volume: 100, muted: false, limiter_available: false, limiter_enabled: true, limiter_threshold_db: -1 },
     engineStatus: { jack: false, modhost: false, pads: {}, metronome: false, cpu_percent: null, last_error: null },
-    kits: [],
-    kitIndex: 0,
-    kitSearch: "",
+    scenes: [],
+    sceneIndex: 0,
+    sceneSearch: "",
     patterns: [],
     patternIndex: 0,
     controllerActions: { bindings: {}, pending_learn: null },
+    kitBrowse: { active: false },
   };
+
+  const KIT_BROWSE_RESERVED_PADS = { 13: "up", 14: "left", 15: "right", 16: "down", 1: "back", 4: "confirm" };
 
   const knobPicker = { step: null, scope: null, padNumber: null };
   let looperTimer = null;
@@ -42,12 +45,12 @@
   const el = {
     padGrid: document.getElementById("pad-grid"),
     perfPadGrid: document.getElementById("perf-pad-grid"),
-    kitPrev: document.getElementById("kit-prev"),
-    kitNext: document.getElementById("kit-next"),
-    kitName: document.getElementById("kit-name"),
-    kitCount: document.getElementById("kit-count"),
-    kitSave: document.getElementById("kit-save"),
-    kitDelete: document.getElementById("kit-delete"),
+    scenePrev: document.getElementById("scene-prev"),
+    sceneNext: document.getElementById("scene-next"),
+    sceneName: document.getElementById("scene-name"),
+    sceneCount: document.getElementById("scene-count"),
+    sceneSave: document.getElementById("scene-save"),
+    sceneDelete: document.getElementById("scene-delete"),
     sceneSearch: document.getElementById("scene-search"),
     sceneList: document.getElementById("scene-list"),
     patternPrev: document.getElementById("pattern-prev"),
@@ -102,6 +105,7 @@
     previewAudio: document.getElementById("preview-audio"),
     settingSustain: document.getElementById("setting-sustain"),
     settingVelocity: document.getElementById("setting-velocity"),
+    settingKitBrowsePreview: document.getElementById("setting-kit-browse-preview"),
     fullRestartBtn: document.getElementById("full-restart-btn"),
     clearAllPadsBtn: document.getElementById("clear-all-pads-btn"),
     controllerBindingsLooperRecordToggle: document.getElementById("controller-bindings-looper_record_toggle"),
@@ -114,10 +118,13 @@
     controllerLearnBtnLooperPlayToggle: document.getElementById("controller-learn-btn-looper_play_toggle"),
     controllerBindingsLooperOverdubToggle: document.getElementById("controller-bindings-looper_overdub_toggle"),
     controllerLearnBtnLooperOverdubToggle: document.getElementById("controller-learn-btn-looper_overdub_toggle"),
-    controllerBindingsKitNext: document.getElementById("controller-bindings-kit_next"),
-    controllerLearnBtnKitNext: document.getElementById("controller-learn-btn-kit_next"),
-    controllerBindingsKitPrev: document.getElementById("controller-bindings-kit_prev"),
-    controllerLearnBtnKitPrev: document.getElementById("controller-learn-btn-kit_prev"),
+    controllerBindingsSceneNext: document.getElementById("controller-bindings-scene_next"),
+    controllerLearnBtnSceneNext: document.getElementById("controller-learn-btn-scene_next"),
+    controllerBindingsScenePrev: document.getElementById("controller-bindings-scene_prev"),
+    controllerLearnBtnScenePrev: document.getElementById("controller-learn-btn-scene_prev"),
+    controllerBindingsKitBrowseToggle: document.getElementById("controller-bindings-kit_browse_toggle"),
+    controllerLearnBtnKitBrowseToggle: document.getElementById("controller-learn-btn-kit_browse_toggle"),
+    kitBrowseBanner: document.getElementById("kit-browse-banner"),
     sequencerPlayBtn: document.getElementById("sequencer-play-btn"),
     sequencerBpm: document.getElementById("sequencer-bpm"),
     sequencerClearBtn: document.getElementById("sequencer-clear-btn"),
@@ -320,6 +327,7 @@
     };
     button.addEventListener("pointerdown", () => {
       longPressed = false;
+      if (state.kitBrowse.active) return;
       pressTimer = setTimeout(() => {
         longPressed = true;
         pressTimer = null;
@@ -349,12 +357,50 @@
         grid.appendChild(buildPadButton(pad));
       }
     }
+    // Fresh buttons never carry the kit-browse pulse/highlight classes -
+    // reapply them from the current state (harmless no-op when not browsing).
+    renderKitBrowseGridState();
   }
 
   // The hit animation comes from the server's pad_hit broadcast, so every
   // client (including this one) flashes exactly once per hit.
   async function triggerScreenPad(padNumber) {
+    if (state.kitBrowse.active) {
+      await triggerKitBrowsePad(padNumber);
+      return;
+    }
     await fetch(`/api/pads/${padNumber}/trigger`, { method: "POST" });
+  }
+
+  // Lets the touchscreen exercise kit-browse mode end-to-end without a
+  // physical SMC-PAD. Two phases, matching the hardware flow: "armed" -
+  // ANY pad tap picks the target pad being edited; "browsing" - reserved
+  // pads hit nav/confirm/back, everything else picks that pad-role's sound
+  // in the highlighted kit as the candidate (previewed if the setting
+  // allows).
+  async function triggerKitBrowsePad(padNumber) {
+    if (state.kitBrowse.phase === "armed") {
+      await fetch("/api/kit-browse/select-target", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pad_number: padNumber }),
+      });
+      return;
+    }
+    const role = KIT_BROWSE_RESERVED_PADS[padNumber];
+    if (role === "back") {
+      await fetch("/api/kit-browse/back", { method: "POST" });
+    } else if (role === "confirm") {
+      await fetch("/api/kit-browse/confirm", { method: "POST" });
+    } else if (role) {
+      await fetch("/api/kit-browse/nav", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ direction: role }),
+      });
+    } else {
+      await fetch(`/api/kit-browse/preview/${padNumber}`, { method: "POST" });
+    }
   }
 
   function flashPadHit(padNumber) {
@@ -388,41 +434,41 @@
   // stay saved in the manager list below. Scene switching re-applies every pad
   // in the engine, so the grid shows a busy state while it runs.
 
-  function activeKits() {
-    return state.kits.filter((k) => k.active);
+  function activeScenes() {
+    return state.scenes.filter((s) => s.active);
   }
 
-  function currentKit() {
-    return activeKits()[state.kitIndex] || null;
+  function currentScene() {
+    return activeScenes()[state.sceneIndex] || null;
   }
 
-  async function loadKits() {
-    const res = await fetch("/api/kits");
-    state.kits = await res.json();
-    if (state.kitIndex >= activeKits().length) state.kitIndex = 0;
-    renderKitStrip();
+  async function loadScenes() {
+    const res = await fetch("/api/scenes");
+    state.scenes = await res.json();
+    if (state.sceneIndex >= activeScenes().length) state.sceneIndex = 0;
+    renderSceneStrip();
     renderSceneList();
   }
 
-  function renderKitStrip() {
-    const act = activeKits();
-    const kit = currentKit();
-    el.kitName.textContent = kit ? kit.name : "Nenhuma cena ativa";
-    el.kitCount.textContent = act.length ? `${state.kitIndex + 1} / ${act.length}` : "";
-    el.kitPrev.disabled = act.length < 2;
-    el.kitNext.disabled = act.length < 2;
-    el.kitDelete.disabled = !kit;
+  function renderSceneStrip() {
+    const act = activeScenes();
+    const scene = currentScene();
+    el.sceneName.textContent = scene ? scene.name : "Nenhuma cena ativa";
+    el.sceneCount.textContent = act.length ? `${state.sceneIndex + 1} / ${act.length}` : "";
+    el.scenePrev.disabled = act.length < 2;
+    el.sceneNext.disabled = act.length < 2;
+    el.sceneDelete.disabled = !scene;
   }
 
   function renderSceneList() {
-    const term = state.kitSearch.trim().toLowerCase();
-    const scenes = state.kits.filter((k) => !term || k.name.toLowerCase().includes(term));
+    const term = state.sceneSearch.trim().toLowerCase();
+    const scenes = state.scenes.filter((s) => !term || s.name.toLowerCase().includes(term));
     el.sceneList.innerHTML = "";
     if (!scenes.length) {
       el.sceneList.innerHTML = `<li class="scene-empty">Nenhuma cena${term ? " encontrada" : " salva"}.</li>`;
       return;
     }
-    const current = currentKit();
+    const current = currentScene();
     for (const scene of scenes) {
       const li = document.createElement("li");
       li.className = "scene-row" + (current && current.id === scene.id ? " current" : "");
@@ -434,44 +480,44 @@
         <button class="icon-btn delete-btn" title="Excluir">🗑</button>
       `;
       li.querySelector(".scene-active-toggle input").addEventListener("change", (e) => {
-        fetch(`/api/kits/${scene.id}/active`, {
+        fetch(`/api/scenes/${scene.id}/active`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ active: e.target.checked }),
         });
       });
       li.querySelector(".scene-load-btn").addEventListener("click", () => {
-        const index = activeKits().findIndex((k) => k.id === scene.id);
-        if (index >= 0) loadKitAt(index);
+        const index = activeScenes().findIndex((s) => s.id === scene.id);
+        if (index >= 0) loadSceneAt(index);
       });
-      li.querySelector(".delete-btn").addEventListener("click", () => deleteKit(scene));
+      li.querySelector(".delete-btn").addEventListener("click", () => deleteScene(scene));
       el.sceneList.appendChild(li);
     }
   }
 
-  async function loadKitAt(index) {
-    const act = activeKits();
+  async function loadSceneAt(index) {
+    const act = activeScenes();
     if (!act.length) return;
-    state.kitIndex = (index + act.length) % act.length;
-    renderKitStrip();
+    state.sceneIndex = (index + act.length) % act.length;
+    renderSceneStrip();
     renderSceneList();
-    const kit = currentKit();
+    const scene = currentScene();
     el.perfPadGrid.classList.add("applying");
     try {
-      await fetch(`/api/kits/${kit.id}/load`, { method: "POST" });
+      await fetch(`/api/scenes/${scene.id}/load`, { method: "POST" });
     } finally {
       el.perfPadGrid.classList.remove("applying");
     }
   }
 
-  async function saveCurrentKit() {
-    const current = currentKit();
+  async function saveCurrentScene() {
+    const current = currentScene();
     const suggestion = current ? current.name : "";
     const name = window.prompt("Nome da cena:", suggestion);
     if (name === null) return;
     const trimmed = name.trim();
     if (!trimmed) return;
-    const res = await fetch("/api/kits", {
+    const res = await fetch("/api/scenes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: trimmed }),
@@ -480,31 +526,31 @@
       window.alert("Não foi possível salvar a cena.");
       return;
     }
-    await loadKits();
-    const saved = activeKits().findIndex((k) => k.name === trimmed);
+    await loadScenes();
+    const saved = activeScenes().findIndex((s) => s.name === trimmed);
     if (saved >= 0) {
-      state.kitIndex = saved;
-      renderKitStrip();
+      state.sceneIndex = saved;
+      renderSceneStrip();
     }
   }
 
-  async function deleteKit(kit) {
-    if (!kit) return;
-    if (!window.confirm(`Excluir a cena "${kit.name}"?`)) return;
-    await fetch(`/api/kits/${kit.id}`, { method: "DELETE" });
-    await loadKits();
+  async function deleteScene(scene) {
+    if (!scene) return;
+    if (!window.confirm(`Excluir a cena "${scene.name}"?`)) return;
+    await fetch(`/api/scenes/${scene.id}`, { method: "DELETE" });
+    await loadScenes();
   }
 
-  function deleteCurrentKit() {
-    return deleteKit(currentKit());
+  function deleteCurrentScene() {
+    return deleteScene(currentScene());
   }
 
-  el.kitPrev.addEventListener("click", () => loadKitAt(state.kitIndex - 1));
-  el.kitNext.addEventListener("click", () => loadKitAt(state.kitIndex + 1));
-  el.kitSave.addEventListener("click", saveCurrentKit);
-  el.kitDelete.addEventListener("click", deleteCurrentKit);
+  el.scenePrev.addEventListener("click", () => loadSceneAt(state.sceneIndex - 1));
+  el.sceneNext.addEventListener("click", () => loadSceneAt(state.sceneIndex + 1));
+  el.sceneSave.addEventListener("click", saveCurrentScene);
+  el.sceneDelete.addEventListener("click", deleteCurrentScene);
   el.sceneSearch.addEventListener("input", () => {
-    state.kitSearch = el.sceneSearch.value;
+    state.sceneSearch = el.sceneSearch.value;
     renderSceneList();
   });
 
@@ -982,7 +1028,7 @@
   el.sequencerClearBtn.addEventListener("click", () => fetch("/api/sequencer/clear", { method: "POST" }));
 
   // Patterns: named snapshots of the sequencer grid (same relationship as
-  // Kits have to the pads), so a set can flip between programmed patterns
+  // scenes have to the pads), so a set can flip between programmed patterns
   // instead of only ever editing the one live grid.
 
   async function loadPatterns() {
@@ -1318,6 +1364,7 @@
   function renderSettings() {
     el.settingSustain.checked = state.settings.sustain_mode === "1";
     el.settingVelocity.checked = state.settings.velocity_sensitive === "1";
+    el.settingKitBrowsePreview.checked = state.settings.kit_browse_preview_enabled === "1";
   }
 
   el.settingSustain.addEventListener("change", () => {
@@ -1332,6 +1379,17 @@
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ velocity_sensitive: el.settingVelocity.checked }),
+    });
+  });
+  // Plain persistent toggle, not a MIDI-learned controller action - lets a
+  // performance turn off the auto-preview sound while browsing kits and
+  // forget about it (see the kit_browse_toggle row further down for the
+  // physical button that opens the navigation itself).
+  el.settingKitBrowsePreview.addEventListener("change", () => {
+    fetch("/api/settings/kit_browse_preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: el.settingKitBrowsePreview.checked }),
     });
   });
 
@@ -1356,13 +1414,17 @@
       chips: el.controllerBindingsLooperOverdubToggle,
       btn: el.controllerLearnBtnLooperOverdubToggle,
     },
-    kit_next: {
-      chips: el.controllerBindingsKitNext,
-      btn: el.controllerLearnBtnKitNext,
+    scene_next: {
+      chips: el.controllerBindingsSceneNext,
+      btn: el.controllerLearnBtnSceneNext,
     },
-    kit_prev: {
-      chips: el.controllerBindingsKitPrev,
-      btn: el.controllerLearnBtnKitPrev,
+    scene_prev: {
+      chips: el.controllerBindingsScenePrev,
+      btn: el.controllerLearnBtnScenePrev,
+    },
+    kit_browse_toggle: {
+      chips: el.controllerBindingsKitBrowseToggle,
+      btn: el.controllerLearnBtnKitBrowseToggle,
     },
   };
 
@@ -1790,13 +1852,13 @@
       } else if (msg.type === "metronome_tick") {
         state.metronome.beat_in_bar = msg.beat_in_bar;
         renderMetronomeBeat(msg.beat_in_bar);
-      } else if (msg.type === "kits") {
-        state.kits = msg.kits;
-        const act = activeKits();
-        const currentIdx = act.findIndex((k) => String(k.id) === String(msg.current_kit_id));
-        if (currentIdx >= 0) state.kitIndex = currentIdx;
-        else if (state.kitIndex >= act.length) state.kitIndex = 0;
-        renderKitStrip();
+      } else if (msg.type === "scenes") {
+        state.scenes = msg.scenes;
+        const act = activeScenes();
+        const currentIdx = act.findIndex((s) => String(s.id) === String(msg.current_scene_id));
+        if (currentIdx >= 0) state.sceneIndex = currentIdx;
+        else if (state.sceneIndex >= act.length) state.sceneIndex = 0;
+        renderSceneStrip();
         renderSceneList();
       } else if (msg.type === "patterns") {
         state.patterns = msg.patterns;
@@ -1816,12 +1878,62 @@
         renderControllerActions();
       } else if (msg.type === "navigate") {
         switchView(msg.view);
+      } else if (msg.type === "kit_browse") {
+        state.kitBrowse = msg;
+        renderKitBrowseBanner();
+        renderKitBrowseGridState();
       }
     });
   }
 
+  function renderKitBrowseBanner() {
+    const kb = state.kitBrowse;
+    if (!kb || !kb.active) {
+      el.kitBrowseBanner.classList.add("hidden");
+      el.kitBrowseBanner.textContent = "";
+      return;
+    }
+    el.kitBrowseBanner.classList.remove("hidden");
+    if (kb.phase === "armed") {
+      el.kitBrowseBanner.textContent = "Selecione o pad pra editar";
+      return;
+    }
+    const soundLabel = kb.candidate_display_name || "nenhum";
+    el.kitBrowseBanner.textContent =
+      `Editando pad ${kb.target_pad} — ${kb.category} (${kb.category_index + 1}/${kb.category_count}) · ` +
+      `${kb.kit.name} (${kb.kit_index + 1}/${kb.kit_count}) · som: ${soundLabel}`;
+  }
+
+  // Purely visual aid so the pad grid reflects kit-browse mode even when
+  // nobody's hands are on the touchscreen (selection happens on the
+  // physical controller): every pad pulses while "armed" (waiting for a tap
+  // to pick the target), then the chosen target pad flashes once and keeps
+  // a persistent highlight for the rest of the session.
+  let kitBrowseLastTargetPad = null;
+  function renderKitBrowseGridState() {
+    const kb = state.kitBrowse;
+    const active = !!(kb && kb.active);
+    const armed = active && kb.phase === "armed";
+    const targetPad = active && kb.phase === "browsing" ? kb.target_pad : null;
+
+    for (const grid of [el.padGrid, el.perfPadGrid]) {
+      for (const pad of grid.querySelectorAll(".pad")) {
+        pad.classList.toggle("awaiting-target", armed);
+        pad.classList.toggle(
+          "kit-browse-target",
+          targetPad !== null && Number(pad.dataset.padNumber) === targetPad
+        );
+      }
+    }
+
+    if (targetPad !== null && targetPad !== kitBrowseLastTargetPad) {
+      flashPadHit(targetPad);
+    }
+    kitBrowseLastTargetPad = targetPad;
+  }
+
   async function init() {
-    const [padsRes, soundsRes, knobsRes, settingsRes, padEffectsRes, catalogRes, knobTargetsRes, sequencerRes, looperRes, tempoRes, metronomeRes, metronomeStylesRes, metronomeSignaturesRes, masterRes, engineStatusRes, kitsRes, patternsRes, controllerActionsRes] =
+    const [padsRes, soundsRes, knobsRes, settingsRes, padEffectsRes, catalogRes, knobTargetsRes, sequencerRes, looperRes, tempoRes, metronomeRes, metronomeStylesRes, metronomeSignaturesRes, masterRes, engineStatusRes, scenesRes, patternsRes, controllerActionsRes] =
       await Promise.all([
         fetch("/api/pads"),
         fetch("/api/sounds"),
@@ -1838,7 +1950,7 @@
         fetch("/api/metronome/time-signatures"),
         fetch("/api/master"),
         fetch("/api/engine/status"),
-        fetch("/api/kits"),
+        fetch("/api/scenes"),
         fetch("/api/patterns"),
         fetch("/api/controller-actions"),
       ]);
@@ -1860,14 +1972,14 @@
     state.timeSignatures = await metronomeSignaturesRes.json();
     state.master = await masterRes.json();
     state.engineStatus = await engineStatusRes.json();
-    state.kits = await kitsRes.json();
-    if (state.kitIndex >= activeKits().length) state.kitIndex = 0;
+    state.scenes = await scenesRes.json();
+    if (state.sceneIndex >= activeScenes().length) state.sceneIndex = 0;
     state.patterns = await patternsRes.json();
     if (state.patternIndex >= state.patterns.length) state.patternIndex = 0;
     state.controllerActions = await controllerActionsRes.json();
 
     renderPads();
-    renderKitStrip();
+    renderSceneStrip();
     renderSceneList();
     renderPatternStrip();
     renderControllerActions();

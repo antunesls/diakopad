@@ -262,6 +262,9 @@ DEFAULT_SETTINGS = {
     # in sync with the beat instead of drifting by however long the record
     # button happened to be held. See engine/looper.py's record_stop().
     "looper_quantize_enabled": "1",
+    # Drops an immediate duplicate Note On from hardware while recording or
+    # overdubbing. Value is milliseconds; zero disables the filter.
+    "looper_duplicate_hit_window_ms": "30",
 }
 
 # Default note layout: sequential from 36 (C1), matches a typical MPC-style

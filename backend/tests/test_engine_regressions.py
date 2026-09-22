@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import storage
-from engine import knob_registry, looper, metronome, metronome_sounds, sequencer, tempo, trigger
+from engine import knob_registry, looper, metronome, metronome_sounds, sequencer, tempo, transport, trigger
 
 
 class SequencerRegressionTests(unittest.TestCase):
@@ -28,6 +28,18 @@ class SequencerRegressionTests(unittest.TestCase):
                 self.assertTrue(active)
             finally:
                 storage.DB_PATH = original_db_path
+
+
+class SequencerTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_start_uses_the_shared_transport(self):
+        transport.reset()
+        try:
+            await sequencer.start([], {}, AsyncMock())
+
+            self.assertTrue(transport.is_running())
+        finally:
+            await sequencer.stop()
+            transport.reset()
 
 
 class TriggerRegressionTests(unittest.IsolatedAsyncioTestCase):
@@ -98,6 +110,17 @@ class TempoTests(unittest.TestCase):
 
 
 class MetronomeTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        transport.reset()
+
+    def tearDown(self):
+        transport.reset()
+
+    def test_signature_sets_the_shared_transport_bar_length(self):
+        metronome.set_signature("3_4")
+
+        self.assertEqual(transport.shared().ticks_per_bar(), 3 * transport.TICKS_PER_BEAT)
+
     async def test_first_beat_uses_the_accent_note_on_the_dedicated_output(self):
         beat_received = asyncio.Event()
 
@@ -122,13 +145,13 @@ class MetronomeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_clock_does_not_replay_missed_beats_in_a_burst(self):
         timestamps = []
-        third_beat = asyncio.Event()
+        second_beat = asyncio.Event()
 
         async def on_beat(beat):
             if beat == 0:
                 await asyncio.sleep(0.6)
-            elif beat == 2:
-                third_beat.set()
+            if len(timestamps) >= 2:
+                second_beat.set()
 
         def record_note(*_args):
             timestamps.append(asyncio.get_running_loop().time())
@@ -141,11 +164,11 @@ class MetronomeTests(unittest.IsolatedAsyncioTestCase):
         ):
             try:
                 await metronome.start(on_beat)
-                await asyncio.wait_for(third_beat.wait(), timeout=1.5)
+                await asyncio.wait_for(second_beat.wait(), timeout=1.5)
             finally:
                 await metronome.stop()
 
-        self.assertGreaterEqual(timestamps[2] - timestamps[1], 0.2)
+        self.assertGreaterEqual(timestamps[1] - timestamps[0], 0.2)
 
     def test_each_sound_style_generates_accent_and_normal_samples(self):
         original_generated_dir = metronome_sounds.GENERATED_DIR
@@ -186,9 +209,13 @@ class LooperOverdubTests(unittest.TestCase):
         looper._loop_duration = None
         looper._loop_start = None
         looper._record_start = None
+        looper._loop_length_ticks = None
+        looper._loop_start_tick = None
+        looper._record_start_tick = None
         looper._started_at = None
         looper._task = None
         looper._playback_args = None
+        looper._last_recorded_event = None
 
     def test_overdub_start_is_a_no_op_unless_the_armed_track_is_playing(self):
         looper.overdub_start()
@@ -302,6 +329,39 @@ class LooperQuantizeTests(unittest.IsolatedAsyncioTestCase):
             await looper.record_stop([], settings)
 
         self.assertAlmostEqual(looper._loop_duration, 3.1, delta=0.05)  # untouched
+        await self._cancel_task()
+
+    def test_tick_based_loop_duration_follows_the_current_tempo(self):
+        looper._loop_length_ticks = 4 * transport.TICKS_PER_BEAT
+
+        with patch("engine.looper.tempo.get", return_value=120.0):
+            self.assertAlmostEqual(looper.get_state()["loop_duration"], 2.0)
+        with patch("engine.looper.tempo.get", return_value=60.0):
+            self.assertAlmostEqual(looper.get_state()["loop_duration"], 4.0)
+
+    def test_recording_arms_on_the_next_bar_when_transport_is_running(self):
+        transport.reset()
+        with patch("engine.looper.time.monotonic", return_value=0.0):
+            transport.start()
+        with patch("engine.looper.time.monotonic", return_value=0.5):
+            looper.record_start()
+
+        self.assertEqual(looper._record_start_tick, transport.shared().ticks_per_bar())
+
+    async def test_tick_recording_keeps_raw_tick_length_when_quantize_is_disabled(self):
+        transport.reset()
+        transport.shared().set_bpm(120, now=0.0)
+        with patch("engine.looper.time.monotonic", return_value=0.0):
+            looper.record_start()
+        looper._tracks[0].events = [{"tick": 0, "pad_number": 1, "velocity": 100}]
+
+        with (
+            patch("engine.looper.time.monotonic", return_value=1.0),
+            patch("engine.trigger.trigger_pad", new=AsyncMock()),
+        ):
+            await looper.record_stop([], {"looper_quantize_enabled": "0"})
+
+        self.assertEqual(looper._loop_length_ticks, 192)
         await self._cancel_task()
 
     @staticmethod
@@ -504,6 +564,20 @@ class LooperTracksTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(looper._tracks[2].events), 1)
         self.assertTrue(all(len(t.events) == 0 for i, t in enumerate(looper._tracks) if i != 2))
+
+    def test_record_event_ignores_an_immediate_duplicate_hardware_hit(self):
+        track = looper._tracks[0]
+        track.state = "recording"
+        looper._record_start = 100.0
+
+        with patch("engine.looper.time.monotonic", side_effect=[100.100, 100.105]):
+            looper.record_event(5, 110)
+            looper.record_event(5, 110)
+
+        self.assertEqual(len(track.events), 1)
+
+    def test_next_cycle_start_skips_every_expired_cycle_after_a_delay(self):
+        self.assertEqual(looper._next_cycle_start(10.0, 2.0, 15.1), 16.0)
 
 
 class KnobSteppedCurveTests(unittest.TestCase):

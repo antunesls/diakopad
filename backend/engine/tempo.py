@@ -9,6 +9,7 @@ import time
 from typing import Optional
 
 import storage
+from engine import transport
 
 MIN_BPM = 40.0
 MAX_BPM = 240.0
@@ -31,6 +32,7 @@ def get() -> float:
 def set(value: float, persist: bool = True) -> None:
     global _bpm
     _bpm = max(MIN_BPM, min(MAX_BPM, value))
+    transport.set_bpm(_bpm)
     if persist:
         storage.set_setting("sequencer_bpm", str(_bpm))
 
@@ -38,6 +40,7 @@ def set(value: float, persist: bool = True) -> None:
 def load() -> None:
     global _bpm
     _bpm = float(storage.get_settings().get("sequencer_bpm", 100))
+    transport.set_bpm(_bpm)
 
 
 def register_tap(now: Optional[float] = None) -> Optional[float]:

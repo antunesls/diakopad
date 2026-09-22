@@ -16,11 +16,10 @@ that), but keeps a casual drum-machine feel acceptable under normal load.
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Awaitable, Callable, Optional
 
 import storage
-from engine import tempo, trigger
+from engine import tempo, transport, trigger
 
 STEP_COUNT = 16
 
@@ -64,6 +63,8 @@ async def start(pads: list[dict], settings: dict, on_tick: Callable[[int], Await
         return
     _running = True
     _on_tick = on_tick
+    transport.set_bpm(tempo.get())
+    transport.start()
     _task = asyncio.create_task(_clock(pads, settings))
 
 
@@ -78,20 +79,22 @@ async def stop() -> None:
 
 async def _clock(pads: list[dict], settings: dict) -> None:
     global _current_step
-    next_tick = time.monotonic()
+    ticks_per_step = transport.TICKS_PER_BEAT // 4
+    next_tick = transport.shared().next_grid_tick(ticks_per_step)
     try:
         while _running:
-            step_seconds = 60.0 / tempo.get() / 4.0  # 16th notes
+            delay = transport.seconds_until_tick(next_tick)
+            if delay > 0:
+                await asyncio.sleep(delay)
+            elif delay < -0.02:
+                next_tick = transport.shared().next_grid_tick(ticks_per_step)
+                continue
+            _current_step = (next_tick // ticks_per_step) % STEP_COUNT
             for (pad_number, step_index), active in list(_pattern.items()):
                 if active and step_index == _current_step:
                     await trigger.trigger_pad(pad_number, pads, settings=settings)
             if _on_tick is not None:
                 await _on_tick(_current_step)
-            _current_step = (_current_step + 1) % STEP_COUNT
-            next_tick += step_seconds
-            now = time.monotonic()
-            if next_tick <= now:
-                next_tick = now + step_seconds
-            await asyncio.sleep(max(0.0, next_tick - time.monotonic()))
+            next_tick += ticks_per_step
     except asyncio.CancelledError:
         pass

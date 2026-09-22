@@ -127,6 +127,10 @@ class LooperQuantizeRequest(BaseModel):
     enabled: bool
 
 
+class LooperDuplicateHitWindowRequest(BaseModel):
+    milliseconds: int
+
+
 class LooperVolumeRequest(BaseModel):
     volume: float
 
@@ -746,6 +750,7 @@ async def on_startup() -> None:
     await orchestrator.apply_all_pads(storage.list_pads(), settings, storage.list_pad_effects())
     sequencer.load_pattern(storage.list_sequencer_steps())
     tempo.load()
+    looper.set_duplicate_hit_window(settings.get("looper_duplicate_hit_window_ms", "30"))
     metronome.set_signature(settings.get("metronome_signature", time_signatures.DEFAULT_SIGNATURE))
     await orchestrator.apply_metronome_style(settings.get("metronome_style", metronome_sounds.DEFAULT_STYLE))
     global _engine_status_task
@@ -1504,6 +1509,16 @@ async def set_kit_browse_preview(body: KitBrowsePreviewRequest):
 @app.post("/api/settings/looper_quantize")
 async def set_looper_quantize(body: LooperQuantizeRequest):
     storage.set_setting("looper_quantize_enabled", "1" if body.enabled else "0")
+    await _broadcast_settings()
+    return {"ok": True}
+
+
+@app.post("/api/settings/looper_duplicate_hit_window")
+async def set_looper_duplicate_hit_window(body: LooperDuplicateHitWindowRequest):
+    if not 0 <= body.milliseconds <= looper.MAX_DUPLICATE_HIT_WINDOW_MS:
+        raise HTTPException(400, "milliseconds must be between 0 and 200")
+    storage.set_setting("looper_duplicate_hit_window_ms", str(body.milliseconds))
+    looper.set_duplicate_hit_window(body.milliseconds)
     await _broadcast_settings()
     return {"ok": True}
 

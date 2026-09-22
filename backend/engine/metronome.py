@@ -11,17 +11,17 @@ bound drift without pretending asyncio is a hard-real-time scheduler.
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Awaitable, Callable, Optional
 
 import midi
-from engine import metronome_sounds, tempo, time_signatures
+from engine import metronome_sounds, tempo, time_signatures, transport
 
 _running = False
 _beat_in_bar = 0
 _signature = time_signatures.DEFAULT_SIGNATURE
 _task: Optional[asyncio.Task] = None
 _on_beat: Optional[Callable[[int], Awaitable[None]]] = None
+_initial_tick: Optional[int] = None
 
 
 def get_state() -> dict:
@@ -31,16 +31,23 @@ def get_state() -> dict:
 def set_signature(signature: str) -> None:
     global _signature, _beat_in_bar
     _signature = signature if signature in time_signatures.SIGNATURES else time_signatures.DEFAULT_SIGNATURE
+    transport.set_pulses_per_bar(time_signatures.get(_signature)["pulses"])
     _beat_in_bar = 0
 
 
 async def start(on_beat: Callable[[int], Awaitable[None]]) -> None:
-    global _running, _task, _on_beat, _beat_in_bar
+    global _running, _task, _on_beat, _beat_in_bar, _initial_tick
     if _running:
         return
     _running = True
     _beat_in_bar = 0
     _on_beat = on_beat
+    transport.set_pulses_per_bar(time_signatures.get(_signature)["pulses"])
+    transport.set_bpm(tempo.get())
+    was_running = transport.is_running()
+    transport.start()
+    if not was_running:
+        _initial_tick = transport.tick_at()
     _task = asyncio.create_task(_clock())
 
 
@@ -54,21 +61,26 @@ async def stop() -> None:
 
 
 async def _clock() -> None:
-    global _beat_in_bar
-    next_tick = time.monotonic()
+    global _beat_in_bar, _initial_tick
+    if _initial_tick is None:
+        next_tick = transport.shared().next_grid_tick(transport.TICKS_PER_BEAT)
+    else:
+        next_tick = _initial_tick
+        _initial_tick = None
     try:
         while _running:
             meta = time_signatures.get(_signature)
+            delay = transport.seconds_until_tick(next_tick)
+            if delay > 0:
+                await asyncio.sleep(delay)
+            elif delay < -0.02:
+                next_tick = transport.shared().next_grid_tick(transport.TICKS_PER_BEAT)
+                continue
+            _beat_in_bar = (next_tick // transport.TICKS_PER_BEAT) % meta["pulses"]
             note = metronome_sounds.ACCENT_NOTE if _beat_in_bar in meta["accents"] else metronome_sounds.NORMAL_NOTE
             midi.metronome_note_on(midi.MIDI_CHANNEL, note, 100)
             if _on_beat is not None:
                 await _on_beat(_beat_in_bar)
-            _beat_in_bar = (_beat_in_bar + 1) % meta["pulses"]
-            interval = 60.0 / tempo.get()
-            next_tick += interval
-            now = time.monotonic()
-            if next_tick <= now:
-                next_tick = now + interval
-            await asyncio.sleep(max(0.0, next_tick - time.monotonic()))
+            next_tick += transport.TICKS_PER_BEAT
     except asyncio.CancelledError:
         pass

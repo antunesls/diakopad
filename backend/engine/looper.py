@@ -44,9 +44,11 @@ import math
 import time
 from typing import Optional
 
-from engine import time_signatures, trigger
+from engine import tempo, time_signatures, transport, trigger
 
 TRACK_COUNT = 4
+DEFAULT_DUPLICATE_HIT_WINDOW_MS = 30
+MAX_DUPLICATE_HIT_WINDOW_MS = 200
 
 _ACTIVE_STATES = ("playing", "overdubbing")
 
@@ -69,16 +71,24 @@ _selected: int = 0  # index of the armed track record/overdub act on
 _loop_duration: Optional[float] = None  # shared cycle length, fixed by the first take
 _loop_start: Optional[float] = None  # monotonic timestamp of the current cycle's start
 _record_start: Optional[float] = None
+_loop_length_ticks: Optional[int] = None
+_loop_start_tick: Optional[int] = None
+_record_start_tick: Optional[int] = None
 _started_at: Optional[float] = None
 _task: Optional[asyncio.Task] = None
 _playback_args: Optional[tuple[list[dict], dict]] = None  # pads/settings reused by record_start's auto-resume
+_last_recorded_event: Optional[tuple[int, int, float]] = None
+_duplicate_hit_window_seconds = DEFAULT_DUPLICATE_HIT_WINDOW_MS / 1000.0
 
 
 def get_state() -> dict:
+    duration = _loop_duration
+    if _loop_length_ticks is not None:
+        duration = _loop_length_ticks * 60.0 / tempo.get() / transport.TICKS_PER_BEAT
     return {
         "state": _global_state(),
         "selected_track": _selected,
-        "loop_duration": _loop_duration,
+        "loop_duration": duration,
         "started_at": _started_at,
         "tracks": [
             {
@@ -143,8 +153,19 @@ def set_volume(index: int, volume: float) -> None:
     _tracks[index].volume = max(0, min(100, int(round(volume))))
 
 
+def set_duplicate_hit_window(milliseconds: int | str) -> None:
+    """Updates the recording filter from the persisted millisecond setting."""
+    global _duplicate_hit_window_seconds
+    try:
+        value = int(milliseconds)
+    except (TypeError, ValueError):
+        value = DEFAULT_DUPLICATE_HIT_WINDOW_MS
+    value = max(0, min(MAX_DUPLICATE_HIT_WINDOW_MS, value))
+    _duplicate_hit_window_seconds = value / 1000.0
+
+
 def record_start() -> None:
-    global _record_start, _started_at, _task
+    global _record_start, _record_start_tick, _started_at, _task, _last_recorded_event
     track = _tracks[_selected]
     if track.state == "overdubbing":
         overdub_stop()  # merge the open pass before replacing the take
@@ -161,16 +182,24 @@ def record_start() -> None:
     track.overdub_events = []
     track.state = "recording"
     _record_start = time.monotonic()
+    transport_was_running = transport.is_running()
+    transport.start()
+    if transport_was_running and _loop_duration is None and _loop_length_ticks is None:
+        _record_start_tick = transport.next_bar_tick()
+    else:
+        _record_start_tick = transport.tick_at()
+    _last_recorded_event = None
     _started_at = time.time()
 
 
 def overdub_start() -> None:
-    global _started_at
+    global _started_at, _last_recorded_event
     track = _tracks[_selected]
     if track.state != "playing":
         return
     track.overdub_events = []
     track.state = "overdubbing"
+    _last_recorded_event = None
     _started_at = time.time()
 
 
@@ -189,9 +218,31 @@ def record_event(pad_number: int, velocity: int) -> None:
     """Routes a live hit into the armed track. Takes recorded while a cycle
     is running store offsets relative to that cycle (modulo the loop
     length); the very first take is zero-based from its own start."""
+    global _last_recorded_event
     track = _tracks[_selected]
+    if track.state not in ("recording", "overdubbing"):
+        return
+    now = time.monotonic()
+    last_event = _last_recorded_event
+    if (
+        last_event is not None
+        and last_event[:2] == (pad_number, velocity)
+        and now - last_event[2] < _duplicate_hit_window_seconds
+    ):
+        return
+    _last_recorded_event = (pad_number, velocity, now)
     if track.state == "recording":
-        now = time.monotonic()
+        current_tick = None
+        if _record_start_tick is not None:
+            current_tick = transport.tick_at()
+            if current_tick < _record_start_tick:
+                return
+        if _loop_length_ticks and _loop_start_tick is not None:
+            if current_tick is None:
+                current_tick = transport.tick_at()
+            offset = (current_tick - _loop_start_tick) % _loop_length_ticks
+            track.events.append({"tick": offset, "pad_number": pad_number, "velocity": velocity})
+            return
         if _loop_duration and _loop_start is not None:
             offset = (now - _loop_start) % _loop_duration
         elif _record_start is not None:
@@ -199,29 +250,51 @@ def record_event(pad_number: int, velocity: int) -> None:
         else:
             return
         track.events.append({"offset": offset, "pad_number": pad_number, "velocity": velocity})
-    elif track.state == "overdubbing" and _loop_start is not None and _loop_duration:
-        offset = (time.monotonic() - _loop_start) % _loop_duration
+    elif track.state == "overdubbing" and (
+        (_loop_length_ticks is not None and _loop_start_tick is not None)
+        or (_loop_start is not None and _loop_duration)
+    ):
+        if _loop_length_ticks and _loop_start_tick is not None:
+            offset = (transport.tick_at() - _loop_start_tick) % _loop_length_ticks
+            track.overdub_events.append({"tick": offset, "pad_number": pad_number, "velocity": velocity})
+            return
+        offset = (now - _loop_start) % _loop_duration
         track.overdub_events.append({"offset": offset, "pad_number": pad_number, "velocity": velocity})
 
 
 async def record_stop(pads: list[dict], settings: dict) -> None:
-    global _loop_duration, _record_start, _started_at, _task
+    global _loop_duration, _loop_length_ticks, _record_start, _record_start_tick, _started_at, _task, _last_recorded_event
     track = _tracks[_selected]
     if track.state != "recording" or _record_start is None:
         return
     held = time.monotonic() - _record_start
     _record_start = None
+    _last_recorded_event = None
     if not track.events:
         track.state = "stopped"
+        _record_start_tick = None
         _maybe_stop_playback()
         return
-    if _loop_duration is None:
+    if _loop_duration is None and _loop_length_ticks is None and _record_start_tick is not None:
+        held_ticks = max(1, transport.tick_at() - _record_start_tick)
+        bar_ticks = transport.shared().ticks_per_bar()
+        if settings.get("looper_quantize_enabled", "1") == "1":
+            loop_ticks = max(bar_ticks, round(held_ticks / bar_ticks) * bar_ticks)
+        else:
+            loop_ticks = held_ticks
+        last_event_tick = max(event.get("tick", 0) for event in track.events)
+        if settings.get("looper_quantize_enabled", "1") == "1" and loop_ticks <= last_event_tick:
+            loop_ticks = (last_event_tick // bar_ticks + 1) * bar_ticks
+        _loop_length_ticks = loop_ticks
+        _loop_duration = loop_ticks * 60.0 / tempo.get() / transport.TICKS_PER_BEAT
+    elif _loop_duration is None:
         # First take to close: it fixes the shared cycle length.
         duration = held
         if settings.get("looper_quantize_enabled", "1") == "1":
             last_event_offset = max(event["offset"] for event in track.events)
             duration = _quantize_to_bar(duration, settings, last_event_offset)
         _loop_duration = duration
+    _record_start_tick = None
     track.state = "playing"
     _started_at = time.time()
     _playback_args = (pads, settings)
@@ -232,9 +305,10 @@ async def record_stop(pads: list[dict], settings: dict) -> None:
 def stop() -> None:
     """Stops the whole cycle (all tracks) but keeps every track's events -
     play_start resumes them; clear/clear_track are what erase content."""
-    global _record_start
+    global _record_start, _last_recorded_event
     _cancel_task()
     _record_start = None
+    _last_recorded_event = None
     for track in _tracks:
         track.overdub_events = []
         track.state = "stopped"
@@ -260,9 +334,10 @@ async def play_start(pads: list[dict], settings: dict) -> None:
 
 def clear() -> None:
     """Erases everything - all tracks' events AND their mix settings."""
-    global _loop_duration
+    global _loop_duration, _loop_length_ticks
     stop()
     _loop_duration = None
+    _loop_length_ticks = None
     for track in _tracks:
         track.events = []
         track.muted = False
@@ -290,22 +365,24 @@ def _has_content() -> bool:
 
 def _maybe_stop_playback() -> None:
     """Ends global playback when the last track with content is gone."""
-    global _loop_duration
+    global _loop_duration, _loop_length_ticks
     if _has_content():
         return
     _cancel_task()
     _loop_duration = None
+    _loop_length_ticks = None
     for track in _tracks:
         track.overdub_events = []
         track.state = "stopped"
 
 
 def _cancel_task() -> None:
-    global _task, _loop_start
+    global _task, _loop_start, _loop_start_tick
     if _task is not None:
         _task.cancel()
         _task = None
     _loop_start = None
+    _loop_start_tick = None
 
 
 def _quantize_to_bar(
@@ -356,11 +433,34 @@ def _merged_events() -> list[tuple[float, int, int, Track]]:
         if track.state not in _ACTIVE_STATES:
             continue
         for event in track.events:
-            merged.append((event["offset"], event["pad_number"], event["velocity"], track))
+            position = event.get("tick") if _loop_length_ticks is not None else event.get("offset")
+            if position is not None:
+                merged.append((position, event["pad_number"], event["velocity"], track))
     return sorted(merged, key=lambda item: item[0])
 
 
+def _next_cycle_start(cycle_start: float, duration: float, now: float) -> float:
+    """Returns the first cycle boundary strictly after now.
+
+    A delayed asyncio task must skip expired cycles instead of immediately
+    replaying their events, which produces MIDI bursts and worsens overload.
+    """
+    if now < cycle_start:
+        return cycle_start
+    elapsed_cycles = math.floor((now - cycle_start) / duration)
+    return cycle_start + (elapsed_cycles + 1) * duration
+
+
+def _next_cycle_tick(cycle_tick: int, length_ticks: int, now_tick: int) -> int:
+    if now_tick < cycle_tick:
+        return cycle_tick
+    return cycle_tick + ((now_tick - cycle_tick) // length_ticks + 1) * length_ticks
+
+
 async def _playback_loop(pads: list[dict], settings: dict) -> None:
+    if _loop_length_ticks is not None:
+        await _playback_tick_loop(pads, settings)
+        return
     global _loop_start
     _loop_start = time.monotonic()
     try:
@@ -369,6 +469,8 @@ async def _playback_loop(pads: list[dict], settings: dict) -> None:
                 delay = (_loop_start + offset) - time.monotonic()
                 if delay > 0:
                     await asyncio.sleep(delay)
+                elif delay < -0.02:
+                    continue  # the event belongs to an expired cycle
                 if not _loop_duration:
                     return
                 fired = _apply_track_gain(track, velocity)  # mute/volume react mid-cycle
@@ -377,6 +479,32 @@ async def _playback_loop(pads: list[dict], settings: dict) -> None:
             remaining = (_loop_start + _loop_duration) - time.monotonic()
             if remaining > 0:
                 await asyncio.sleep(remaining)
-            _loop_start += _loop_duration
+            _loop_start = _next_cycle_start(_loop_start, _loop_duration, time.monotonic())
+    except asyncio.CancelledError:
+        pass
+
+
+async def _playback_tick_loop(pads: list[dict], settings: dict) -> None:
+    global _loop_start_tick
+    if _loop_length_ticks is None:
+        return
+    _loop_start_tick = transport.shared().next_grid_tick(_loop_length_ticks)
+    try:
+        while _loop_length_ticks and _has_content():
+            for offset, pad_number, velocity, track in _merged_events():
+                target_tick = _loop_start_tick + int(offset)
+                delay = transport.seconds_until_tick(target_tick)
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                elif delay < -0.02:
+                    continue
+                if not _loop_length_ticks:
+                    return
+                fired = _apply_track_gain(track, velocity)
+                if fired > 0:
+                    await trigger.trigger_pad(pad_number, pads, fired, settings)
+            _loop_start_tick = _next_cycle_tick(
+                _loop_start_tick, _loop_length_ticks, transport.tick_at()
+            )
     except asyncio.CancelledError:
         pass

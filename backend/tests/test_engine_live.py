@@ -43,6 +43,25 @@ class FullRestartTests(unittest.TestCase):
         popen.assert_called_once_with(["systemctl", "--user", "start", "diakopad-restart.service"])
 
 
+class LooperDuplicateHitWindowSettingsTests(unittest.TestCase):
+    def test_duplicate_hit_window_setting_persists_and_applies_immediately(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            original_db_path = storage.DB_PATH
+            original_window = looper._duplicate_hit_window_seconds
+            storage.DB_PATH = Path(temp_dir) / "diakopad.db"
+            storage.init_db()
+            try:
+                response = TestClient(diakopad_app.app).post(
+                    "/api/settings/looper_duplicate_hit_window", json={"milliseconds": 80}
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(storage.get_settings()["looper_duplicate_hit_window_ms"], "80")
+                self.assertEqual(looper._duplicate_hit_window_seconds, 0.08)
+            finally:
+                storage.DB_PATH = original_db_path
+                looper._duplicate_hit_window_seconds = original_window
+
+
 class PadApplyResponsivenessTests(unittest.IsolatedAsyncioTestCase):
     async def test_apply_pad_keeps_the_event_loop_responsive_during_spawn(self):
         pads = [{"pad_number": 1, "filename": "kick.wav"}]

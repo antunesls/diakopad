@@ -107,6 +107,8 @@
     settingVelocity: document.getElementById("setting-velocity"),
     settingKitBrowsePreview: document.getElementById("setting-kit-browse-preview"),
     settingLooperQuantize: document.getElementById("setting-looper-quantize"),
+    settingLooperDuplicateHitWindow: document.getElementById("setting-looper-duplicate-hit-window"),
+    settingLooperDuplicateHitWindowValue: document.getElementById("setting-looper-duplicate-hit-window-value"),
     fullRestartBtn: document.getElementById("full-restart-btn"),
     clearAllPadsBtn: document.getElementById("clear-all-pads-btn"),
     midiMapFilter: document.getElementById("midi-map-filter"),
@@ -1491,6 +1493,9 @@
     el.settingVelocity.checked = state.settings.velocity_sensitive === "1";
     el.settingKitBrowsePreview.checked = state.settings.kit_browse_preview_enabled === "1";
     el.settingLooperQuantize.checked = state.settings.looper_quantize_enabled === "1";
+    const duplicateHitWindow = Number(state.settings.looper_duplicate_hit_window_ms || 30);
+    el.settingLooperDuplicateHitWindow.value = duplicateHitWindow;
+    el.settingLooperDuplicateHitWindowValue.textContent = `${duplicateHitWindow} ms`;
   }
 
   el.settingSustain.addEventListener("change", () => {
@@ -1526,6 +1531,16 @@
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: el.settingLooperQuantize.checked }),
+    });
+  });
+  el.settingLooperDuplicateHitWindow.addEventListener("input", () => {
+    el.settingLooperDuplicateHitWindowValue.textContent = `${el.settingLooperDuplicateHitWindow.value} ms`;
+  });
+  el.settingLooperDuplicateHitWindow.addEventListener("change", () => {
+    fetch("/api/settings/looper_duplicate_hit_window", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ milliseconds: Number(el.settingLooperDuplicateHitWindow.value) }),
     });
   });
 

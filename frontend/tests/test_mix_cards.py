@@ -18,6 +18,16 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn("Versão: 0.1.0", readme)
         self.assertIn("Desenvolvedor: Lucas Souza (AntunesLS)", readme)
 
+    def test_config_permite_ajustar_a_janela_de_duplicacao_do_looper(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="setting-looper-duplicate-hit-window"', html)
+        self.assertIn('min="0" max="200" step="1"', html)
+        self.assertIn('id="setting-looper-duplicate-hit-window-value"', html)
+        self.assertIn("settingLooperDuplicateHitWindow", app)
+        self.assertIn('/api/settings/looper_duplicate_hit_window', app)
+
     def test_mixagem_usa_cards_recolhiveis_com_resumo_de_efeitos(self):
         app = (FRONTEND / "app.js").read_text(encoding="utf-8")
         css = (FRONTEND / "style.css").read_text(encoding="utf-8")

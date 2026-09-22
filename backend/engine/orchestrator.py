@@ -332,12 +332,18 @@ async def apply_pad(pad_number: int, pads: list[dict], settings: dict, pad_effec
         if not await asyncio.to_thread(sfizz_proc.spawn, client, sfz_path):
             return False
 
-        async with _graph_lock:
-            if not await jackgraph.wait_for_port_async(f"{client}:output_1"):
-                logger.warning("sfizz JACK ports for pad %d never appeared", pad_number)
-                sfizz_proc.schedule_recovery(client)
-                return False
+        # Polling for the new JACK ports only reads graph state (nothing to
+        # protect), and is most of this function's latency (sfizz needs a
+        # moment after spawn to register them) - done outside _graph_lock so
+        # pads respawning together (a scene switch) wait for their ports in
+        # parallel instead of queueing behind each other one at a time. Only
+        # the actual graph mutation below needs the lock.
+        if not await jackgraph.wait_for_port_async(f"{client}:output_1"):
+            logger.warning("sfizz JACK ports for pad %d never appeared", pad_number)
+            sfizz_proc.schedule_recovery(client)
+            return False
 
+        async with _graph_lock:
             await asyncio.to_thread(
                 jackgraph.connect_pattern_to_all,
                 rf"{re.escape(midi.HARDWARE_OUTPUT_PORT_NAME)}$",

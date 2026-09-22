@@ -32,6 +32,7 @@
     patternIndex: 0,
     controllerActions: { bindings: {}, pending_learn: null },
     kitBrowse: { active: false },
+    sceneLoadingCount: 0,
   };
 
   const KIT_BROWSE_RESERVED_PADS = { 13: "up", 14: "left", 15: "right", 16: "down", 1: "back", 4: "confirm" };
@@ -73,6 +74,8 @@
     uploadProgressLabel: document.getElementById("upload-progress-label"),
     uploadProgressPercent: document.getElementById("upload-progress-percent"),
     uploadProgressBar: document.getElementById("upload-progress-bar"),
+    sceneLoadingOverlay: document.getElementById("scene-loading-overlay"),
+    sceneLoadingText: document.getElementById("scene-loading-text"),
     modal: document.getElementById("assign-modal"),
     modalTitle: document.getElementById("modal-pad-title"),
     modalClose: document.getElementById("modal-close"),
@@ -499,18 +502,31 @@
     }
   }
 
+  function showSceneLoading(name) {
+    state.sceneLoadingCount++;
+    el.sceneLoadingText.textContent = name ? `Carregando "${name}"...` : "Carregando cena...";
+    el.sceneLoadingOverlay.classList.remove("hidden");
+  }
+
+  function hideSceneLoading() {
+    state.sceneLoadingCount = Math.max(0, state.sceneLoadingCount - 1);
+    if (state.sceneLoadingCount === 0) el.sceneLoadingOverlay.classList.add("hidden");
+  }
+
   async function loadSceneAt(index) {
     const act = activeScenes();
-    if (!act.length) return;
+    if (!act.length || state.sceneLoadingCount > 0) return;
     state.sceneIndex = (index + act.length) % act.length;
     renderSceneStrip();
     renderSceneList();
     const scene = currentScene();
     el.perfPadGrid.classList.add("applying");
+    showSceneLoading(scene.name);
     try {
       await fetch(`/api/scenes/${scene.id}/load`, { method: "POST" });
     } finally {
       el.perfPadGrid.classList.remove("applying");
+      hideSceneLoading();
     }
   }
 
@@ -2217,6 +2233,9 @@
         else if (state.sceneIndex >= act.length) state.sceneIndex = 0;
         renderSceneStrip();
         renderSceneList();
+      } else if (msg.type === "scene_loading") {
+        if (msg.active) showSceneLoading(msg.scene_name);
+        else hideSceneLoading();
       } else if (msg.type === "patterns") {
         state.patterns = msg.patterns;
         if (state.patternIndex >= state.patterns.length) state.patternIndex = 0;

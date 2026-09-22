@@ -624,10 +624,15 @@ async def _dispatch_controller_action(action: str) -> None:
                 # last one going backward.
                 idx = len(scenes) if action == "scene_prev" else 0
             next_scene_id = scenes[(idx + 1) % len(scenes)]["id"] if action == "scene_next" else scenes[(idx - 1) % len(scenes)]["id"]
-            scene = storage.load_scene(next_scene_id)
-            storage.set_setting("current_scene_id", str(next_scene_id))
-            await _apply_scene_and_broadcast(scene)
-            await _broadcast_scenes()
+            next_scene_name = next((s["name"] for s in scenes if s["id"] == next_scene_id), None)
+            await _broadcast_scene_loading(True, next_scene_name)
+            try:
+                scene = storage.load_scene(next_scene_id)
+                storage.set_setting("current_scene_id", str(next_scene_id))
+                await _apply_scene_and_broadcast(scene)
+                await _broadcast_scenes()
+            finally:
+                await _broadcast_scene_loading(False)
     elif action == "kit_browse_toggle":
         if _kit_browse_state is None:
             await _kit_browse_arm()
@@ -1323,6 +1328,16 @@ async def _broadcast_scenes() -> None:
             "current_scene_id": storage.get_settings().get("current_scene_id"),
         }
     )
+
+
+async def _broadcast_scene_loading(active: bool, scene_name: Optional[str] = None) -> None:
+    """Lets connected UIs show a loading overlay for hardware-triggered scene
+    navigation (scene_next/scene_prev), which otherwise has no "in progress"
+    signal - the UI only learns about it via the final `scenes` broadcast,
+    after the switch already happened. The REST /load endpoint doesn't need
+    this: the client that triggered it already shows its own overlay before
+    the request goes out."""
+    await manager.broadcast({"type": "scene_loading", "active": active, "scene_name": scene_name})
 
 
 @app.get("/api/scenes")

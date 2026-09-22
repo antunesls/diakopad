@@ -88,17 +88,11 @@ def stop(client: str, forget: bool = True) -> None:
         _next_recovery_at.pop(client, None)
     if proc is None:
         return
-    # SIGKILL, not terminate(): sfizz_jack has no state to flush on exit, and
-    # measured on real hardware, a graceful SIGTERM shutdown took ~1s per
-    # instance (dominating a scene switch's respawn time across many pads)
-    # against ~15ms for JACK to notice a killed client and free its ports -
-    # spawn() immediately re-registers the same client_name right after, so
-    # that port teardown latency is what actually gated the respawn.
-    proc.kill()
+    proc.terminate()
     try:
         proc.wait(timeout=3)
     except subprocess.TimeoutExpired:
-        pass
+        proc.kill()
 
 
 def is_running(client: str) -> bool:

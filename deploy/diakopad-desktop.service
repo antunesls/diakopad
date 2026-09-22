@@ -1,19 +1,13 @@
-# systemd --user unit for running DiakoPad on a desktop/laptop (Ubuntu
-# Studio or similar), as an alternative to deploy/diakopad.service (which is
-# a root-owned system unit for the Pi/Zynthian appliance).
+# systemd --user unit for running DiakoPad on an Ubuntu Studio laptop.
 #
 # Install to ~/.config/systemd/user/diakopad.service (install-ubuntu-studio.sh
 # does this for you, substituting __INSTALL_DIR__), then:
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now diakopad.service
 #
-# No User= line and no Requires=jack2.service/a2jmidid.service: a --user unit
-# already runs as you, matching whatever JACK-compatible server (jackd2 or
-# pipewire-jack) is already running in your own session - unlike the Pi,
-# where jackd is a root system service and JACK's UID-scoped shared memory
-# forces the app to also run as root (see diakopad-runtime.conf). Start your
-# audio server yourself first (qjackctl / Ubuntu Studio Controls / PipeWire
-# auto-start) - this unit does not manage it.
+# The user unit shares the JACK-compatible server (jackd2 or pipewire-jack)
+# from the desktop session. Start the audio server first with qjackctl, Ubuntu
+# Studio Controls, or PipeWire auto-start; this unit does not manage it.
 [Unit]
 Description=DiakoPad web app + audio engine orchestrator (pad grid, sound library, sfizz/mod-host)
 After=graphical-session.target
@@ -23,9 +17,8 @@ Type=simple
 WorkingDirectory=__INSTALL_DIR__/backend
 Environment=DIAKOPAD_SFZ_BANK_DIR=__INSTALL_DIR__/backend/sfz_bank
 Environment=DIAKOPAD_MIDI_CHANNEL=10
-# orchestrator.py's default HARDWARE_MIDI_PATTERN ("system:midi_capture_.*")
-# only matches a plain jackd2/a2jmidid setup. Under PipeWire, the SMC-PAD's
-# hardware MIDI capture ports show up as "Midi-Bridge:SINCO ..." when wired
+# The default HARDWARE_MIDI_PATTERN targets PipeWire. The SMC-PAD's hardware
+# MIDI capture ports show up as "Midi-Bridge:SINCO ..." when wired
 # over USB, or "Midi-Bridge:SMC-PAD Bluetooth" when paired over Bluetooth
 # (confirm with `jack_lsp -p | grep -i -E "sinco|smc-pad"` on THIS machine) -
 # without this override, the physical controller's Note/CC never reaches

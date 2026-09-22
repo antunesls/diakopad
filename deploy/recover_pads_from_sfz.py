@@ -10,7 +10,7 @@ Rebuilds the samples catalog and the pads table. Effect chains, knob
 mappings, sequencer steps and settings are NOT recoverable from these
 artifacts and keep their defaults.
 
-Run on the Pi from backend/ with the venv python, service stopped.
+Run from the repository with the service stopped.
 """
 import os
 import re
@@ -21,12 +21,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 import storage
 
-# Defaults to the Pi's on-device sfz bank location; override with
-# DIAKOPAD_SFZ_BANK_DIR on other setups (e.g. a laptop install, see
-# backend/sfz.py which uses the same variable for the live app).
+# Defaults to the local SFZ bank. Override with DIAKOPAD_SFZ_BANK_DIR when
+# the live application uses another location.
 BANK_DIR = Path(os.environ.get(
     "DIAKOPAD_SFZ_BANK_DIR",
-    "/zynthian/zynthian-my-data/soundfonts/sfz/DiakoPad",
+    Path(__file__).resolve().parent.parent / "backend" / "sfz_bank",
 ))
 SAMPLES_DIR = Path(__file__).resolve().parent.parent / "backend" / "samples"
 SUFFIX_RE = re.compile(r"-[0-9a-f]{8}$")

@@ -1,9 +1,7 @@
 """Generates each pad's own tiny .sfz file.
 
-Now that DiakoPad runs one sfizz instance per pad (see backend/engine/), a
-pad's sound can simply be reloaded by respawning that one instance - no more
-A/B file alternation + Program Change trick, which only existed to force
-Zynthian's own shared Sfizz engine to do a real preset reload.
+DiakoPad runs one sfizz instance per pad (see backend/engine/), so a pad's
+sound reloads by respawning only that instance.
 """
 from __future__ import annotations
 

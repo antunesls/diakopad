@@ -1416,8 +1416,7 @@ def delete_kit(kit_id: int):
 
 @app.post("/api/kits/import")
 async def import_kit_pack(file: UploadFile):
-    """Uploads a kit pack (.zip, see curate_kit_pack.py) - the primary way to
-    add kits on the Pi, from the Config tab, without SSH/laptop access."""
+    """Uploads a kit pack (.zip, see curate_kit_pack.py) from the Config tab."""
     with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
         tmp_path = Path(tmp.name)
         while chunk := await file.read(1024 * 1024):

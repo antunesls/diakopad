@@ -9,8 +9,6 @@
 # Defaults to the "diakopad-laptop" alias (see README's SSH config) and the
 # "main" branch. Override with:
 #   DIAKOPAD_REMOTE_DIR     checkout path on the target (default: ~/diakopad)
-#   DIAKOPAD_SERVICE_SCOPE  "user" (default - systemd --user, laptop/desktop)
-#                           or "system" (sudo systemctl, Pi/Zynthian)
 #
 # This is a real deploy, not a sync: `git reset --hard` DISCARDS any local
 # changes on the target (uncommitted edits, stray files under a tracked
@@ -22,15 +20,8 @@ set -euo pipefail
 TARGET="${1:-diakopad-laptop}"
 BRANCH="${2:-main}"
 REMOTE_DIR="${DIAKOPAD_REMOTE_DIR:-~/diakopad}"
-SERVICE_SCOPE="${DIAKOPAD_SERVICE_SCOPE:-user}"
-
-if [ "$SERVICE_SCOPE" = "system" ]; then
-  RESTART_CMD="sudo systemctl restart diakopad.service"
-  STATUS_CMD="systemctl is-active diakopad.service"
-else
-  RESTART_CMD="systemctl --user restart diakopad.service"
-  STATUS_CMD="systemctl --user is-active diakopad.service"
-fi
+RESTART_CMD="systemctl --user restart diakopad.service"
+STATUS_CMD="systemctl --user is-active diakopad.service"
 
 echo "==> Fetching $BRANCH on $TARGET:$REMOTE_DIR"
 ssh "$TARGET" "cd $REMOTE_DIR && git fetch origin $BRANCH"
@@ -41,5 +32,5 @@ ssh "$TARGET" "cd $REMOTE_DIR && git status --short" || true
 echo "==> Resetting $TARGET:$REMOTE_DIR to origin/$BRANCH"
 ssh "$TARGET" "cd $REMOTE_DIR && git reset --hard origin/$BRANCH"
 
-echo "==> Restarting diakopad.service ($SERVICE_SCOPE) on $TARGET"
+echo "==> Restarting diakopad.service on $TARGET"
 ssh "$TARGET" "$RESTART_CMD && sleep 2 && $STATUS_CMD"

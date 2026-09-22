@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import storage
-from engine import knob_registry, looper, metronome, metronome_sounds, sequencer, tempo, transport, trigger
+from engine import knob_registry, looper, metronome, metronome_sounds, orchestrator, sequencer, tempo, transport, trigger
 
 
 class SequencerRegressionTests(unittest.TestCase):
@@ -28,6 +28,11 @@ class SequencerRegressionTests(unittest.TestCase):
                 self.assertTrue(active)
             finally:
                 storage.DB_PATH = original_db_path
+
+
+class DesktopAudioProfileTests(unittest.TestCase):
+    def test_default_hardware_midi_pattern_targets_pipewire_smcpad_ports(self):
+        self.assertIn("Midi-Bridge", orchestrator.HARDWARE_MIDI_PATTERN)
 
 
 class SequencerTransportTests(unittest.IsolatedAsyncioTestCase):

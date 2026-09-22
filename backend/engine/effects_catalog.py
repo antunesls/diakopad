@@ -5,18 +5,13 @@ plugin" - keeps the UI and the mod-host wiring in orchestrator.py simple.
 Each entry's LV2 URI and port names are env-overridable (same convention as
 the rest of backend/engine/) since the exact plugin available on a given
 install is only knowable on-device via `lv2ls`/`lv2info` - see
-deploy/install.sh and deploy/install-ubuntu-studio.sh. The parameter list
+deploy/install-ubuntu-studio.sh. The parameter list
 (symbols/ranges) is NOT env-overridable since that's a lot of surface area;
 hand-edit this file once a real plugin has been picked for a catalog slot on
 the target device.
 
 Defaults below target the Ubuntu Studio laptop deploy, validated on-device
-(set/2026, MARK42, `lv2ls`/`lv2info`): Dragonfly Hall/Plate, ZamVerb and the
-LSP modulation suite are NOT on the Zynthian OS bookworm image - the Pi
-deploy pins the reverb slot back to mda/Ambience via
-DIAKOPAD_FX_REVERB_LV2_URI (see deploy/diakopad.service), and the
-plate/IR/chorus/flanger/phaser entries simply stay unloaded there (the slot
-is left empty with a warning in orchestrator.py).
+(set/2026, MARK42, `lv2ls`/`lv2info`).
 """
 from __future__ import annotations
 

@@ -91,9 +91,8 @@ class MigrationTestBase(unittest.TestCase):
 
 
 class PreRenameDatabaseMigrationTests(MigrationTestBase):
-    """A DB that never saw the post-rename code at all (e.g. the Pi, still
-    pending its own deploy) - "kits" is the only scene-shaped table, no
-    "scenes" table exists yet."""
+    """A database predating the rename has only the ``kits`` table and no
+    ``scenes`` table yet."""
 
     def setUp(self):
         super().setUp()

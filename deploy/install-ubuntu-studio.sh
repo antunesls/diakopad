@@ -1,17 +1,11 @@
 #!/bin/bash
 # Installs DiakoPad on a laptop running Ubuntu Studio (or any desktop
-# Debian/Ubuntu with a JACK-compatible audio server), as an alternative to
-# the Raspberry Pi/Zynthian OS deploy (see install.sh). Same audio engine
-# (one sfizz_jack instance per pad + mod-host for effects, see
-# backend/engine/) - only the OS-level plumbing differs:
+# Debian/Ubuntu with a JACK-compatible audio server). The audio engine uses
+# one sfizz_jack instance per pad and mod-host for effects.
 #
-#   * No root: jackd/pipewire-jack run in YOUR user session here, not as a
-#     root system service like on the Zynthian image, so DiakoPad also runs
-#     as your own user (see deploy/diakopad-desktop.service) - do NOT reuse
-#     deploy/diakopad-runtime.conf, that forces User=root for the Pi's
-#     UID-scoped JACK shared memory, which does not apply here.
-#   * No kiosk (deploy/diakopad-kiosk.service, kiosk-xinitrc) - skip both,
-#     this is a normal desktop, just open the URL in a browser.
+#   * DiakoPad runs as your normal user because PipeWire/JACK runs in the
+#     same desktop session.
+#   * Use the browser in the desktop session for the presentation interface.
 #   * sfizz_jack and mod-host are usually not packaged by apt and are built
 #     from source below.
 #
@@ -70,8 +64,7 @@ if ! command -v sfizz_jack >/dev/null 2>&1; then
   # so that thread immediately sets shouldClose=true and the 1-second main
   # loop tears the whole client down within ~1s of every spawn - looks like
   # sfizz "crashing" in a tight loop (validated on-device, Ubuntu Studio,
-  # Sep/2026). Zynthian's own sfizz build doesn't have this problem, so it
-  # only shows up on this from-source desktop build. Strip the thread.
+  # Sep/2026). Strip the thread before building the desktop binary.
   sed -i '/std::thread cli_thread(cliThreadProc);/d; /cli_thread\.join();/d' \
     "$BUILD_DIR/sfizz/clients/jack_client.cpp"
   cmake -S "$BUILD_DIR/sfizz" -B "$BUILD_DIR/sfizz/build" \
@@ -104,8 +97,7 @@ systemctl --user daemon-reload
 cat <<EOF
 
 ==> Base install done, but NOT started yet - do these manual steps first
-    (see README.md for the Ubuntu Studio section and the general LV2
-    discovery rationale shared with the Pi deploy):
+    (see README.md for the Ubuntu Studio setup and LV2 discovery):
 
   1. Make sure a JACK-compatible server is running in YOUR session before
      starting DiakoPad - either real jackd2 (via qjackctl / Ubuntu Studio

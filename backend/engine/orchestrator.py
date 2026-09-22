@@ -18,10 +18,9 @@ mod-host (e.g. local Windows dev), calls degrade to logging and returning
 False - the same fallback spirit as midi.py's virtual-port fallback.
 
 Plugin URIs and port/parameter symbol names (effects_catalog.py) are
-environment-configured because they're specific to whatever LV2 plugins are
-actually installed on the target Zynthian OS image - they must be
-confirmed with `lv2info <uri>` on the real device (see deploy/install.sh)
-rather than assumed here.
+environment-configured because they depend on the LV2 plugins installed on
+the presentation laptop. Confirm them with `lv2info <uri>` when changing the
+Ubuntu Studio audio setup.
 """
 from __future__ import annotations
 
@@ -41,13 +40,12 @@ logger = logging.getLogger("diakopad.engine.orchestrator")
 MASTER_L = os.environ.get("DIAKOPAD_JACK_MASTER_L", "system:playback_1")
 MASTER_R = os.environ.get("DIAKOPAD_JACK_MASTER_R", "system:playback_2")
 
-# The SMC-PAD's raw hardware MIDI capture port(s), as they show up in
-# `jack_lsp` on this Zynthian install (see the old
-# deploy/diakopad-midi-connect.service, now superseded by the dynamic
-# wiring below). Fans out to DiakoPad-in (knob learn + live-hit observing
-# for the looper) and to every pad's own sfizz instance (each pad's tiny
-# .sfz only reacts to its own `key=note`).
-HARDWARE_MIDI_PATTERN = os.environ.get("DIAKOPAD_HARDWARE_MIDI_PATTERN", "system:midi_capture_.*")
+# The SMC-PAD's PipeWire MIDI bridge port fans out to DiakoPad-in (knob learn
+# and live-hit observing for the looper) and to every sfizz pad instance.
+# Override this when the controller exposes a different JACK-compatible name.
+HARDWARE_MIDI_PATTERN = os.environ.get(
+    "DIAKOPAD_HARDWARE_MIDI_PATTERN", "Midi-Bridge:(SINCO|SMC-PAD Bluetooth).*"
+)
 
 # instance numbering scheme: pad N's slot S lives at mod-host instance
 # 1000 + N*10 + S - arbitrary but fixed, with headroom for 16 pads x 3 slots.
@@ -135,9 +133,8 @@ def _refresh_hardware_connections() -> None:
 def _schedule_players_without_ports() -> None:
     # PREVIEW_CLIENT is deliberately NOT included here: unlike the 16 pads
     # and the metronome, it only exists transiently while kit-browse mode is
-    # active (see apply_preview_kit/stop_preview) - the Pi already saturates
-    # ~1 CPU core per loaded pad, so keeping an 18th sfizz process alive at
-    # idle just to watch its ports would be pure waste.
+    # active (see apply_preview_kit/stop_preview), so keeping an 18th sfizz
+    # process alive at idle just to watch its ports would be pure waste.
     clients = [sfizz_proc.client_name(n) for n in range(1, 17)] + [METRONOME_CLIENT]
     for client in clients:
         if sfizz_proc.is_running(client) and not jackgraph.has_port(f"{client}:output_1"):

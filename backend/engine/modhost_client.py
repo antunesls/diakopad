@@ -5,23 +5,20 @@ answered with a line `resp <status> [value]`, status >= 0 meaning success
 (errors are negative, see mod-host src/effects.h; `add` replies with the
 allocated instance number on success).
 
-Protocol notes validated on-device against the Zynthian OS build
-(see /zynthian/zynthian-sw/mod-host):
+Protocol notes validated against the upstream mod-host build:
 
 * Commands are NUL-terminated (``command\\x00``), NOT newline-terminated.
   With ``\\n`` the server's frame accounting in socket.c goes negative and
   its parser starts interpreting heap memory as commands (garbled replies
-  and crashes). Zynthian's own clients (zyngine) use NUL framing.
+   and crashes.
 * The binary daemonizes: the spawned parent exits with code 0 immediately
   and a detached child owns the control port. Liveness must therefore be
   probed over TCP (or via the ``quit`` command), never via the Popen handle.
 * Effects live in their own JACK clients named ``effect_<instance>`` with
   ports named after the LV2 port symbols.
 
-This is the same LV2 plugin host Zynthian itself uses for effect chains
-(reverb, delay, ...); DiakoPad drives it directly instead of going through
-zyngine/MOD-UI, hosting the per-pad serial effect chains and the optional
-master-gain instance that mutes every route during PANIC.
+DiakoPad drives the LV2 plugin host directly for per-pad serial effect chains
+and the optional master-gain instance that mutes every route during PANIC.
 
 Best-effort like the rest of backend/engine: if the `mod-host` binary or its
 control socket isn't reachable (e.g. local dev), calls are logged once and
@@ -83,9 +80,8 @@ def start() -> bool:
         return False
     try:
         _proc = subprocess.Popen(
-            # No "-n" flag: the mod-host binary shipped with Zynthian OS
-            # rejects it (usage: -v -i -p -f) and exits before opening the
-            # control socket.
+            # No "-n" flag: mod-host accepts only its documented startup
+            # options and otherwise exits before opening the control socket.
             [MODHOST_BIN, "-p", str(CONTROL_PORT)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

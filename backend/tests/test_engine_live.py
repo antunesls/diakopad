@@ -63,6 +63,19 @@ class LooperDuplicateHitWindowSettingsTests(unittest.TestCase):
 
 
 class PadApplyResponsivenessTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # apply_pad()'s double-buffered swap keys off orchestrator._active_slot,
+        # module-level state that must not leak between tests - a pad_number
+        # already marked active here would turn what this test expects to be
+        # a plain first-ever spawn into a swap (spawns a "b" slot, tears down
+        # a nonexistent "a" one).
+        self._original_active_slot = dict(orchestrator._active_slot)
+        orchestrator._active_slot.clear()
+
+    def tearDown(self):
+        orchestrator._active_slot.clear()
+        orchestrator._active_slot.update(self._original_active_slot)
+
     async def test_apply_pad_keeps_the_event_loop_responsive_during_spawn(self):
         pads = [{"pad_number": 1, "filename": "kick.wav"}]
 
@@ -87,6 +100,14 @@ class PadApplyResponsivenessTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ApplyAllPadsClearsEmptyPadsTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._original_active_slot = dict(orchestrator._active_slot)
+        orchestrator._active_slot.clear()
+
+    def tearDown(self):
+        orchestrator._active_slot.clear()
+        orchestrator._active_slot.update(self._original_active_slot)
+
     async def test_apply_all_pads_stops_a_pad_that_lost_its_sample(self):
         """Regression: apply_all_pads used to only call apply_pad() for pads
         that currently have a filename, so a pad cleared by a scene switch
@@ -106,7 +127,139 @@ class ApplyAllPadsClearsEmptyPadsTests(unittest.IsolatedAsyncioTestCase):
         ):
             await orchestrator.apply_all_pads(pads, {}, [])
 
-        stop.assert_called_once_with("diakopad_pad16")
+        # Pad 16 never had an active slot (fresh _active_slot), so apply_pad's
+        # defensive clear-path stops both possible slots.
+        stop.assert_any_call("diakopad_pad16a")
+        stop.assert_any_call("diakopad_pad16b")
+        self.assertEqual(stop.call_count, 2)
+
+
+class DoubleBufferedSwapTests(unittest.IsolatedAsyncioTestCase):
+    """apply_pad()'s double-buffered swap: a pad's new content is spawned on
+    the standby slot and only cut over once confirmed working, so the pad
+    that was already playing is never silenced by a failed or in-flight
+    respawn (see engine/orchestrator.py's module docstring)."""
+
+    def setUp(self):
+        self._original_active_slot = dict(orchestrator._active_slot)
+        orchestrator._active_slot.clear()
+
+    def tearDown(self):
+        orchestrator._active_slot.clear()
+        orchestrator._active_slot.update(self._original_active_slot)
+
+    async def _drain_teardown_tasks(self):
+        # apply_pad() schedules the old slot's teardown as fire-and-forget;
+        # give it a couple of loop turns to actually run before asserting.
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    async def test_first_spawn_takes_the_direct_path(self):
+        pads = [{"pad_number": 1, "filename": "kick.wav"}]
+        with (
+            patch("engine.orchestrator.sfz.write_pad_kit", return_value="pad01.sfz"),
+            patch("engine.orchestrator.sfizz_proc.spawn", return_value=True) as spawn,
+            patch("engine.orchestrator.sfizz_proc.stop") as stop,
+            patch("engine.orchestrator.jackgraph.wait_for_port_async", new=AsyncMock(return_value=True)),
+            patch("engine.orchestrator.jackgraph.connect_pattern_to_all", return_value=True),
+            patch("engine.orchestrator.jackgraph.disconnect_all") as disconnect_all,
+        ):
+            result = await orchestrator.apply_pad(1, pads, {}, [])
+            await self._drain_teardown_tasks()
+
+        self.assertTrue(result)
+        spawn.assert_called_once_with("diakopad_pad01a", "pad01.sfz")
+        self.assertEqual(orchestrator._active_slot[1], "a")
+        stop.assert_not_called()
+        disconnect_all.assert_not_called()
+
+    async def test_successful_swap_moves_to_the_other_slot_and_tears_down_the_old_one(self):
+        pads = [{"pad_number": 1, "filename": "kick.wav"}]
+        with (
+            patch("engine.orchestrator.sfz.write_pad_kit", return_value="pad01.sfz"),
+            patch("engine.orchestrator.sfizz_proc.spawn", return_value=True) as spawn,
+            patch("engine.orchestrator.sfizz_proc.stop") as stop,
+            patch("engine.orchestrator.jackgraph.wait_for_port_async", new=AsyncMock(return_value=True)),
+            patch("engine.orchestrator.jackgraph.connect_pattern_to_all", return_value=True),
+            patch("engine.orchestrator.jackgraph.disconnect_all"),
+        ):
+            await orchestrator.apply_pad(1, pads, {}, [])  # first spawn -> slot a
+            result = await orchestrator.apply_pad(1, pads, {}, [])  # swap -> slot b
+            await self._drain_teardown_tasks()
+
+        self.assertTrue(result)
+        spawn.assert_called_with("diakopad_pad01b", "pad01.sfz")
+        self.assertEqual(orchestrator._active_slot[1], "b")
+        # The now-idle slot "a" is torn down gracefully (SIGTERM, not the
+        # default SIGKILL), off the swap's own critical path.
+        stop.assert_any_call("diakopad_pad01a", True, True)
+
+    async def test_failed_standby_leaves_the_active_slot_playing(self):
+        pads = [{"pad_number": 1, "filename": "kick.wav"}]
+        with (
+            patch("engine.orchestrator.sfz.write_pad_kit", return_value="pad01.sfz"),
+            patch("engine.orchestrator.sfizz_proc.spawn", return_value=True),
+            patch("engine.orchestrator.sfizz_proc.schedule_recovery") as schedule_recovery,
+            patch("engine.orchestrator.jackgraph.wait_for_port_async", new=AsyncMock(return_value=True)),
+            patch("engine.orchestrator.jackgraph.connect_pattern_to_all", return_value=True) as connect_all,
+            patch("engine.orchestrator.jackgraph.disconnect_all") as disconnect_all,
+        ):
+            await orchestrator.apply_pad(1, pads, {}, [])  # first spawn -> slot a
+
+        self.assertEqual(orchestrator._active_slot[1], "a")
+
+        with (
+            patch("engine.orchestrator.sfz.write_pad_kit", return_value="pad01.sfz"),
+            patch("engine.orchestrator.sfizz_proc.spawn", return_value=True),
+            patch("engine.orchestrator.sfizz_proc.schedule_recovery") as schedule_recovery,
+            patch("engine.orchestrator.jackgraph.wait_for_port_async", new=AsyncMock(return_value=False)),
+            patch("engine.orchestrator.jackgraph.connect_pattern_to_all") as connect_all,
+            patch("engine.orchestrator.jackgraph.disconnect_all") as disconnect_all,
+        ):
+            result = await orchestrator.apply_pad(1, pads, {}, [])
+
+        self.assertFalse(result)
+        # Still on slot "a" - the standby's failure never touched the graph.
+        self.assertEqual(orchestrator._active_slot[1], "a")
+        connect_all.assert_not_called()
+        disconnect_all.assert_not_called()
+        schedule_recovery.assert_called_once_with("diakopad_pad01b")
+
+    async def test_recovery_targets_the_currently_active_slot_not_the_crashed_names_own_letter(self):
+        orchestrator._active_slot[3] = "b"
+        pads = [{"pad_number": 3, "filename": "snare.wav"}]
+        with (
+            patch("engine.orchestrator.storage.list_pads", return_value=pads),
+            patch("engine.orchestrator.storage.list_pad_effects", return_value=[]),
+            patch("engine.orchestrator.storage.get_settings", return_value={}),
+            patch("engine.orchestrator.sfz.write_pad_kit", return_value="pad03.sfz"),
+            patch("engine.orchestrator.sfizz_proc.spawn", return_value=True) as spawn,
+            patch("engine.orchestrator.sfizz_proc.stop"),
+            patch("engine.orchestrator.jackgraph.wait_for_port_async", new=AsyncMock(return_value=True)),
+            patch("engine.orchestrator.jackgraph.connect_pattern_to_all", return_value=True),
+            patch("engine.orchestrator.jackgraph.disconnect_all"),
+        ):
+            recovered = await orchestrator._recover_sfizz("diakopad_pad03b")
+
+        self.assertTrue(recovered)
+        # Recovery swaps onto the OTHER slot relative to what's currently
+        # marked active ("b"), not a respawn-in-place under the dead name.
+        spawn.assert_called_once_with("diakopad_pad03a", "pad03.sfz")
+        self.assertEqual(orchestrator._active_slot[3], "a")
+
+    def test_schedule_players_without_ports_ignores_an_in_flight_standby(self):
+        orchestrator._active_slot[5] = "a"
+        with (
+            patch(
+                "engine.orchestrator.sfizz_proc.is_running",
+                side_effect=lambda client: client == "diakopad_pad05b",
+            ),
+            patch("engine.orchestrator.jackgraph.has_port", return_value=False),
+            patch("engine.orchestrator.sfizz_proc.schedule_recovery") as schedule_recovery,
+        ):
+            orchestrator._schedule_players_without_ports()
+
+        schedule_recovery.assert_not_called()
 
 
 class SfizzRecoveryQueueTests(unittest.TestCase):
@@ -236,11 +389,23 @@ class PadNoteLearnTests(unittest.IsolatedAsyncioTestCase):
 
 
 class EngineStatusTests(unittest.TestCase):
+    def setUp(self):
+        # engine_status() resolves each pad's currently-active slot via
+        # orchestrator._active_slot - pin it to a known state (nothing
+        # active, so every pad resolves to its "a" slot) for a deterministic
+        # assertion, regardless of what other tests left behind.
+        self._original_active_slot = dict(orchestrator._active_slot)
+        orchestrator._active_slot.clear()
+
+    def tearDown(self):
+        orchestrator._active_slot.clear()
+        orchestrator._active_slot.update(self._original_active_slot)
+
     def test_engine_status_reports_jack_modhost_and_pad_health(self):
         with (
             patch("engine.orchestrator.jackgraph.available", return_value=True),
             patch("engine.orchestrator.modhost_client.is_alive", return_value=True),
-            patch("engine.orchestrator.sfizz_proc.is_running", side_effect=lambda client: client.endswith("01")),
+            patch("engine.orchestrator.sfizz_proc.is_running", side_effect=lambda client: client.endswith("01a")),
             patch("engine.orchestrator.system_metrics.cpu_percent", return_value=42.5),
         ):
             status = orchestrator.engine_status()
@@ -323,11 +488,11 @@ class PitchEffectTests(unittest.TestCase):
                 patch("engine.orchestrator.jackgraph.disconnect_all"),
                 patch("engine.orchestrator.jackgraph.connect") as connect,
             ):
-                orchestrator._rewire_pad_chain(1, [{"slot_index": 1}])
+                orchestrator._rewire_pad_chain(1, [{"slot_index": 1}], "diakopad_pad01a")
 
-            connect.assert_any_call("diakopad_pad01:output_1", "effect_1011:lv2_audio_in_1")
+            connect.assert_any_call("diakopad_pad01a:output_1", "effect_1011:lv2_audio_in_1")
             self.assertNotIn(
-                (("diakopad_pad01:output_2", "effect_1011:lv2_audio_in_1"),), connect.call_args_list
+                (("diakopad_pad01a:output_2", "effect_1011:lv2_audio_in_1"),), connect.call_args_list
             )
         finally:
             if previous is None:

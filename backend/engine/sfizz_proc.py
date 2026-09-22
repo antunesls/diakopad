@@ -3,8 +3,10 @@
 One `sfizz_jack` subprocess per client, each loading its own tiny .sfz and
 exposing its own JACK ports (`output_1`/`output_2` and MIDI input `input` -
 see sfizz's clients/jack_client.cpp). Used both for the 16 performance pads
-(`client_name(pad_number)` -> `diakopad_padNN`) and for the dedicated
-metronome click instance (`diakopad_metronome`, see
+(`client_name(pad_number, slot)` -> `diakopad_padNNa`/`diakopad_padNNb` - see
+engine/orchestrator.py's double-buffered swap, which keeps a pad's currently
+live slot playing until its replacement's ports are confirmed up) and for the
+dedicated metronome click instance (`diakopad_metronome`, see
 engine/metronome_sounds.py) - anything that needs its own independent
 one-shot-sample player gets its own client here.
 
@@ -42,8 +44,8 @@ MAX_RECOVERY_ATTEMPTS = 3
 MAX_RECOVERY_BACKOFF_SECONDS = 30.0
 
 
-def client_name(pad_number: int) -> str:
-    return f"diakopad_pad{pad_number:02d}"
+def client_name(pad_number: int, slot: str = "a") -> str:
+    return f"diakopad_pad{pad_number:02d}{slot}"
 
 
 def _binary_available() -> bool:
@@ -80,7 +82,19 @@ def spawn(client: str, sfz_path: Path) -> bool:
     return True
 
 
-def stop(client: str, forget: bool = True) -> None:
+def stop(client: str, forget: bool = True, graceful: bool = False) -> None:
+    """SIGKILL by default: sfizz_jack has no state to flush on exit, and
+    measured on real hardware, a graceful SIGTERM shutdown took ~1s per
+    instance against ~15ms for JACK to notice a killed client and free its
+    ports - spawn() immediately re-registers the same client_name right
+    after, so that port teardown latency is what actually gated a respawn.
+
+    `graceful=True` is for the one caller that isn't time-critical: tearing
+    down a pad's old slot after orchestrator.py's double-buffered swap has
+    already moved the live audio graph onto the new one. Giving sfizz_jack a
+    real chance to shut down cleanly there, instead of piling on more
+    concurrent SIGKILLs, is believed to ease pressure on the PipeWire/JACK
+    bridge (observed to occasionally crash under bursts of killed clients)."""
     proc = _procs.pop(client, None)
     if forget:
         _sfz_paths.pop(client, None)
@@ -88,12 +102,13 @@ def stop(client: str, forget: bool = True) -> None:
         _next_recovery_at.pop(client, None)
     if proc is None:
         return
-    # SIGKILL, not terminate(): sfizz_jack has no state to flush on exit, and
-    # measured on real hardware, a graceful SIGTERM shutdown took ~1s per
-    # instance (dominating a scene switch's respawn time across many pads)
-    # against ~15ms for JACK to notice a killed client and free its ports -
-    # spawn() immediately re-registers the same client_name right after, so
-    # that port teardown latency is what actually gated the respawn.
+    if graceful:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+            return
+        except subprocess.TimeoutExpired:
+            logger.warning("graceful stop of %s timed out after 3s; escalating to SIGKILL", client)
     proc.kill()
     try:
         proc.wait(timeout=3)

@@ -7,11 +7,21 @@ process directly - a pad reload is just "respawn this one instance", and an
 effect param change is just a mod-host param_set with no restart at all.
 
 JACK topology per pad:
-  SMC-PAD hardware -> DiakoPad-in -> DiakoPad-hardware-out -> diakopad_padNN:input
+  SMC-PAD hardware -> DiakoPad-in -> DiakoPad-hardware-out -> diakopad_padNNa/b:input
   DiakoPad-trigger-out (sequencer/looper, see engine/trigger.py) --> same inputs
-  diakopad_padNN:output_1/2 --> slot1 (if any) --> slot2 (if any) -->
-                                 slot3 (if any) --> system:playback
+  diakopad_padNNa/b:output_1/2 --> slot1 (if any) --> slot2 (if any) -->
+                                    slot3 (if any) --> system:playback
   (skips straight to system:playback when every slot is empty)
+
+Each pad is double-buffered: it really has two possible sfizz clients,
+diakopad_padNNa and diakopad_padNNb (see sfizz_proc.client_name), but only
+one is ever wired into the graph at a time (tracked in _active_slot). A scene
+switch that changes a pad's sound spawns the new content on the OTHER slot,
+confirms its JACK ports are up, and only then rewires the graph onto it and
+tears the old slot down (gracefully, in the background) - so the pad that's
+currently playing is never killed until its replacement is proven to work.
+Seeing two diakopad_padNN* clients briefly in `jack_lsp`/journalctl for the
+same pad number mid-switch is expected, not a leak.
 
 Every public function is best-effort: on a machine without JACK/sfizz_jack/
 mod-host (e.g. local Windows dev), calls degrade to logging and returning
@@ -62,6 +72,16 @@ _live_slot_plugin: dict[tuple[int, int], str | None] = {}
 _pad_apply_locks: dict[int, asyncio.Lock] = {}
 _apply_semaphore = asyncio.Semaphore(4)
 _graph_lock = asyncio.Lock()
+
+# pad_number -> "a"/"b", whichever sfizz client is currently wired into the
+# graph for that pad. Absent key = the pad has never been spawned yet (fresh
+# startup), which apply_pad() treats as a direct first spawn onto slot "a"
+# rather than a double-buffered swap.
+_active_slot: dict[int, str] = {}
+# Keeps references to fire-and-forget old-slot teardown tasks (apply_pad's
+# swap path) alive until they finish - asyncio.create_task()'s result must be
+# held onto somewhere, or the task can be garbage-collected mid-flight.
+_teardown_tasks: set[asyncio.Task] = set()
 _supervisor_task: asyncio.Task | None = None
 _last_engine_error = ""
 _master_available = False
@@ -80,12 +100,23 @@ def _effect_client(instance: int) -> str:
     return f"effect_{instance}"
 
 
+def _active_client(pad_number: int) -> str:
+    return sfizz_proc.client_name(pad_number, _active_slot.get(pad_number, "a"))
+
+
 async def startup() -> None:
     """Called once from the FastAPI startup hook: spawns mod-host, opens the
     trigger-out port, and starts the sfizz watchdog. Individual pads are
     brought up afterwards via apply_all_pads() with the current DB state."""
     modhost_client.start()
     midi.open_output()
+    # _active_slot always starts empty on a fresh process, so a survived
+    # orphan from an unclean previous shutdown would otherwise go unnoticed
+    # under a slot name nothing here is watching for. Cheap no-op in the
+    # common case (systemd already reaps the service's process group).
+    for pad_number in range(1, 17):
+        await asyncio.to_thread(sfizz_proc.stop, sfizz_proc.client_name(pad_number, "a"))
+        await asyncio.to_thread(sfizz_proc.stop, sfizz_proc.client_name(pad_number, "b"))
     async with _graph_lock:
         await asyncio.to_thread(
             jackgraph.connect_pattern_to_all, HARDWARE_MIDI_PATTERN, rf".*:{re.escape(midi.INPUT_PORT_NAME)}$"
@@ -107,11 +138,16 @@ async def _recover_sfizz(client: str) -> bool:
             if _last_preview_kit is None:
                 return False
             return await apply_preview_kit(_last_preview_kit)
-        match = re.fullmatch(r"diakopad_pad(\d{2})", client)
+        match = re.fullmatch(r"diakopad_pad(\d{2})[ab]", client)
         if match is None:
             return False
         pads = await asyncio.to_thread(storage.list_pads)
         effects = await asyncio.to_thread(storage.list_pad_effects)
+        # The crashed client's own slot letter isn't authoritative for what
+        # to do next - apply_pad() independently recomputes the standby slot
+        # from _active_slot (which still points at the crashed one), so this
+        # always recovers via a normal double-buffered swap onto the other
+        # slot, never by respawning in place under the dead name.
         return await apply_pad(int(match.group(1)), pads, settings, effects)
     except Exception as exc:  # pragma: no cover - defensive recovery path
         _last_engine_error = f"recuperação do {client}: {exc}"
@@ -121,10 +157,14 @@ async def _recover_sfizz(client: str) -> bool:
 
 def _refresh_hardware_connections() -> None:
     jackgraph.connect_pattern_to_all(HARDWARE_MIDI_PATTERN, rf".*:{re.escape(midi.INPUT_PORT_NAME)}$")
-    jackgraph.connect_pattern_to_all(
-        rf"{re.escape(midi.HARDWARE_OUTPUT_PORT_NAME)}$", r"^diakopad_pad\d\d:input$"
-    )
-    jackgraph.connect_pattern_to_all(rf"{re.escape(midi.OUTPUT_PORT_NAME)}$", r"^diakopad_pad\d\d:input$")
+    # Per-pad, per-active-client (not a blanket diakopad_pad\d\d regex): with
+    # double buffering a standby client can be alive mid-swap under the same
+    # \d\d pad number, and this periodic safety-net reconnect must only ever
+    # touch the slot that's actually supposed to be live.
+    for pad_number in range(1, 17):
+        client = _active_client(pad_number)
+        jackgraph.connect_pattern_to_all(rf"{re.escape(midi.HARDWARE_OUTPUT_PORT_NAME)}$", f"^{re.escape(client)}:input$")
+        jackgraph.connect_pattern_to_all(rf"{re.escape(midi.OUTPUT_PORT_NAME)}$", f"^{re.escape(client)}:input$")
     jackgraph.connect_pattern_to_all(
         rf"{re.escape(midi.METRONOME_OUTPUT_PORT_NAME)}$", rf"^{re.escape(METRONOME_CLIENT)}:input$"
     )
@@ -135,7 +175,13 @@ def _schedule_players_without_ports() -> None:
     # and the metronome, it only exists transiently while kit-browse mode is
     # active (see apply_preview_kit/stop_preview), so keeping an 18th sfizz
     # process alive at idle just to watch its ports would be pure waste.
-    clients = [sfizz_proc.client_name(n) for n in range(1, 17)] + [METRONOME_CLIENT]
+    #
+    # Only ever the ACTIVE slot per pad, never a standby: _active_slot only
+    # gets set (in apply_pad's swap) after wait_for_port_async has already
+    # confirmed that slot's ports exist, so a standby mid-swap can never be
+    # mistaken for a stuck pad here - its own apply_pad() call already owns
+    # detecting and recovering its own port-wait failure.
+    clients = [_active_client(n) for n in range(1, 17)] + [METRONOME_CLIENT]
     for client in clients:
         if sfizz_proc.is_running(client) and not jackgraph.has_port(f"{client}:output_1"):
             logger.warning("sfizz for %s is alive without JACK ports; scheduling recovery", client)
@@ -185,7 +231,7 @@ def engine_status() -> dict:
     return {
         "jack": jackgraph.available(),
         "modhost": modhost_client.is_alive(),
-        "pads": {str(n): sfizz_proc.is_running(sfizz_proc.client_name(n)) for n in range(1, 17)},
+        "pads": {str(n): sfizz_proc.is_running(_active_client(n)) for n in range(1, 17)},
         "metronome": sfizz_proc.is_running(METRONOME_CLIENT),
         "master": master_state(),
         "cpu_percent": system_metrics.cpu_percent(),
@@ -313,23 +359,42 @@ async def restart_engine(pads: list[dict], settings: dict, pad_effects: list[dic
 
 
 async def apply_pad(pad_number: int, pads: list[dict], settings: dict, pad_effects: list[dict]) -> bool:
-    """Rerenders one pad's .sfz, (re)spawns its sfizz instance, and rewires
-    its MIDI inputs + effect chain. Called after a sample/note/volume/pan/
-    tone change (anything that needs the sfizz process itself restarted).
-    Returns True if the real engine actually picked it up (false on dev
-    machines without sfizz)."""
+    """Rerenders one pad's .sfz and (re)spawns its sfizz instance, without
+    ever silencing what's currently playing before the replacement is proven
+    to work: the new content is spawned onto the pad's STANDBY slot (see
+    _active_slot/sfizz_proc.client_name), and the live graph is only rewired
+    onto it once its JACK ports are confirmed up. If the standby never comes
+    up, this returns False having touched nothing - the pad that was already
+    playing keeps playing. The now-idle old slot (if any) is torn down
+    afterwards, off this call's critical path. A pad's very first-ever spawn
+    (no active slot yet) has nothing to protect, so it skips straight to
+    slot "a" with no swap dance. Returns True if the real engine actually
+    picked it up (false on dev machines without sfizz)."""
     lock = _pad_apply_locks.setdefault(pad_number, asyncio.Lock())
     async with lock:
         pad = next((p for p in pads if p["pad_number"] == pad_number), None)
         if pad is None:
             return False
-        client = sfizz_proc.client_name(pad_number)
+
+        is_first_spawn = pad_number not in _active_slot
+        active_slot = _active_slot.get(pad_number, "a")
+        active_client = sfizz_proc.client_name(pad_number, active_slot)
+
         if not pad.get("filename"):
-            await asyncio.to_thread(sfizz_proc.stop, client)
+            await asyncio.to_thread(sfizz_proc.stop, active_client)
+            # Defensive: also stop the other slot in case a prior swap's
+            # background teardown never ran (e.g. an unclean shutdown mid-
+            # teardown) - stop() on an untracked client name is a cheap
+            # no-op, so this costs nothing in the common case.
+            other_client = sfizz_proc.client_name(pad_number, "b" if active_slot == "a" else "a")
+            await asyncio.to_thread(sfizz_proc.stop, other_client)
             return False
 
+        standby_slot = active_slot if is_first_spawn else ("b" if active_slot == "a" else "a")
+        standby_client = sfizz_proc.client_name(pad_number, standby_slot)
+
         sfz_path = await asyncio.to_thread(sfz.write_pad_kit, pad_number, pad, settings)
-        if not await asyncio.to_thread(sfizz_proc.spawn, client, sfz_path):
+        if not await asyncio.to_thread(sfizz_proc.spawn, standby_client, sfz_path):
             return False
 
         # Polling for the new JACK ports only reads graph state (nothing to
@@ -337,26 +402,55 @@ async def apply_pad(pad_number: int, pads: list[dict], settings: dict, pad_effec
         # moment after spawn to register them) - done outside _graph_lock so
         # pads respawning together (a scene switch) wait for their ports in
         # parallel instead of queueing behind each other one at a time. Only
-        # the actual graph mutation below needs the lock.
-        if not await jackgraph.wait_for_port_async(f"{client}:output_1"):
-            logger.warning("sfizz JACK ports for pad %d never appeared", pad_number)
-            sfizz_proc.schedule_recovery(client)
+        # the actual graph mutation below needs the lock. Nothing about the
+        # currently-live active_client is touched up to this point.
+        if not await jackgraph.wait_for_port_async(f"{standby_client}:output_1"):
+            logger.warning(
+                "sfizz JACK ports for pad %d never appeared on standby %s; keeping %s live",
+                pad_number, standby_client, active_client,
+            )
+            sfizz_proc.schedule_recovery(standby_client)
             return False
 
         async with _graph_lock:
+            # Feed the new client hardware/sequencer triggers before cutting
+            # the old one over, so there's no window where a hit lands on
+            # neither client.
             await asyncio.to_thread(
                 jackgraph.connect_pattern_to_all,
                 rf"{re.escape(midi.HARDWARE_OUTPUT_PORT_NAME)}$",
-                f"^{re.escape(client)}:input$",
+                f"^{re.escape(standby_client)}:input$",
             )
             await asyncio.to_thread(
                 jackgraph.connect_pattern_to_all,
                 rf"{re.escape(midi.OUTPUT_PORT_NAME)}$",
-                f"^{re.escape(client)}:input$",
+                f"^{re.escape(standby_client)}:input$",
             )
-            await _apply_pad_effects_unlocked(pad_number, pad_effects)
-            sfizz_proc.mark_recovered(client)
+            # Rewires the effect chain + master output onto the new client
+            # (this disconnects the OLD client's own output ports as part of
+            # _rewire_pad_chain).
+            await _apply_pad_effects_unlocked(pad_number, pad_effects, client=standby_client)
+            if not is_first_spawn:
+                await asyncio.to_thread(jackgraph.disconnect_all, rf"^{re.escape(active_client)}:input$")
+            _active_slot[pad_number] = standby_slot
+            sfizz_proc.mark_recovered(standby_client)
+
+        if not is_first_spawn:
+            task = asyncio.create_task(_teardown_client(active_client))
+            _teardown_tasks.add(task)
+            task.add_done_callback(_teardown_tasks.discard)
+
         return True
+
+
+async def _teardown_client(client: str) -> None:
+    """Gracefully shuts down a pad's now-idle old slot after apply_pad()'s
+    swap has already moved the live graph onto its replacement - no longer
+    time-critical, so this can afford sfizz_jack's slower clean SIGTERM exit
+    instead of piling another concurrent SIGKILL onto the PipeWire/JACK
+    bridge during a scene switch."""
+    logger.info("tearing down idle sfizz client %s", client)
+    await asyncio.to_thread(sfizz_proc.stop, client, True, True)
 
 
 async def apply_all_pads(pads: list[dict], settings: dict, pad_effects: list[dict]) -> None:
@@ -419,7 +513,11 @@ async def apply_pad_effects(pad_number: int, pad_effects: list[dict]) -> None:
         await _apply_pad_effects_unlocked(pad_number, pad_effects)
 
 
-async def _apply_pad_effects_unlocked(pad_number: int, pad_effects: list[dict]) -> None:
+async def _apply_pad_effects_unlocked(pad_number: int, pad_effects: list[dict], client: str | None = None) -> None:
+    """`client` lets apply_pad()'s swap wire the effect chain onto a standby
+    slot that isn't _active_slot yet; every other caller means "whichever
+    client is live right now", which is the default."""
+    client = client or _active_client(pad_number)
     slots = sorted(
         (row for row in pad_effects if row["pad_number"] == pad_number),
         key=lambda r: r["slot_index"],
@@ -448,7 +546,7 @@ async def _apply_pad_effects_unlocked(pad_number: int, pad_effects: list[dict]) 
             for symbol, value in effects_catalog.effective_params(plugin_id, row["params"]).items():
                 await modhost_client.param_set(instance, symbol, value)
 
-    _rewire_pad_chain(pad_number, slots)
+    _rewire_pad_chain(pad_number, slots, client)
 
 
 async def rewire_audio_routes(pad_effects: list[dict]) -> None:
@@ -458,8 +556,7 @@ async def rewire_audio_routes(pad_effects: list[dict]) -> None:
     await _rewire_metronome()
 
 
-def _rewire_pad_chain(pad_number: int, slots: list[dict]) -> None:
-    client = sfizz_proc.client_name(pad_number)
+def _rewire_pad_chain(pad_number: int, slots: list[dict], client: str) -> None:
     if not jackgraph.available():
         return
 

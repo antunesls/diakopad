@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=DiakoPad (abrir no navegador)
+Comment=Abre http://localhost:8080 automaticamente apos login
+Exec=__HOME__/.local/bin/diakopad-open-browser.sh
+X-KDE-autostart-after=panel
+X-GNOME-Autostart-enabled=true
+Terminal=false

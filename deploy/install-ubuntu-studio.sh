@@ -94,6 +94,17 @@ sed "s#__INSTALL_DIR__#$INSTALL_DIR#g" "$INSTALL_DIR/deploy/diakopad-desktop.ser
 cp "$INSTALL_DIR/deploy/diakopad-restart.service" "$HOME/.config/systemd/user/diakopad-restart.service"
 systemctl --user daemon-reload
 
+echo "==> Installing auto-open-browser-on-login (opens http://localhost:8080 once the desktop session starts)"
+mkdir -p "$HOME/.local/bin" "$HOME/.config/autostart"
+cp "$INSTALL_DIR/deploy/diakopad-open-browser.sh" "$HOME/.local/bin/diakopad-open-browser.sh"
+chmod +x "$HOME/.local/bin/diakopad-open-browser.sh"
+sed "s#__HOME__#$HOME#g" "$INSTALL_DIR/deploy/diakopad-browser.desktop" \
+  > "$HOME/.config/autostart/diakopad-browser.desktop"
+
+echo "==> Pinning PipeWire to 44100Hz / 128 frames"
+mkdir -p "$HOME/.config/pipewire/pipewire.conf.d"
+cp "$INSTALL_DIR/deploy/pipewire-clock.conf" "$HOME/.config/pipewire/pipewire.conf.d/99-diakopad-clock.conf"
+
 cat <<EOF
 
 ==> Base install done, but NOT started yet - do these manual steps first
@@ -103,6 +114,11 @@ cat <<EOF
      starting DiakoPad - either real jackd2 (via qjackctl / Ubuntu Studio
      Controls) or pipewire-jack. Sanity-check:
          jack_lsp || echo "no JACK server reachable yet"
+     If PipeWire was already running before this install, restart it so it
+     picks up the pinned 44100Hz/128-frame clock (deploy/diakopad-restart.service
+     does this same restart, minus the DiakoPad service, if you'd rather use it):
+         systemctl --user restart pipewire.service pipewire-pulse.service wireplumber.service
+         pw-metadata -n settings | grep clock   # confirm rate=44100 quantum=128
 
   2. The effect catalog's defaults (backend/engine/effects_catalog.py) and
      the master gain in the installed service already target this exact

@@ -42,13 +42,20 @@ bash deploy/install-ubuntu-studio.sh
 ```
 
 O instalador cria o ambiente Python, instala as dependências, compila
-`sfizz_jack` e `mod-host` quando necessário e registra `diakopad.service` como
-serviço `systemd --user`.
+`sfizz_jack` e `mod-host` quando necessário, registra `diakopad.service` como
+serviço `systemd --user`, configura `http://localhost:8080` para abrir
+automaticamente no Firefox ao entrar na sessão gráfica (autostart KDE) e fixa
+o clock do PipeWire em 44100 Hz / 128 frames (baixa latência, sem
+renegociação durante o show).
 
 Antes de iniciar o aplicativo, confirme que o servidor de áudio da sessão está
-ativo. No Ubuntu Studio, use Ubuntu Studio Controls, QjackCtl ou PipeWire:
+ativo. No Ubuntu Studio, use Ubuntu Studio Controls, QjackCtl ou PipeWire. Se o
+PipeWire já estava rodando antes da instalação, reinicie-o para aplicar o
+clock fixado em 44100 Hz / 128 frames:
 
 ```bash
+systemctl --user restart pipewire.service pipewire-pulse.service wireplumber.service
+pw-metadata -n settings | grep clock   # confirma rate=44100 quantum=128
 jack_lsp
 systemctl --user enable --now diakopad.service
 systemctl --user status diakopad.service

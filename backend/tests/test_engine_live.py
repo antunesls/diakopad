@@ -499,14 +499,14 @@ class SceneLoadEndpointTests(unittest.IsolatedAsyncioTestCase):
             storage.set_pad_note(3, 99)
             scene_id = storage.save_scene("live", storage.list_pads(), storage.list_pad_effects())
             with (
-                patch("app.orchestrator.apply_all_pads", new=AsyncMock()) as apply_all,
+                patch("app.orchestrator.apply_changed_pads", new=AsyncMock()) as apply_changed,
                 patch("app._broadcast_pads", new=AsyncMock()) as broadcast_pads,
                 patch("app._broadcast_pad_effects", new=AsyncMock()),
             ):
                 result = await diakopad_app.load_scene(scene_id)
 
             self.assertTrue(result["ok"])
-            apply_all.assert_awaited_once()
+            apply_changed.assert_awaited_once()
             broadcast_pads.assert_awaited_once()
             expected_notes = {35 + n: [n] for n in range(1, 17)}
             del expected_notes[38]
@@ -996,13 +996,14 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
                 },
                 sequencer_steps=storage.list_sequencer_steps(),
             )
+            old_pads = storage.list_pads()
             scene = storage.load_scene(scene_id)
 
             with (
                 patch("app.tempo.set") as tempo_set,
                 patch("app.metronome.set_signature") as set_signature,
                 patch("app.orchestrator.apply_metronome_style", new=AsyncMock()),
-                patch("app.orchestrator.apply_all_pads", new=AsyncMock()),
+                patch("app.orchestrator.apply_changed_pads", new=AsyncMock()),
                 patch("app.sequencer.load_pattern") as load_pattern,
                 patch("app.sequencer.start", new=AsyncMock()) as seq_start,
                 patch("app.metronome.start", new=AsyncMock()) as met_start,
@@ -1013,7 +1014,7 @@ class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
                 patch("app._broadcast_sequencer", new=AsyncMock()),
                 patch("app._broadcast_metronome", new=AsyncMock()),
             ):
-                await diakopad_app._apply_scene_and_broadcast(scene)
+                await diakopad_app._apply_scene_and_broadcast(scene, old_pads)
 
             tempo_set.assert_called_once_with(150.0)
             set_signature.assert_called_once_with("5_4")

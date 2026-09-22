@@ -355,19 +355,53 @@ async def apply_pad(pad_number: int, pads: list[dict], settings: dict, pad_effec
 
 async def apply_all_pads(pads: list[dict], settings: dict, pad_effects: list[dict]) -> None:
     """Used after a global settings change (sustain/velocity, affects every
-    pad's rendered .sfz) and after a scene switch (which can also CLEAR a
-    pad's sample). Must call apply_pad() for every pad, not just the ones
-    that currently have a filename - apply_pad() is what actually stops a
-    pad's sfizz instance when it has none, and skipping that call for an
-    empty pad here used to leave a just-cleared pad's old instance running
-    (and still wired to hardware MIDI), silently playing the previous scene's
-    sample forever. apply_pad() no-ops cheaply for a pad that's already
-    stopped, so calling it for all 16 costs nothing extra."""
+    pad's rendered .sfz) and after an engine reset. Must call apply_pad() for
+    every pad, not just the ones that currently have a filename - apply_pad()
+    is what actually stops a pad's sfizz instance when it has none, and
+    skipping that call for an empty pad here used to leave a just-cleared
+    pad's old instance running (and still wired to hardware MIDI), silently
+    playing the previous sample forever. apply_pad() no-ops cheaply for a pad
+    that's already stopped, so calling it for all 16 costs nothing extra.
+    Scene switching uses apply_changed_pads() instead, since unlike a
+    settings change it usually only touches a handful of pads."""
     async def apply_one(pad: dict) -> None:
         async with _apply_semaphore:
             await apply_pad(pad["pad_number"], pads, settings, pad_effects)
 
     await asyncio.gather(*(apply_one(pad) for pad in pads))
+
+
+# Pad fields that feed into render_pad_sfz() (see sfz.py) - anything else
+# (display_name, pad_number itself) can't change what a pad sounds like.
+_SFZ_RELEVANT_FIELDS = ("sample_id", "midi_note", "volume_db", "pan", "cutoff_hz")
+
+
+async def apply_changed_pads(
+    old_pads: list[dict], new_pads: list[dict], settings: dict, pad_effects: list[dict]
+) -> None:
+    """Like apply_all_pads(), but only respawns a pad's sfizz instance (kill +
+    spawn a new OS process + wait for its JACK ports + rewire MIDI/effects -
+    the expensive part of a scene switch) when one of _SFZ_RELEVANT_FIELDS
+    actually differs from before. A pad whose sound is unchanged keeps its
+    already-running instance and only gets its effect chain re-applied
+    (apply_pad_effects() is a cheap, already-diffed mod-host-only call), so a
+    scene switch that shares most pads with the previous one only pays for
+    the pads that actually changed. Only valid when `settings` itself hasn't
+    changed between old_pads and new_pads (true for scene switching - scenes
+    don't carry sustain_mode/velocity_sensitive), since those affect every
+    pad's rendered .sfz regardless of its own fields."""
+    old_by_number = {p["pad_number"]: p for p in old_pads}
+
+    async def apply_one(pad: dict) -> None:
+        old = old_by_number.get(pad["pad_number"])
+        changed = old is None or any(old.get(f) != pad.get(f) for f in _SFZ_RELEVANT_FIELDS)
+        if changed:
+            async with _apply_semaphore:
+                await apply_pad(pad["pad_number"], new_pads, settings, pad_effects)
+        else:
+            await apply_pad_effects(pad["pad_number"], pad_effects)
+
+    await asyncio.gather(*(apply_one(pad) for pad in new_pads))
 
 
 async def apply_pad_effects(pad_number: int, pad_effects: list[dict]) -> None:

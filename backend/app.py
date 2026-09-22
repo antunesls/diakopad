@@ -627,9 +627,10 @@ async def _dispatch_controller_action(action: str) -> None:
             next_scene_name = next((s["name"] for s in scenes if s["id"] == next_scene_id), None)
             await _broadcast_scene_loading(True, next_scene_name)
             try:
+                old_pads = storage.list_pads()
                 scene = storage.load_scene(next_scene_id)
                 storage.set_setting("current_scene_id", str(next_scene_id))
-                await _apply_scene_and_broadcast(scene)
+                await _apply_scene_and_broadcast(scene, old_pads)
                 await _broadcast_scenes()
             finally:
                 await _broadcast_scene_loading(False)
@@ -1284,13 +1285,16 @@ async def set_pad_effect_param(pad_number: int, slot_index: int, body: EffectPar
 # ── Performance scenes ───────────────────────────────────────────────────────
 
 
-async def _apply_scene_and_broadcast(scene: dict) -> None:
+async def _apply_scene_and_broadcast(scene: dict, old_pads: list[dict]) -> None:
     """Reapplies an already-loaded (storage.load_scene) scene onto the engine
     and broadcasts pads/pad_effects/knobs/tempo/sequencer/metronome - shared
     by the REST load endpoint and the hardware-triggered scene navigation, so
     neither duplicates the other's engine-reload logic. The scene's global
     state (tempo, metronome, transports) is only touched when the scene
     carries one (scenes saved before that joined the snapshot leave it as-is).
+    `old_pads` is the pad state from just before the caller's
+    storage.load_scene() call, so apply_changed_pads() can skip respawning
+    any pad whose sound didn't actually change between the two scenes.
     """
     global _pad_notes
     state = scene.get("state")
@@ -1298,10 +1302,11 @@ async def _apply_scene_and_broadcast(scene: dict) -> None:
         tempo.set(float(state["sequencer_bpm"]))
         metronome.set_signature(state["metronome_signature"])
         await orchestrator.apply_metronome_style(state["metronome_style"])
-    _pad_notes = _build_pad_note_map(storage.list_pads())
+    new_pads = storage.list_pads()
+    _pad_notes = _build_pad_note_map(new_pads)
     sequencer.load_pattern(storage.list_sequencer_steps())
-    await orchestrator.apply_all_pads(
-        storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
+    await orchestrator.apply_changed_pads(
+        old_pads, new_pads, storage.get_settings(), storage.list_pad_effects()
     )
     if state is not None:
         if state["sequencer_running"] == "1":
@@ -1391,12 +1396,13 @@ async def delete_scene(scene_id: int):
 
 @app.post("/api/scenes/{scene_id}/load")
 async def load_scene(scene_id: int):
+    old_pads = storage.list_pads()
     scene = storage.load_scene(scene_id)
     if scene is None:
         raise HTTPException(404, "scene not found")
 
     storage.set_setting("current_scene_id", str(scene_id))
-    await _apply_scene_and_broadcast(scene)
+    await _apply_scene_and_broadcast(scene, old_pads)
     await _broadcast_scenes()
     return {"ok": True, "scene": {"id": scene["id"], "name": scene["name"]}}
 

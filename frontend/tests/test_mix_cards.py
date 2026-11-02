@@ -157,12 +157,26 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn('id="tab-master"', html)
         self.assertIn('id="master-limiter-threshold"', html)
         self.assertIn("masterLimiterThreshold", app)
-        self.assertIn(
-            '<button id="engine-status" class="engine-status" type="button" aria-expanded="false">Motor</button>\n'
-            '      <output id="cpu-meter" class="cpu-meter" aria-live="polite">CPU --</output>\n'
-            '      <button id="tab-master" class="tab" type="button">Master</button>',
-            html,
-        )
+        # Layout console: Master mora no grupo "Controle" da lateral.
+        controle = html.index('<span class="nav-group-title">Controle</span>')
+        self.assertLess(controle, html.index('id="tab-master"'))
+        self.assertLess(html.index('id="tab-master"'), html.index('<div class="workspace">'))
+
+    def test_layout_console_tem_lateral_agrupada_e_painel_do_pad(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+        css = (FRONTEND / "style.css").read_text(encoding="utf-8")
+
+        for group in ("Tocar", "Som", "Ritmo", "Controle"):
+            self.assertIn(f'<span class="nav-group-title">{group}</span>', html)
+        self.assertIn('id="tab-midi"', html)
+        self.assertIn('id="view-midi"', html)
+        self.assertIn('id="pad-inspector"', html)
+        self.assertIn('"knobs", "midi", "config"]', app)
+        self.assertIn("function renderInspector(", app)
+        self.assertIn("selectInspectorPad(pad.pad_number);", app)
+        self.assertIn("state.inspectorEditing", app)
+        self.assertIn('body[data-view="pads"] .inspector', css)
 
     def test_config_tem_mapa_midi_unificado_com_filtro_e_banner(self):
         html = (FRONTEND / "index.html").read_text(encoding="utf-8")

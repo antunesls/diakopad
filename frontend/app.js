@@ -37,6 +37,9 @@
     controllerActions: { bindings: {}, pending_learn: null },
     kitBrowse: { active: false },
     sceneLoadingCount: 0,
+    inspectorPad: null,
+    inspectorPinned: false,
+    inspectorEditing: false,
   };
 
   const KIT_BROWSE_RESERVED_PADS = { 13: "up", 14: "left", 15: "right", 16: "down", 1: "back", 4: "confirm" };
@@ -49,6 +52,14 @@
 
   const el = {
     padGrid: document.getElementById("pad-grid"),
+    inspector: document.getElementById("pad-inspector"),
+    topbarScene: document.getElementById("topbar-scene"),
+    navBadgePads: document.getElementById("nav-badge-pads"),
+    navBadgeScenes: document.getElementById("nav-badge-scenes"),
+    navBadgeSequencer: document.getElementById("nav-badge-sequencer"),
+    navBadgeMetronome: document.getElementById("nav-badge-metronome"),
+    navBadgeLooper: document.getElementById("nav-badge-looper"),
+    navBadgeKnobs: document.getElementById("nav-badge-knobs"),
     perfPadGrid: document.getElementById("perf-pad-grid"),
     scenePrev: document.getElementById("scene-prev"),
     sceneNext: document.getElementById("scene-next"),
@@ -174,7 +185,7 @@
     knobModalWaiting: document.getElementById("knob-modal-waiting"),
   };
 
-  const VIEWS = ["pads", "performance", "sounds", "volumes", "master", "effects", "sequencer", "metronome", "looper", "knobs", "config"];
+  const VIEWS = ["pads", "performance", "sounds", "volumes", "master", "effects", "sequencer", "metronome", "looper", "knobs", "midi", "config"];
   const SUPPORTED_AUDIO_EXTENSIONS = new Set([".wav", ".mp3", ".ogg", ".flac", ".aiff", ".aif"]);
   // Uploading a big folder (or several dropped together) can mean hundreds
   // of files - firing every XHR at once used to overwhelm the connection
@@ -191,7 +202,10 @@
       document.getElementById(`tab-${name}`).classList.toggle("active", name === view);
       document.getElementById(`view-${name}`).classList.toggle("hidden", name !== view);
     }
+    // O painel do pad só aparece nas telas de tocar (ver .app-shell no CSS).
+    document.body.dataset.view = view;
   }
+  document.body.dataset.view = "pads";
 
   // --- Controles de palco ---------------------------------------------
 
@@ -353,7 +367,7 @@
   function buildPadButton(pad) {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "pad" + (pad.has_sample ? " filled" : "");
+    button.className = "pad" + (pad.has_sample ? " filled" : "") + (pad.pad_number === state.inspectorPad ? " selected" : "");
     button.dataset.padNumber = String(pad.pad_number);
     button.setAttribute("aria-label", `Pad ${pad.pad_number}: ${pad.has_sample ? pad.display_name : "vazio"}`);
     button.innerHTML = `
@@ -379,13 +393,17 @@
     button.addEventListener("pointerup", () => {
       const shouldTrigger = !longPressed;
       cancelPress();
-      if (shouldTrigger) triggerScreenPad(pad.pad_number);
+      if (shouldTrigger) {
+        triggerScreenPad(pad.pad_number);
+        selectInspectorPad(pad.pad_number);
+      }
     });
     ["pointercancel", "pointerleave"].forEach((eventName) => button.addEventListener(eventName, cancelPress));
     button.addEventListener("keydown", (event) => {
       if (!event.repeat && (event.key === "Enter" || event.key === " ")) {
         event.preventDefault();
         triggerScreenPad(pad.pad_number);
+        selectInspectorPad(pad.pad_number);
       }
     });
     return button;
@@ -402,6 +420,7 @@
     // Fresh buttons never carry the kit-browse pulse/highlight classes -
     // reapply them from the current state (harmless no-op when not browsing).
     renderKitBrowseGridState();
+    renderNavBadges();
   }
 
   // The hit animation comes from the server's pad_hit broadcast, so every
@@ -461,6 +480,157 @@
     return `${names[note % 12]}${Math.floor(note / 12) - 2}`;
   }
 
+  // --- Painel do pad (inspetor) ----------------------------------------
+  // Proposta B aprovada: tocar um pad na tela também o seleciona aqui, com
+  // som, mix e envios à mão, sem abrir modal. "Fixar" trava a seleção para
+  // ajustar um pad enquanto se toca os outros.
+
+  function selectInspectorPad(padNumber) {
+    if (state.kitBrowse.active) return;
+    if (state.inspectorPinned && state.inspectorPad !== null) return;
+    if (state.inspectorPad === padNumber) return;
+    state.inspectorPad = padNumber;
+    for (const grid of [el.padGrid, el.perfPadGrid]) {
+      for (const button of grid.querySelectorAll(".pad")) {
+        button.classList.toggle("selected", Number(button.dataset.padNumber) === padNumber);
+      }
+    }
+    renderInspector({ force: true });
+  }
+
+  function inspectorRange({ id, label, min, max, step, value, format, onCommit }) {
+    const row = document.createElement("div");
+    row.className = "inspector-field";
+    row.innerHTML = `<div class="inspector-field-head"><label for="${id}">${label}</label><output for="${id}">${format(value)}</output></div>
+      <input id="${id}" type="range" min="${min}" max="${max}" step="${step}" value="${value}">`;
+    const input = row.querySelector("input");
+    const output = row.querySelector("output");
+    input.addEventListener("input", () => (output.textContent = format(Number(input.value))));
+    input.addEventListener("change", () => onCommit(Number(input.value)));
+    return row;
+  }
+
+  function renderInspector({ force = false } = {}) {
+    if (!el.inspector) return;
+    // Não reconstruir debaixo do dedo: um broadcast no meio do arraste
+    // mataria o gesto (mesma regra da mesa de envios).
+    if (!force && (state.inspectorEditing || state.fxDragging)) return;
+    const pad = state.pads.find((p) => p.pad_number === state.inspectorPad);
+    el.inspector.innerHTML = "";
+    if (!pad) {
+      el.inspector.innerHTML = `<div class="inspector-empty"><strong>Nenhum pad selecionado</strong>
+        <span>Toque num pad para ver e ajustar som, volume, pan e envios aqui.</span></div>`;
+      return;
+    }
+    const n = pad.pad_number;
+    const head = document.createElement("div");
+    head.className = "inspector-head";
+    head.innerHTML = `
+      <div class="inspector-head-row">
+        <span class="inspector-eyebrow">Pad ${n} · nota ${pad.midi_note} (${formatMidiNote(pad.midi_note)})</span>
+        <button type="button" class="inspector-pin${state.inspectorPinned ? " active" : ""}" aria-pressed="${state.inspectorPinned}">${state.inspectorPinned ? "Fixado" : "Fixar"}</button>
+      </div>
+      <h2 class="inspector-title${pad.has_sample ? "" : " empty"}">${pad.has_sample ? escapeHtml(pad.display_name) : "Vazio"}</h2>
+      <div class="inspector-actions">
+        <button type="button" class="secondary-btn" data-role="assign">${pad.has_sample ? "Trocar som" : "Escolher som"}</button>
+        <button type="button" class="secondary-btn" data-role="play" ${pad.has_sample ? "" : "disabled"}>▶ Tocar</button>
+      </div>`;
+    head.querySelector(".inspector-pin").addEventListener("click", () => {
+      state.inspectorPinned = !state.inspectorPinned;
+      renderInspector({ force: true });
+    });
+    head.querySelector('[data-role="assign"]').addEventListener("click", () => openAssignModal(n));
+    head.querySelector('[data-role="play"]').addEventListener("click", () => triggerScreenPad(n));
+    el.inspector.appendChild(head);
+
+    const mix = document.createElement("section");
+    mix.className = "inspector-section";
+    mix.innerHTML = '<h3 class="inspector-section-title">Mix</h3>';
+    mix.appendChild(inspectorRange({
+      id: "insp-volume", label: "Volume", min: -24, max: 12, step: 0.5, value: pad.volume_db,
+      format: (v) => `${v} dB`, onCommit: (v) => setPadMix(n, { volume_db: v }),
+    }));
+    mix.appendChild(inspectorRange({
+      id: "insp-pan", label: "Pan", min: -100, max: 100, step: 1, value: pad.pan,
+      format: panLabel, onCommit: (v) => setPadMix(n, { pan: v }),
+    }));
+    mix.appendChild(inspectorRange({
+      id: "insp-tone", label: "Tom", min: 0, max: 100, step: 1, value: toneFromCutoff(pad.cutoff_hz),
+      format: (v) => (v >= 100 ? "aberto" : `${v}%`), onCommit: (v) => setPadMix(n, { tone: v }),
+    }));
+    mix.appendChild(inspectorRange({
+      id: "insp-tune", label: "Afinação", min: -12, max: 12, step: 0.5, value: Number(pad.tune || 0),
+      format: tuneLabel, onCommit: (v) => setPadMix(n, { tune: v }),
+    }));
+    el.inspector.appendChild(mix);
+
+    if (state.fxBuses.catalog.length) {
+      const sends = document.createElement("section");
+      sends.className = "inspector-section";
+      sends.innerHTML = '<h3 class="inspector-section-title">Envios</h3>';
+      for (const bus of state.fxBuses.catalog) {
+        const row = document.createElement("div");
+        row.className = "inspector-send";
+        row.innerHTML = `<span><span class="fx-swatch" style="--bc:${FX_BUS_COLOR[bus.bus]}" aria-hidden="true"></span>${escapeHtml(busShortLabel(bus.bus))}</span>`;
+        row.appendChild(sendBar(n, bus));
+        sends.appendChild(row);
+      }
+      el.inspector.appendChild(sends);
+    }
+
+    const own = document.createElement("section");
+    own.className = "inspector-section";
+    const chips = state.padEffects
+      .filter((e) => e.pad_number === n && e.plugin_id)
+      .map((e) => state.effectsCatalog.find((p) => p.plugin_id === e.plugin_id)?.label)
+      .filter(Boolean);
+    own.innerHTML = `<h3 class="inspector-section-title">Efeitos só deste pad</h3>
+      <div class="fx-chips">${chips.length ? chips.map((c) => `<span class="fx-chip on">${escapeHtml(c)}</span>`).join("") : '<span class="fx-chip">Nenhum</span>'}</div>
+      <button type="button" class="secondary-btn" data-role="open-fx">Abrir na mesa de efeitos</button>`;
+    own.querySelector('[data-role="open-fx"]').addEventListener("click", () => {
+      state.fxOpenPad = n;
+      switchView("effects");
+      renderEffects();
+    });
+    el.inspector.appendChild(own);
+  }
+
+  if (el.inspector) {
+    // Marca edição em andamento enquanto o dedo está num slider do painel.
+    el.inspector.addEventListener("pointerdown", (event) => {
+      if (event.target.matches('input[type="range"]')) state.inspectorEditing = true;
+    });
+    const endEditing = () => {
+      if (!state.inspectorEditing) return;
+      state.inspectorEditing = false;
+      // Aplica o que chegou por broadcast durante o arraste.
+      setTimeout(() => renderInspector(), 250);
+    };
+    document.addEventListener("pointerup", endEditing);
+    document.addEventListener("pointercancel", endEditing);
+  }
+
+  function renderNavBadges() {
+    if (!el.navBadgePads) return;
+    const filled = state.pads.filter((p) => p.has_sample).length;
+    el.navBadgePads.textContent = state.pads.length ? `${filled}/${state.pads.length}` : "";
+    const act = activeScenes();
+    el.navBadgeScenes.textContent = act.length ? String(act.length) : "";
+    const setLive = (badge, live, text) => {
+      badge.textContent = live ? text : "";
+      badge.classList.toggle("live", Boolean(live));
+    };
+    setLive(el.navBadgeSequencer, state.sequencer.running, "▶");
+    setLive(el.navBadgeMetronome, state.metronome.running, "▶");
+    const ls = state.looper.state;
+    const looperRec = ls === "recording" || ls === "overdubbing";
+    setLive(el.navBadgeLooper, ls && ls !== "stopped", looperRec ? "●" : "▶");
+    el.navBadgeLooper.classList.toggle("rec", looperRec);
+    el.navBadgeKnobs.textContent = state.knobs.length ? String(state.knobs.length) : "";
+    const scene = currentScene();
+    el.topbarScene.textContent = scene ? `Cena: ${scene.name}` : "Sem cena";
+  }
+
   function showMidiNote(note) {
     el.midiNoteIndicator.textContent = `MIDI: ${formatMidiNote(note)} (${note}) · Oitava ${Math.floor(note / 12) - 2}`;
     clearTimeout(midiNoteHitTimer);
@@ -500,6 +670,7 @@
     el.scenePrev.disabled = act.length < 2;
     el.sceneNext.disabled = act.length < 2;
     el.sceneDelete.disabled = !scene;
+    renderNavBadges();
   }
 
   function renderSceneList() {
@@ -1246,6 +1417,7 @@
     el.sequencerPlayBtn.classList.toggle("active", state.sequencer.running);
     el.globalSequencerBtn.textContent = state.sequencer.running ? "SEQ ■" : "SEQ ▶";
     el.globalSequencerBtn.classList.toggle("active", state.sequencer.running);
+    renderNavBadges();
 
     const activeByKey = new Set(
       state.sequencer.steps.filter((s) => s.active).map((s) => `${s.pad_number}:${s.step_index}`)
@@ -1382,6 +1554,7 @@
     el.metronomeStyleSelect.value = s.style;
     el.metronomeSignatureSelect.value = s.signature;
     renderMetronomeBeat(s.beat_in_bar);
+    renderNavBadges();
   }
 
   function renderMetronomeStyles() {
@@ -1494,6 +1667,7 @@
       overdubbing: "Sobrepondo...",
     };
     el.looperStateLabel.textContent = labels[s.state] || s.state;
+    renderNavBadges();
     el.looperRecordBtn.textContent = s.state === "recording" ? "■ Fechar trilha" : "● Gravar";
     el.looperRecordBtn.classList.toggle("active", s.state === "recording");
     el.looperRecordBtn.disabled = s.state === "overdubbing";
@@ -1657,6 +1831,7 @@
   function renderKnobs() {
     el.knobsList.innerHTML = "";
     el.knobClearAllBtn.disabled = state.knobs.length === 0;
+    renderNavBadges();
     if (state.knobs.length === 0) {
       el.knobsList.innerHTML = `<li class="sound-item"><span class="sound-name">Nenhum knob atribuído ainda.</span></li>`;
       return;
@@ -2420,6 +2595,7 @@
         renderSoundList();
         renderVolumes();
         renderEffects();
+        renderInspector();
         renderMidiMap();
         if (!el.modal.classList.contains("hidden")) renderNoteLearnButton();
       } else if (msg.type === "note_learn") {
@@ -2449,12 +2625,14 @@
       } else if (msg.type === "pad_effects") {
         state.padEffects = msg.pad_effects;
         renderEffects();
+        renderInspector();
         refreshKnobTargets();
       } else if (msg.type === "fx_buses") {
         const { type, ...fx } = msg;
         state.fxBuses = fx;
         if (!state.fxDragging) renderFxBusPanel();
         renderEffects();
+        renderInspector();
       } else if (msg.type === "sequencer") {
         state.sequencer = { running: msg.running, current_step: msg.current_step, steps: msg.steps };
         renderSequencer();
@@ -2690,6 +2868,7 @@
     renderSettings();
     renderFxBusPanel();
     renderEffects();
+    renderInspector();
     renderSequencerHead();
     renderSequencer();
     renderTempo();

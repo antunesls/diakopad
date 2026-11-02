@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DiakoPad — Nova Interface</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+/* Layout: página de propostas; cada versão é um mock de tela (16:10, tablet/laptop) + notas de decisão ao lado/abaixo.
+   Tema único escuro de propósito: é um app de palco, usado com pouca luz. Paleta herdada de frontend/style.css. */
+:root {
+  --bg: #0d0f14;
+  --panel: #1c1f28;
+  --panel-alt: #242833;
+  --line: #2f3442;
+  --accent: #ff7a3d;
+  --accent-dim: #7a3f22;
+  --text: #f2f2f2;
+  --text-dim: #9aa0ac;
+  --ok: #3fbf6f;
+  --danger: #d24343;
+  --warn: #ffc15a;
+  --fx-hall: #79a6ff;
+  --fx-plate: #c79bff;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--body); font-size: 15px; line-height: 1.5; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.page { max-width: 1240px; margin: 0 auto; padding: 32px 20px 64px; display: grid; gap: 28px; }
+.intro { display: grid; gap: 8px; max-width: 70ch; }
+.intro h1 { font-family: var(--display); font-weight: 700; font-size: 44px; line-height: 1; margin: 0; letter-spacing: .01em; text-wrap: balance; }
+.intro p { margin: 0; color: var(--text-dim); }
+.intro .tag { font-family: var(--mono); font-size: 12px; color: var(--accent); text-transform: uppercase; letter-spacing: .08em; }
+
+.switcher { display: flex; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+.switcher a { text-decoration: none; color: var(--text-dim); padding: 10px 16px; border-radius: 8px; border: 1px solid var(--line); display: grid; gap: 2px; min-width: 200px; }
+.switcher a strong { font-family: var(--display); font-size: 22px; color: var(--text); font-weight: 600; letter-spacing: .02em; }
+.switcher a span { font-size: 13px; }
+.switcher a[aria-current="page"] { border-color: var(--accent); background: #1d1510; }
+.switcher a[aria-current="page"] strong { color: var(--accent); }
+
+.version { display: none; gap: 20px; }
+.version.on { display: grid; }
+.v-head { display: flex; justify-content: space-between; align-items: end; gap: 16px; flex-wrap: wrap; }
+.v-head h2 { font-family: var(--display); font-size: 34px; margin: 0; line-height: 1; font-weight: 700; }
+.v-head p { margin: 4px 0 0; color: var(--text-dim); max-width: 64ch; }
+.sample-note { font-family: var(--mono); font-size: 11px; color: var(--text-dim); border: 1px dashed var(--line); border-radius: 6px; padding: 4px 8px; }
+
+/* moldura do mock */
+.device { background: #050608; border-radius: 18px; padding: 10px; border: 1px solid #22252e; overflow-x: auto; }
+.screen { min-width: 980px; aspect-ratio: 16 / 10; background: #12141a; border-radius: 10px; overflow: hidden; display: grid; position: relative; }
+
+.notes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.note { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 8px; align-content: start; }
+.note h3 { margin: 0; font-family: var(--display); font-size: 20px; font-weight: 600; letter-spacing: .02em; }
+.note ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; color: #d6d9e0; font-size: 14px; }
+.note.good h3 { color: var(--ok); }
+.note.bad h3 { color: var(--warn); }
+.note.map h3 { color: var(--accent); }
+@media (max-width: 800px) { .notes { grid-template-columns: 1fr; } }
+
+/* elementos compartilhados dos mocks */
+.pad { border: 0; border-radius: 10px; background: #26324a; display: grid; align-content: space-between; padding: 10px; text-align: left; position: relative; transition: transform .06s, background .1s, box-shadow .1s; }
+.pad .n { font-family: var(--mono); font-size: 11px; color: #8e9bb5; }
+.pad .s { font-family: var(--display); font-size: 20px; font-weight: 600; line-height: 1.05; }
+.pad .k { font-size: 11px; color: var(--text-dim); }
+.pad.empty { background: #1f222b; border: 1px dashed #343947; }
+.pad.empty .s { color: #5d6372; }
+.pad.hit { background: var(--accent); color: #1a0d05; box-shadow: 0 0 0 3px #ff7a3d55, 0 0 30px #ff7a3d66; transform: scale(.97); }
+.pad.hit .n, .pad.hit .k { color: #3a1a08; }
+.pad.sel { box-shadow: inset 0 0 0 2px var(--accent); }
+.c-kick { background: #3a2a4a; } .c-snare { background: #24405a; } .c-hat { background: #2b4a3c; } .c-tom { background: #4a3a28; } .c-cym { background: #4a4428; } .c-amb { background: #1f3f4a; }
+.fxdots { display: flex; gap: 3px; }
+.fxdots i { width: 6px; height: 6px; border-radius: 50%; display: block; }
+.panic { background: var(--danger); color: #fff; border: 0; border-radius: 8px; font-family: var(--display); font-weight: 700; letter-spacing: .08em; }
+.chip { font-family: var(--mono); font-size: 11px; padding: 2px 7px; border-radius: 99px; border: 1px solid var(--line); color: var(--text-dim); white-space: nowrap; }
+.chip.ok { color: var(--ok); border-color: #2a5a3c; }
+.chip.live { color: var(--accent); border-color: var(--accent-dim); }
+.beat { display: flex; gap: 5px; }
+.beat i { width: 12px; height: 12px; border-radius: 3px; background: #2c303c; display: block; }
+.beat i.on { background: var(--accent); }
+.beat i.one.on { background: #fff; }
+.meter { height: 6px; border-radius: 3px; background: #2a2e3a; overflow: hidden; }
+.meter b { display: block; height: 100%; background: linear-gradient(90deg, var(--ok) 70%, var(--warn) 90%, var(--danger)); }
+.lbl { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .08em; }
+.big { font-family: var(--display); font-weight: 700; line-height: 1; }
+
+/* ===== V1 Palco ===== */
+.v1 { grid-template-rows: 54px 1fr 92px; }
+.v1 .top { display: flex; align-items: center; gap: 14px; padding: 0 14px; background: #171a22; border-bottom: 1px solid var(--line); }
+.v1 .modes { display: flex; background: #0e1015; border-radius: 9px; padding: 3px; }
+.v1 .modes button { border: 0; background: none; padding: 6px 16px; border-radius: 7px; font-weight: 600; color: var(--text-dim); }
+.v1 .modes button.on { background: var(--panel-alt); color: var(--text); }
+.v1 .scene { flex: 1; display: flex; align-items: center; justify-content: center; gap: 12px; }
+.v1 .scene button { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); }
+.v1 .scene .name { text-align: center; }
+.v1 .scene .name strong { font-family: var(--display); font-size: 24px; display: block; line-height: 1; }
+.v1 .scene .name span { font-size: 11px; color: var(--text-dim); }
+.v1 .mid { display: grid; grid-template-columns: 1fr 250px; gap: 12px; padding: 12px; min-height: 0; }
+.v1 .grid { display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, 1fr); gap: 9px; }
+.v1 .next { background: var(--panel); border-radius: 12px; padding: 12px; display: grid; gap: 10px; align-content: start; }
+.v1 .next ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.v1 .next li { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: 8px; background: #181b23; font-size: 13px; }
+.v1 .next li.cur { background: #2a1c13; box-shadow: inset 3px 0 0 var(--accent); }
+.v1 .rail { display: grid; grid-template-columns: 170px 1fr 1fr 1fr 190px 130px; gap: 10px; padding: 10px 12px; background: #171a22; border-top: 1px solid var(--line); }
+.v1 .blk { background: var(--panel); border-radius: 10px; padding: 8px 10px; display: grid; gap: 4px; align-content: center; }
+.v1 .blk .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.v1 .tbtn { border: 0; border-radius: 7px; background: var(--panel-alt); padding: 5px 10px; font-weight: 600; font-size: 13px; }
+.v1 .tbtn.on { background: var(--accent); color: #1a0d05; }
+.v1 .loops { display: flex; gap: 4px; }
+.v1 .loops i { flex: 1; height: 18px; border-radius: 4px; background: #2c303c; display: block; }
+.v1 .loops i.rec { background: var(--danger); } .v1 .loops i.play { background: var(--ok); }
+
+/* ===== V2 Console ===== */
+.v2 { grid-template-columns: 190px 1fr 290px; grid-template-rows: 46px 1fr; }
+.v2 .top { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 0 14px; background: #171a22; border-bottom: 1px solid var(--line); }
+.v2 .top .brand { font-family: var(--display); font-weight: 700; font-size: 22px; width: 162px; }
+.v2 .top .grow { flex: 1; }
+.v2 .side { background: #151820; border-right: 1px solid var(--line); padding: 10px 8px; display: grid; gap: 14px; align-content: start; }
+.v2 .side .grp { display: grid; gap: 2px; }
+.v2 .side .grp > span { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: #6b7180; padding: 0 10px 4px; }
+.v2 .side button { border: 0; background: none; text-align: left; padding: 7px 10px; border-radius: 7px; color: #c7cbd4; font-size: 14px; display: flex; justify-content: space-between; }
+.v2 .side button.on { background: var(--panel-alt); color: var(--text); box-shadow: inset 3px 0 0 var(--accent); }
+.v2 .side button em { font-style: normal; font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+.v2 .work { padding: 14px; display: grid; grid-template-rows: auto 1fr; gap: 10px; min-height: 0; }
+.v2 .work .bar { display: flex; align-items: center; gap: 10px; }
+.v2 .work .bar h4 { margin: 0; font-family: var(--display); font-size: 24px; flex: 1; }
+.v2 .grid { display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, 1fr); gap: 8px; }
+.v2 .pad { grid-template-rows: auto 1fr auto; }
+.v2 .pad .meter { height: 4px; }
+.v2 .insp { background: #151820; border-left: 1px solid var(--line); padding: 14px; display: grid; gap: 12px; align-content: start; overflow: hidden; }
+.v2 .insp h4 { margin: 0; font-family: var(--display); font-size: 26px; line-height: 1; }
+.v2 .field { display: grid; gap: 4px; }
+.v2 .slider { height: 6px; background: #2a2e3a; border-radius: 3px; position: relative; }
+.v2 .slider b { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 3px; }
+.v2 .slider i { position: absolute; top: -5px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transform: translateX(-50%); }
+.v2 .sends { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.v2 .knob { display: grid; justify-items: center; gap: 4px; background: var(--panel); border-radius: 8px; padding: 8px 4px; font-size: 11px; color: var(--text-dim); }
+.v2 .knob svg { width: 40px; height: 40px; }
+.v2 .file { background: var(--panel); border-radius: 8px; padding: 8px 10px; font-size: 13px; display: grid; gap: 6px; }
+.v2 .wave { height: 34px; }
+
+/* ===== V3 Culto ===== */
+.v3 { grid-template-columns: 270px 1fr; }
+.v3 .set { background: #151820; border-right: 1px solid var(--line); display: grid; grid-template-rows: auto 1fr auto; min-height: 0; }
+.v3 .set header { padding: 14px; border-bottom: 1px solid var(--line); display: grid; gap: 2px; }
+.v3 .set header strong { font-family: var(--display); font-size: 22px; }
+.v3 .set ol { list-style: none; margin: 0; padding: 8px; display: grid; gap: 4px; align-content: start; counter-reset: s; }
+.v3 .set li { counter-increment: s; display: grid; grid-template-columns: 24px 1fr auto; gap: 8px; align-items: center; padding: 9px 10px; border-radius: 9px; font-size: 14px; }
+.v3 .set li::before { content: counter(s); font-family: var(--mono); font-size: 12px; color: #6b7180; }
+.v3 .set li small { display: block; color: var(--text-dim); font-size: 11px; }
+.v3 .set li.done { opacity: .45; }
+.v3 .set li.cur { background: #2a1c13; box-shadow: inset 3px 0 0 var(--accent); }
+.v3 .set li.nx { background: var(--panel); }
+.v3 .set footer { padding: 10px; border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.v3 .set footer button { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 8px; font-size: 13px; }
+.v3 .main { display: grid; grid-template-rows: auto 1fr auto; padding: 14px; gap: 12px; min-height: 0; }
+.v3 .hero { display: grid; grid-template-columns: 1fr auto auto; gap: 18px; align-items: center; }
+.v3 .hero h4 { margin: 0; font-family: var(--display); font-size: 40px; line-height: .95; }
+.v3 .hero p { margin: 2px 0 0; color: var(--text-dim); font-size: 13px; }
+.v3 .tempo { display: grid; justify-items: center; gap: 6px; background: var(--panel); border-radius: 12px; padding: 10px 18px; }
+.v3 .tempo .big { font-size: 46px; }
+.v3 .tempo .beat i { width: 18px; height: 18px; border-radius: 50%; }
+.v3 .panic { width: 120px; height: 84px; font-size: 22px; }
+.v3 .grid { display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(2, 1fr); gap: 10px; }
+.v3 .pad .s { font-size: 22px; }
+.v3 .dock { display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr; gap: 10px; }
+.v3 .dock button { border: 0; border-radius: 12px; padding: 12px; background: var(--panel); display: grid; gap: 2px; text-align: left; }
+.v3 .dock button strong { font-family: var(--display); font-size: 22px; line-height: 1; }
+.v3 .dock button span { font-size: 12px; color: var(--text-dim); }
+.v3 .dock button.go { background: var(--accent); color: #1a0d05; }
+.v3 .dock button.go span { color: #4a250f; }
+.v3 .dock button.on { box-shadow: inset 0 0 0 2px var(--ok); }
+
+@media (prefers-reduced-motion: reduce) { .pad { transition: none; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <section class="intro">
+    <span class="tag">Proposta de interface · 2 nov 2026</span>
+    <h1>Três caminhos para a nova interface do DiakoPad</h1>
+    <p>Hoje o app tem 11 abas no topo e 12 controles ao vivo disputando a mesma faixa. As três versões abaixo reorganizam as mesmas funções (pads, cenas, mix, envios, sequencer, metrônomo, looper, knobs, MIDI, master e PANIC) com prioridades diferentes. Toque nos pads para ver o retorno visual.</p>
+  </section>
+
+  <nav class="switcher" aria-label="Versões">
+    <a href="#palco" data-v="palco"><strong>A · Palco</strong><span>Tocar primeiro, editar depois</span></a>
+    <a href="#console" data-v="console"><strong>B · Console</strong><span>Mesa com inspetor de pad</span></a>
+    <a href="#culto" data-v="culto"><strong>C · Culto</strong><span>Roteiro do culto como eixo</span></a>
+  </nav>
+
+  <!-- ===================== A ===================== -->
+  <section class="version" id="v-palco">
+    <div class="v-head">
+      <div>
+        <h2>A · Palco</h2>
+        <p>Três modos no lugar de 11 abas: <b>Tocar</b>, <b>Montar</b> e <b>Sistema</b>. No modo Tocar, a grade ocupa a tela e todo o transporte fica num trilho fixo embaixo, sempre ao alcance do polegar.</p>
+      </div>
+      <span class="sample-note">dados de exemplo</span>
+    </div>
+    <div class="device"><div class="screen v1">
+      <div class="top">
+        <div class="modes"><button class="on" type="button">Tocar</button><button type="button">Montar</button><button type="button">Sistema</button></div>
+        <div class="scene">
+          <button type="button" aria-label="Cena anterior">◀</button>
+          <div class="name"><strong>Louvor rápido</strong><span>cena 2 de 5 · kit Worship Acústico</span></div>
+          <button type="button" aria-label="Próxima cena">▶</button>
+        </div>
+        <span class="chip">MIDI 38 · Caixa</span>
+        <span class="chip ok">● motor · CPU 18%</span>
+      </div>
+      <div class="mid">
+        <div class="grid" data-grid="a"></div>
+        <aside class="next">
+          <span class="lbl">Cenas ativas</span>
+          <ol>
+            <li><span>Abertura</span><span class="chip">72</span></li>
+            <li class="cur"><span>Louvor rápido</span><span class="chip live">128</span></li>
+            <li><span>Adoração</span><span class="chip">68</span></li>
+            <li><span>Ofertório</span><span class="chip">90</span></li>
+            <li><span>Encerramento</span><span class="chip">110</span></li>
+          </ol>
+          <span class="lbl">Último toque</span>
+          <div style="font-family:var(--display);font-size:28px;line-height:1">Caixa</div>
+          <div class="meter"><b style="width:64%"></b></div>
+        </aside>
+      </div>
+      <div class="rail">
+        <div class="blk"><span class="lbl">Tempo · toque = TAP</span><div class="row"><span class="big" style="font-size:34px">128</span><div class="beat"><i class="one on"></i><i></i><i></i><i></i></div></div></div>
+        <div class="blk"><div class="row"><span class="lbl">Metrônomo</span><span class="chip">4/4</span></div><div class="row"><button class="tbtn on" type="button">Clique ligado</button><span class="chip">fone</span></div></div>
+        <div class="blk"><div class="row"><span class="lbl">Sequencer</span><span class="chip">Groove 2</span></div><div class="row"><button class="tbtn" type="button">▶ Tocar</button><div class="beat"><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></div></div></div>
+        <div class="blk"><div class="row"><span class="lbl">Looper</span><span class="chip">trilha 2</span></div><div class="loops"><i class="play"></i><i class="rec"></i><i></i><i></i></div></div>
+        <div class="blk"><div class="row"><span class="lbl">Master</span><span style="font-family:var(--mono);font-size:12px">-3.0 dB</span></div><div class="meter"><b style="width:72%"></b></div></div>
+        <button class="panic" type="button">SEGURE<br>PANIC</button>
+      </div>
+    </div></div>
+    <div class="notes">
+      <div class="note map"><h3>Para onde vai cada aba</h3><ul>
+        <li><b>Tocar:</b> Pads + Performance viram uma tela só; cenas na barra superior.</li>
+        <li><b>Montar:</b> Biblioteca, Volumes, Efeitos, Sequencer, Knobs (subnavegação).</li>
+        <li><b>Sistema:</b> Config, Mapa MIDI, Master, motor, recuperação.</li>
+        <li>Metrônomo e Looper deixam de ser abas: viram blocos do trilho; um toque longo abre o painel completo.</li>
+      </ul></div>
+      <div class="note good"><h3>Ganha</h3><ul>
+        <li>Nada do show fica a mais de um toque, nem escondido atrás de aba.</li>
+        <li>Menos chance de entrar sem querer numa tela de edição no meio da música.</li>
+        <li>A mudança é a menor das três: reaproveita os painéis atuais em Montar.</li>
+      </ul></div>
+      <div class="note bad"><h3>Custa</h3><ul>
+        <li>Trilho fixo come cerca de 90 px de altura; no celular precisa virar 2 linhas.</li>
+        <li>Editar um pad ao vivo exige trocar de modo (ou o toque longo atual).</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <!-- ===================== B ===================== -->
+  <section class="version" id="v-console">
+    <div class="v-head">
+      <div>
+        <h2>B · Console</h2>
+        <p>Barra lateral com as funções agrupadas por assunto e um inspetor fixo à direita: tocar ou selecionar um pad mostra som, volume, pan, filtro e envios sem abrir modal.</p>
+      </div>
+      <span class="sample-note">dados de exemplo</span>
+    </div>
+    <div class="device"><div class="screen v2">
+      <div class="top">
+        <span class="brand">DiakoPad</span>
+        <span class="chip live">Cena: Louvor rápido</span>
+        <span class="chip">128 BPM · TAP</span>
+        <span class="chip">SEQ ■</span>
+        <span class="grow"></span>
+        <span class="chip">MIDI 36 · Bumbo</span>
+        <span class="chip ok">● motor · CPU 18%</span>
+        <button class="panic" type="button" style="padding:6px 14px">PANIC</button>
+      </div>
+      <nav class="side" aria-label="Seções (mock)">
+        <div class="grp"><span>Tocar</span><button class="on" type="button">Pads <em>16</em></button><button type="button">Cenas <em>5</em></button></div>
+        <div class="grp"><span>Som</span><button type="button">Biblioteca</button><button type="button">Mix</button><button type="button">Envios FX</button></div>
+        <div class="grp"><span>Ritmo</span><button type="button">Sequencer</button><button type="button">Metrônomo</button><button type="button">Looper <em>2/4</em></button></div>
+        <div class="grp"><span>Controle</span><button type="button">Knobs <em>6</em></button><button type="button">Mapa MIDI</button><button type="button">Master</button><button type="button">Config</button></div>
+      </nav>
+      <div class="work">
+        <div class="bar"><h4>Pads · Worship Acústico</h4><span class="chip">toque = tocar</span><span class="chip live">⇧ toque = selecionar</span></div>
+        <div class="grid" data-grid="b"></div>
+      </div>
+      <aside class="insp">
+        <span class="lbl">Pad 2 · nota 38</span>
+        <h4>Caixa</h4>
+        <div class="file">
+          <span style="font-family:var(--mono);font-size:12px">snare_brush_02.wav · 0,84 s</span>
+          <svg class="wave" viewBox="0 0 240 34" preserveAspectRatio="none" aria-hidden="true"><path d="M0 17 L6 4 L10 30 L14 6 L18 28 L24 9 L30 25 L38 12 L48 22 L60 14 L74 20 L92 16 L120 18 L160 17 L240 17" stroke="#ff7a3d" fill="none" stroke-width="1.5"/></svg>
+          <span style="color:var(--text-dim);font-size:12px">Trocar som ▸ Biblioteca</span>
+        </div>
+        <div class="field"><div style="display:flex;justify-content:space-between"><span class="lbl">Volume</span><span style="font-family:var(--mono);font-size:12px">-4.5 dB</span></div><div class="slider"><b style="width:68%"></b><i style="left:68%"></i></div></div>
+        <div class="field"><div style="display:flex;justify-content:space-between"><span class="lbl">Pan</span><span style="font-family:var(--mono);font-size:12px">L 10</span></div><div class="slider"><i style="left:44%"></i></div></div>
+        <div class="field"><div style="display:flex;justify-content:space-between"><span class="lbl">Filtro</span><span style="font-family:var(--mono);font-size:12px">12 kHz</span></div><div class="slider"><b style="width:86%"></b><i style="left:86%"></i></div></div>
+        <span class="lbl">Envios</span>
+        <div class="sends">
+          <div class="knob"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="15" stroke="#2f3442" stroke-width="4" fill="none"/><circle cx="20" cy="20" r="15" stroke="#79a6ff" stroke-width="4" fill="none" stroke-dasharray="36 94" transform="rotate(130 20 20)"/></svg>Hall 38%</div>
+          <div class="knob"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="15" stroke="#2f3442" stroke-width="4" fill="none"/><circle cx="20" cy="20" r="15" stroke="#c79bff" stroke-width="4" fill="none" stroke-dasharray="14 94" transform="rotate(130 20 20)"/></svg>Plate 15%</div>
+          <div class="knob"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="15" stroke="#2f3442" stroke-width="4" fill="none"/></svg>Delay 0%</div>
+        </div>
+        <span class="chip" style="justify-self:start">Knob 3 → volume deste pad</span>
+      </aside>
+    </div></div>
+    <div class="notes">
+      <div class="note map"><h3>Para onde vai cada aba</h3><ul>
+        <li>As 11 abas viram 12 itens em 4 grupos (Tocar, Som, Ritmo, Controle); Mapa MIDI sai de Config.</li>
+        <li>Volumes e a mesa de Efeitos continuam existindo como visão “todos os pads”; o inspetor cobre o pad individual.</li>
+        <li>O modal de pad deixa de existir.</li>
+      </ul></div>
+      <div class="note good"><h3>Ganha</h3><ul>
+        <li>Ótimo para montar o set antes do culto: ajuste e escuta no mesmo lugar.</li>
+        <li>Escala bem quando surgirem funções novas (é só um item na lateral).</li>
+        <li>Badges na lateral mostram estado (looper gravando, knobs mapeados).</li>
+      </ul></div>
+      <div class="note bad"><h3>Custa</h3><ul>
+        <li>Pads menores: a grade perde cerca de 40% da área em relação à versão A.</li>
+        <li>Em celular a lateral e o inspetor precisam virar gaveta e folha inferior.</li>
+        <li>É a maior reescrita de CSS e de <code>app.js</code>.</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <!-- ===================== C ===================== -->
+  <section class="version" id="v-culto">
+    <div class="v-head">
+      <div>
+        <h2>C · Culto</h2>
+        <p>As cenas viram o roteiro do culto. Cada momento traz BPM, compasso e kit, e a tela mostra só o que importa para o momento atual, com um botão grande para avançar.</p>
+      </div>
+      <span class="sample-note">dados de exemplo</span>
+    </div>
+    <div class="device"><div class="screen v3">
+      <aside class="set">
+        <header><span class="lbl">Roteiro · domingo 19h</span><strong>Culto da noite</strong></header>
+        <ol>
+          <li class="done"><span>Prelúdio<small>Pad Am · livre</small></span><span class="chip">—</span></li>
+          <li class="done"><span>Abertura<small>Worship Acústico · 4/4</small></span><span class="chip">72</span></li>
+          <li class="cur"><span>Louvor rápido<small>Worship Acústico · 4/4</small></span><span class="chip live">128</span></li>
+          <li class="nx"><span>Adoração<small>Ambiente · 6/8</small></span><span class="chip">68</span></li>
+          <li><span>Ofertório<small>Ambiente · 4/4</small></span><span class="chip">90</span></li>
+          <li><span>Palavra<small>silêncio</small></span><span class="chip">—</span></li>
+          <li><span>Apelo<small>Pad Am · livre</small></span><span class="chip">—</span></li>
+          <li><span>Encerramento<small>Worship Acústico · 4/4</small></span><span class="chip">110</span></li>
+        </ol>
+        <footer><button type="button">Editar roteiro</button><button type="button">Ajustes</button></footer>
+      </aside>
+      <div class="main">
+        <div class="hero">
+          <div><span class="lbl">Agora · 3 de 8</span><h4>Louvor rápido</h4><p>Kit Worship Acústico · sequencer Groove 2 · clique no fone</p></div>
+          <div class="tempo"><span class="big">128</span><div class="beat"><i class="one on"></i><i></i><i></i><i></i></div><span class="lbl">toque = TAP</span></div>
+          <button class="panic" type="button">SEGURE<br>PANIC</button>
+        </div>
+        <div class="grid" data-grid="c"></div>
+        <div class="dock">
+          <button class="go" type="button"><span>Próximo momento ▸</span><strong>Adoração · 68 · 6/8</strong></button>
+          <button class="on" type="button"><span>Metrônomo</span><strong>Clique ligado</strong></button>
+          <button type="button"><span>Sequencer</span><strong>▶ Groove 2</strong></button>
+          <button type="button"><span>Looper</span><strong>● Gravar trilha 2</strong></button>
+        </div>
+      </div>
+    </div></div>
+    <div class="notes">
+      <div class="note map"><h3>Para onde vai cada aba</h3><ul>
+        <li>Performance e cenas viram o roteiro; cada cena ganha campos de momento (nome, notas, transição).</li>
+        <li>Pads mostra 16 pads em 2 linhas de 8, mais largos e fáceis de acertar.</li>
+        <li>Biblioteca, Mix, Efeitos, Knobs, MIDI e Config ficam em “Ajustes”, fora do caminho no culto.</li>
+      </ul></div>
+      <div class="note good"><h3>Ganha</h3><ul>
+        <li>Fala a língua de quem toca no culto: momentos, não abas.</li>
+        <li>Avançar troca kit, BPM, compasso e sequencer de uma vez, com prévia do próximo.</li>
+        <li>Funciona bem no tablet ou no celular de quem fica ao lado do músico.</li>
+      </ul></div>
+      <div class="note bad"><h3>Custa</h3><ul>
+        <li>Exige mudança no modelo de dados: roteiro ordenado e metadados por cena.</li>
+        <li>Menos útil fora do culto, em ensaio livre ou improviso.</li>
+      </ul></div>
+    </div>
+  </section>
+</div>
+
+<script>
+const pads = [
+  ["Bumbo","c-kick",36,["#79a6ff"]],["Caixa","c-snare",38,["#79a6ff","#c79bff"]],["Chimbal F","c-hat",42,[]],["Chimbal A","c-hat",46,[]],
+  ["Tom 1","c-tom",48,["#79a6ff"]],["Tom 2","c-tom",45,["#79a6ff"]],["Surdo","c-tom",41,["#79a6ff"]],["Rimshot","c-snare",37,[]],
+  ["Crash","c-cym",49,["#c79bff"]],["Ride","c-cym",51,[]],["Prato rev.","c-cym",55,["#ffc15a"]],["Shaker","c-hat",70,[]],
+  ["Pad Am","c-amb",60,["#79a6ff","#ffc15a"]],["Swell","c-amb",62,["#79a6ff"]],["Clap","c-snare",39,[]],[null,"",64,[]]
+];
+document.querySelectorAll("[data-grid]").forEach(g => {
+  const which = g.dataset.grid;
+  pads.forEach(([name, cls, note, fx], i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "pad " + (name ? cls : "empty");
+    if (which === "b" && i === 1) b.classList.add("sel");
+    const dots = fx.map(c => `<i style="background:${c}"></i>`).join("");
+    const meter = which === "b" ? `<div class="meter"><b style="width:${name ? 40 + (i * 13) % 45 : 0}%"></b></div>` : "";
+    b.innerHTML = `<span class="n">${String(i + 1).padStart(2, "0")} · ${note}</span><span class="s">${name || "vazio"}</span>` +
+      (which === "c" ? "" : `<span class="k" style="display:flex;justify-content:space-between;align-items:center">${name ? "" : "segure p/ atribuir"}<span class="fxdots">${dots}</span></span>`) + meter;
+    b.setAttribute("aria-label", name ? `Pad ${i + 1}: ${name}` : `Pad ${i + 1} vazio`);
+    b.addEventListener("pointerdown", () => { if (!name) return; b.classList.add("hit"); setTimeout(() => b.classList.remove("hit"), 160); });
+    g.appendChild(b);
+  });
+});
+const views = ["palco","console","culto"];
+function show() {
+  const h = location.hash.slice(1);
+  const v = views.includes(h) ? h : "palco";
+  views.forEach(x => document.getElementById("v-" + x).classList.toggle("on", x === v));
+  document.querySelectorAll(".switcher a").forEach(a => {
+    if (a.dataset.v === v) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  });
+}
+window.addEventListener("hashchange", show);
+show();
+</script>
+</body>
+</html>

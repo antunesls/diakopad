@@ -200,11 +200,15 @@ exibido em seu laptop for diferente, defina
 Um aplicativo **Android nativo experimental** está em desenvolvimento em
 `android/`. Ele usa Kotlin/Jetpack Compose (sem WebView) e atualmente oferece
 conexão por IP privado ou nome `.local`, disparo de pads, atribuição de sons
-existentes, mix básico, salvamento/carregamento/ativação de cenas, BPM, controles
-básicos de sequencer/metrônomo/looper, master e PANIC.
-**Ainda não substitui a interface web:** upload/exclusão/navegação por pastas na
-biblioteca, kits, efeitos, edição completa dos pads, MIDI e outras funções estão
-pendentes. O plano de paridade
+existentes, montagem/carregamento de kits com sons já instalados, mix básico,
+criação/carregamento/ativação/exclusão de cenas, envios e parâmetros de efeitos,
+BPM, grade do sequencer/padrões, metrônomo, quatro trilhas do looper, ajustes
+do master e PANIC.
+**Ainda não substitui a interface web:** mapa MIDI, aprendizagem de knobs,
+algumas opções de efeitos/configuração e validação num aparelho real estão
+pendentes. Upload/importação
+de arquivos e gerenciamento de pastas ficam intencionalmente na interface web.
+O plano de paridade
 está em `docs/plans/2026-11-02-native-android-ci.md`.
 
 Para compilar um APK de testes, use `cd android && bash gradlew

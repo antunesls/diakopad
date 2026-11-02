@@ -44,6 +44,8 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
+      - name: Testar cálculo de versão de release
+        run: bash android/scripts/test-release-version.sh
       - name: Testes e APK Android
         working-directory: android
         run: bash gradlew :app:testDebugUnitTest :app:assembleDebug --no-daemon

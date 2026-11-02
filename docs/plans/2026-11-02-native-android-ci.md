@@ -71,3 +71,9 @@
 - Task 2: Android Gradle wrapper and project created; LAN address and cookie-authenticated client have unit tests (red/green verified). Android CI job added; APK builds locally using Android SDK 35; a device test is pending. Token is held in memory, not persisted.
 - Task 3: Initial native controls for pads, scene create/load/activation/delete, sound assignment, kit assembly from existing sounds/create/load/delete, basic pad mix, per-pad and shared FX, BPM, sequencer/metronome/looper transports, master and confirmed PANIC. **Not full parity**: advanced editing and transport remain.
 - Tasks 4–6: In progress. Kit/scenes/effects management (including selectable FX parameter options), existing sound assignment, sequencer grid/patterns, metronome controls, looper tracks and master controls have initial native screens. File upload/import and folder management are out of scope. MIDI mapping, live device tests and GitHub CI checks are still pending. Do not distribute the debug APK as a fully functional release.
+
+## GitHub Releases checkpoint
+
+- A tag-triggered workflow builds a signed APK, verifies signature/package/version and creates a GitHub Release only for tags on `main` after backend, frontend, ShellCheck and Android tests.
+- Tag-to-Android-version calculation has its own tests. Local build/signature verification was performed using a disposable one-day test keystore; the test key and APK were removed afterward.
+- External prerequisites before first publication: configure the four release-signing repository secrets, merge the branch to `main`, create/push a new `vMAJOR.MINOR.PATCH` tag and check the remote Actions run. Do not claim a published release until those steps are verified.

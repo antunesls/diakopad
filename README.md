@@ -219,6 +219,37 @@ na mesma rede do servidor, informe `IP:8080` e `DIAKOPAD_TOKEN`. O app não
 grava o token; a rede HTTP local não é criptografada, portanto não use Wi-Fi
 desconhecido nem exponha a porta 8080 à internet.
 
+#### Publicar o APK no GitHub Releases
+
+O workflow `.github/workflows/release-android.yml` publica um **APK assinado**
+ao receber uma tag `vMAJOR.MINOR.PATCH` apontando para um commit já presente na
+`main` (ex.: `v0.1.0`). Antes da primeira publicação, crie uma keystore privada
+com `keytool -genkeypair -keystore diakopad-release.jks -alias diakopad \
+-keyalg RSA -keysize 3072 -validity 10000` **fora do repositório** e configure
+em *Settings → Secrets and variables → Actions* do GitHub os quatro secrets:
+
+| Secret | Valor |
+| --- | --- |
+| `DIAKOPAD_KEYSTORE_BASE64` | Conteúdo binário da keystore codificado em Base64, sem quebras de linha. |
+| `DIAKOPAD_KEYSTORE_PASSWORD` | Senha da keystore. |
+| `DIAKOPAD_KEY_ALIAS` | Alias informado ao `keytool` (`diakopad` no exemplo). |
+| `DIAKOPAD_KEY_PASSWORD` | Senha da chave privada. |
+
+No PowerShell, obtenha o Base64 com
+`[Convert]::ToBase64String([IO.File]::ReadAllBytes('C:\caminho-privado\diakopad-release.jks'))`
+e cole diretamente no secret, sem salvar a saída no projeto. **Faça backup da
+keystore e das senhas**: versões futuras precisam da mesma chave para serem
+instaladas como atualização. O APK debug tem outra assinatura e precisa ser
+desinstalado antes de instalar a primeira release.
+
+Depois que o código estiver na `main` e os secrets configurados, crie e envie
+uma tag nova (`git tag v0.1.0` e `git push origin v0.1.0`). O workflow executa
+testes, calcula `versionCode` crescente a partir da tag, monta o APK, confere
+assinatura e versão e só então cria o GitHub Release com
+`DiakoPad-Android-0.1.0.apk`. Se faltar algum secret ou a build falhar, não há
+publicação. Tags devem ter componentes minor/patch inferiores a 100; não
+reutilize uma tag existente.
+
 Por padrão o serviço escuta apenas em `127.0.0.1`: só o próprio laptop acessa
 a interface. Para controlar o set de outro aparelho na mesma rede, edite
 `~/.config/systemd/user/diakopad.service`:

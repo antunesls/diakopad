@@ -4,6 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val releaseStoreFile = System.getenv("DIAKOPAD_SIGNING_STORE_FILE")
+
 android {
     namespace = "org.diakopad.remote"
     compileSdk = 35
@@ -12,10 +14,25 @@ android {
         applicationId = "org.diakopad.remote"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = System.getenv("DIAKOPAD_VERSION_CODE")?.toInt() ?: 1
+        versionName = System.getenv("DIAKOPAD_VERSION_NAME") ?: "0.1.0"
     }
-    buildTypes { release { isMinifyEnabled = false } }
+    signingConfigs {
+        if (releaseStoreFile != null) {
+            create("release") {
+                storeFile = file(releaseStoreFile)
+                storePassword = requireNotNull(System.getenv("DIAKOPAD_SIGNING_STORE_PASSWORD"))
+                keyAlias = requireNotNull(System.getenv("DIAKOPAD_SIGNING_KEY_ALIAS"))
+                keyPassword = requireNotNull(System.getenv("DIAKOPAD_SIGNING_KEY_PASSWORD"))
+            }
+        }
+    }
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            if (releaseStoreFile != null) signingConfig = signingConfigs.getByName("release")
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

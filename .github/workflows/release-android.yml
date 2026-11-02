@@ -1,0 +1,93 @@
+name: Publicar APK Android
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Publicar apenas tags de commits da main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validar backend e frontend
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r backend/requirements.lock
+          pip install httpx ruff==0.15.0
+          ruff check backend
+          (cd backend && python -m unittest discover tests)
+          python -m unittest discover -s frontend/tests
+          shellcheck -S warning deploy/*.sh
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: android-actions/setup-android@v3
+      - name: Instalar ferramentas Android
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Validar tag e calcular versão do APK
+        id: version
+        run: |
+          bash android/scripts/test-release-version.sh
+          bash android/scripts/release-version.sh "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+      - name: Preparar chave de assinatura
+        env:
+          KEYSTORE_BASE64: ${{ secrets.DIAKOPAD_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.DIAKOPAD_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.DIAKOPAD_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.DIAKOPAD_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for value in "$KEYSTORE_BASE64" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
+            if [[ -z "$value" ]]; then
+              echo "Faltam secrets de assinatura do APK; release cancelada" >&2
+              exit 1
+            fi
+          done
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/diakopad-release.jks"
+          chmod 600 "$RUNNER_TEMP/diakopad-release.jks"
+      - name: Testar e montar APK de release assinado
+        working-directory: android
+        env:
+          DIAKOPAD_VERSION_NAME: ${{ steps.version.outputs.name }}
+          DIAKOPAD_VERSION_CODE: ${{ steps.version.outputs.code }}
+          DIAKOPAD_SIGNING_STORE_FILE: ${{ runner.temp }}/diakopad-release.jks
+          DIAKOPAD_SIGNING_STORE_PASSWORD: ${{ secrets.DIAKOPAD_KEYSTORE_PASSWORD }}
+          DIAKOPAD_SIGNING_KEY_ALIAS: ${{ secrets.DIAKOPAD_KEY_ALIAS }}
+          DIAKOPAD_SIGNING_KEY_PASSWORD: ${{ secrets.DIAKOPAD_KEY_PASSWORD }}
+        run: bash gradlew :app:testDebugUnitTest :app:assembleRelease --no-daemon
+      - name: Verificar assinatura e versão antes de publicar
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+        run: |
+          set -euo pipefail
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          test -s "$apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$apk"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | grep -F "package: name='org.diakopad.remote' versionCode='$VERSION_CODE' versionName='$VERSION_NAME'"
+          install -m 644 "$apk" "$RUNNER_TEMP/DiakoPad-Android-$VERSION_NAME.apk"
+          sha256sum "$RUNNER_TEMP/DiakoPad-Android-$VERSION_NAME.apk"
+      - name: Criar GitHub Release com APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "$RUNNER_TEMP/DiakoPad-Android-$VERSION_NAME.apk" \
+            --verify-tag --generate-notes

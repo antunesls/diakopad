@@ -1,6 +1,5 @@
 """Shared FX buses, per-pad sound banks (instant scene switch) and prepared
 sfizz swaps (sound changes without a gap)."""
-import asyncio
 import os
 import tempfile
 import unittest
@@ -147,7 +146,7 @@ class PadBankRenderTests(unittest.TestCase):
         cc = sfz.scene_cc(5)
         self.assertEqual(cc, 106)
         self.assertIn(f"<control> set_cc{cc}=0", text)
-        regions = [l for l in text.splitlines() if l.startswith("<region>")]
+        regions = [line for line in text.splitlines() if line.startswith("<region>")]
         self.assertEqual(len(regions), 2)
         self.assertIn(f"locc{cc}=0 hicc{cc}=0", regions[0])
         self.assertIn(f"locc{cc}=2 hicc{cc}=2", regions[1])

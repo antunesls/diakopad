@@ -27,6 +27,16 @@ class ClearAllPadsStorageTests(unittest.TestCase):
 
 class ClearAllPadsEndpointTests(unittest.IsolatedAsyncioTestCase):
     async def test_clear_all_pads_reapplies_the_engine_and_broadcasts(self):
+        original_db_path = storage.DB_PATH
+        with tempfile.TemporaryDirectory() as temp_dir:
+            storage.DB_PATH = Path(temp_dir) / "test.db"
+            try:
+                storage.init_db()
+                await self._assert_clear_all_pads()
+            finally:
+                storage.DB_PATH = original_db_path
+
+    async def _assert_clear_all_pads(self):
         with (
             patch("app.storage.clear_all_pads") as clear_all,
             patch("app.storage.list_pads", return_value=[]),

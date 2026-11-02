@@ -23,7 +23,7 @@ class RenderPadSfzTests(unittest.TestCase):
         self.assertIn("amp_veltrack=100", line)
 
     def test_region_keeps_note_volume_and_pan(self):
-        region = next(l for l in sfz.render_pad_sfz(self.PAD, {}).splitlines() if l.startswith("<region>"))
+        region = next(line for line in sfz.render_pad_sfz(self.PAD, {}).splitlines() if line.startswith("<region>"))
         for opcode in ("key=36", "pitch_keycenter=36", "volume=-2.0", "pan=10"):
             self.assertIn(opcode, region)
 

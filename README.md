@@ -197,6 +197,24 @@ exibido em seu laptop for diferente, defina
 
 ### Controle por tablet ou celular
 
+Um aplicativo **Android nativo experimental** está em desenvolvimento em
+`android/`. Ele usa Kotlin/Jetpack Compose (sem WebView) e atualmente oferece
+conexão por IP privado ou nome `.local`, disparo de pads, atribuição de sons
+existentes, mix básico, salvamento/carregamento/ativação de cenas, BPM, controles
+básicos de sequencer/metrônomo/looper, master e PANIC.
+**Ainda não substitui a interface web:** upload/exclusão/navegação por pastas na
+biblioteca, kits, efeitos, edição completa dos pads, MIDI e outras funções estão
+pendentes. O plano de paridade
+está em `docs/plans/2026-11-02-native-android-ci.md`.
+
+Para compilar um APK de testes, use `cd android && bash gradlew
+:app:assembleDebug` (ou `gradlew.bat :app:assembleDebug` no Windows); o arquivo
+gerado é `android/app/build/outputs/apk/debug/app-debug.apk`. Ele é assinado
+com uma chave de desenvolvimento, não serve como release. Conecte o Android
+na mesma rede do servidor, informe `IP:8080` e `DIAKOPAD_TOKEN`. O app não
+grava o token; a rede HTTP local não é criptografada, portanto não use Wi-Fi
+desconhecido nem exponha a porta 8080 à internet.
+
 Por padrão o serviço escuta apenas em `127.0.0.1`: só o próprio laptop acessa
 a interface. Para controlar o set de outro aparelho na mesma rede, edite
 `~/.config/systemd/user/diakopad.service`:

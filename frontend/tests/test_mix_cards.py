@@ -55,7 +55,7 @@ class MixCardsTest(unittest.TestCase):
         css = (FRONTEND / "style.css").read_text(encoding="utf-8")
 
         self.assertIn("font-size: clamp(64px, 14vw, 96px);", css)
-        self.assertIn("width: 180px;", css)
+        self.assertIn("width: 4ch;", css)
 
     def test_indicador_midi_exibe_a_oitava_explicitamente(self):
         app = (FRONTEND / "app.js").read_text(encoding="utf-8")
@@ -214,7 +214,7 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn('id="scene-list"', sounds_view)
         performance_view = html.split('<main id="view-performance"', 1)[1].split("</main>", 1)[0]
         self.assertNotIn('id="scene-list"', performance_view)
-        self.assertIn("function activeKits()", app)
+        self.assertIn("function activeScenes()", app)
         self.assertIn("function renderSceneList()", app)
         self.assertIn("/active`, {", app)
 

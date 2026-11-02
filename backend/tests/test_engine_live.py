@@ -161,7 +161,21 @@ class PadTriggerEndpointTests(unittest.IsolatedAsyncioTestCase):
         queue_hit.assert_called_once_with(1, 100)
 
 
-class PadHitFeedbackTests(unittest.IsolatedAsyncioTestCase):
+class _IsolatedStorage:
+    def setUp(self):
+        super().setUp()
+        self._original_db_path = storage.DB_PATH
+        self._db_dir = tempfile.TemporaryDirectory()
+        storage.DB_PATH = Path(self._db_dir.name) / "test.db"
+        storage.init_db()
+
+    def tearDown(self):
+        storage.DB_PATH = self._original_db_path
+        self._db_dir.cleanup()
+        super().tearDown()
+
+
+class PadHitFeedbackTests(_IsolatedStorage, unittest.IsolatedAsyncioTestCase):
     async def test_physical_midi_note_is_broadcast_without_matching_pad(self):
         original_notes = diakopad_app._pad_notes
         diakopad_app._pad_notes = {}
@@ -200,7 +214,7 @@ class PadHitFeedbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record_event.call_count, 2)
 
 
-class PadNoteLearnTests(unittest.IsolatedAsyncioTestCase):
+class PadNoteLearnTests(_IsolatedStorage, unittest.IsolatedAsyncioTestCase):
     async def test_apply_note_learn_sets_the_pad_note_and_rebuilds_the_note_map(self):
         # _pending_note_learn is cleared by _handle_note before scheduling
         # this coroutine (see the other test below) - not this function's job.
@@ -262,7 +276,7 @@ class EngineStatusTests(unittest.TestCase):
         self.assertEqual(status["cpu_percent"], 42.5)
 
 
-class MasterGainTests(unittest.IsolatedAsyncioTestCase):
+class MasterGainTests(_IsolatedStorage, unittest.IsolatedAsyncioTestCase):
     def test_master_limiter_config_uses_the_validated_lsp_stereo_plugin(self):
         config = effects_catalog.master_limiter_config()
 
@@ -593,7 +607,7 @@ class ControllerBindingStorageTests(unittest.TestCase):
             temp_ctx.cleanup()
 
 
-class ControllerActionDispatchTests(unittest.IsolatedAsyncioTestCase):
+class ControllerActionDispatchTests(_IsolatedStorage, unittest.IsolatedAsyncioTestCase):
     def _with_temp_db(self):
         temp_ctx = tempfile.TemporaryDirectory()
         original_db_path = storage.DB_PATH

@@ -65,7 +65,7 @@ class HydrogenKitTests(unittest.TestCase):
     def test_firm_layer_is_picked_and_roles_follow_the_diakopad_layout(self):
         names = ["Pearl Kick", "Pearl Side Stick", "Pearl Snare", "Pearl Snare Rimshot", "Pearl Tom Floor",
                  "Sabian Hat Closed", "Pearl Tom 2", "Sabian Hat Pedal", "Pearl Tom 1", "Sabian Hat Open",
-                 "Cowbell", "Paiste Ride", "Paiste Bell", "Sabian Crash", "Zildjian Splash"]
+                 "Sabian Hat Semi-Open", "Cowbell", "Paiste Ride", "Paiste Bell", "Sabian Crash", "Zildjian Splash"]
         kit = hydrogen_kits.parse_kit(self._kit("Pearl", names))
         self.assertTrue(all(i["file"].name.endswith("_hard.wav") for i in kit["instruments"]))
         pads = {n: i["name"] for n, i in hydrogen_kits.assign_pads(kit["instruments"]).items()}
@@ -75,7 +75,7 @@ class HydrogenKitTests(unittest.TestCase):
         self.assertEqual(pads[4], "Sabian Hat Closed")
         self.assertEqual(pads[5], "Sabian Hat Open")
         self.assertEqual(pads[6], "Pearl Snare Rimshot")
-        self.assertEqual(pads[7], "Sabian Hat Pedal")
+        self.assertEqual(pads[7], "Sabian Hat Pedal")  # semi-open never steals the open hat (pad 5)
         self.assertEqual(pads[11], "Pearl Tom 1")
         self.assertEqual(pads[12], "Pearl Tom 2")
         self.assertEqual(pads[13], "Pearl Tom Floor")

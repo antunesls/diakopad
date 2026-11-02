@@ -44,7 +44,7 @@ ROLES: list[tuple[int, str]] = [
     (1, r"\bkick\b|bass ?drum|\bbd\b|cajon thump"),
     (2, r"^(?!.*(rim|roll|stick|2\b)).*(snare|cajon slap)"),
     (4, r"(hat|hh).*(clos)|clos.*(hat|hh)"),
-    (5, r"(hat|hh).*open|open.*(hat|hh)"),
+    (5, r"^(?!.*semi)(.*(hat|hh).*open|.*open.*(hat|hh))"),
     (3, r"side ?stick|\bstick\b|rim ?click|clap"),
     (6, r"rimshot|snare.*rim|snare ?2|snare (rock|dry|jazz)"),
     (7, r"(hat|hh).*(pedal|semi|swish|free)|pedal.*(hat|hh)"),

@@ -7,16 +7,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
+import secrets
 import subprocess
 import tempfile
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -35,7 +38,49 @@ SAMPLES_DIR.mkdir(exist_ok=True)
 
 SLOT_PARAM_RE = re.compile(r"^slot(\d+):(.+)$")
 
-app = FastAPI(title="DiakoPad")
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    await on_startup()
+    try:
+        yield
+    finally:
+        await on_shutdown()
+
+
+app = FastAPI(title="DiakoPad", lifespan=_lifespan)
+
+# Controle pela rede (tablet/celular): com DIAKOPAD_TOKEN definido, clientes
+# que não sejam o próprio laptop precisam abrir http://<laptop>:8080/?token=...
+# uma vez; o token vira cookie e o resto da UI (fetch, <audio>, WebSocket)
+# funciona sem mudanças. O localhost - a tela do show - nunca é bloqueado.
+AUTH_COOKIE = "diakopad_token"
+LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _auth_token() -> str:
+    return os.environ.get("DIAKOPAD_TOKEN", "")
+
+
+def _is_authorized(client_host: Optional[str], cookie_token: Optional[str]) -> bool:
+    token = _auth_token()
+    if not token or client_host in LOOPBACK_HOSTS:
+        return True
+    return cookie_token is not None and secrets.compare_digest(cookie_token, token)
+
+
+@app.middleware("http")
+async def _require_token(request: Request, call_next):
+    client_host = request.client.host if request.client else None
+    query_token = request.query_params.get("token")
+    token = _auth_token()
+    if token and query_token is not None and secrets.compare_digest(query_token, token):
+        # Grava o cookie e tira o token da URL (não fica no histórico/tela).
+        response = RedirectResponse(request.url.remove_query_params("token"), status_code=303)
+        response.set_cookie(AUTH_COOKIE, token, max_age=365 * 24 * 3600, httponly=True, samesite="strict")
+        return response
+    if not _is_authorized(client_host, request.cookies.get(AUTH_COOKIE)):
+        return PlainTextResponse("DiakoPad: acesso negado. Abra a URL com ?token=<DIAKOPAD_TOKEN>.", status_code=401)
+    return await call_next(request)
 
 
 class AssignRequest(BaseModel):
@@ -738,32 +783,44 @@ async def _apply_knob_target(key: tuple[str, Optional[int], str]) -> None:
 # --- Startup -----------------------------------------------------------
 
 
-@app.on_event("startup")
 async def on_startup() -> None:
     global _main_loop, _pad_notes
+    # Antes do init_db: se uma migração estragar o banco, a cópia de antes fica.
+    try:
+        backup = storage.backup_db()
+        if backup is not None:
+            logger.info("backup do banco salvo em %s", backup)
+    except Exception:
+        logger.exception("falha ao fazer backup do banco; seguindo sem backup")
     storage.init_db()
     _main_loop = asyncio.get_event_loop()
-    midi.open_input(_on_midi_cc, _on_midi_note)
-    await orchestrator.startup()
     settings = storage.get_settings()
     _pad_notes = _build_pad_note_map(storage.list_pads())
-    await orchestrator.apply_master(
-        float(settings.get("master_volume", 100)),
-        settings.get("master_muted") == "1",
-        settings.get("master_limiter_enabled", "1") == "1",
-        float(settings.get("master_limiter_threshold_db", -1)),
-    )
-    await orchestrator.apply_all_pads(storage.list_pads(), settings, storage.list_pad_effects())
     sequencer.load_pattern(storage.list_sequencer_steps())
     tempo.load()
     looper.set_duplicate_hit_window(settings.get("looper_duplicate_hit_window_ms", "30"))
     metronome.set_signature(settings.get("metronome_signature", time_signatures.DEFAULT_SIGNATURE))
-    await orchestrator.apply_metronome_style(settings.get("metronome_style", metronome_sounds.DEFAULT_STYLE))
+    # Uma falha do motor (MIDI, mod-host, sfizz) não pode derrubar o serviço:
+    # a UI continua no ar, mostra o erro no status do motor e o botão
+    # "Reiniciar DiakoPad e áudio" segue acessível.
+    try:
+        midi.open_input(_on_midi_cc, _on_midi_note)
+        await orchestrator.startup()
+        await orchestrator.apply_master(
+            float(settings.get("master_volume", 100)),
+            settings.get("master_muted") == "1",
+            settings.get("master_limiter_enabled", "1") == "1",
+            float(settings.get("master_limiter_threshold_db", -1)),
+        )
+        await orchestrator.apply_all_pads(storage.list_pads(), settings, storage.list_pad_effects())
+        await orchestrator.apply_metronome_style(settings.get("metronome_style", metronome_sounds.DEFAULT_STYLE))
+    except Exception as exc:
+        logger.exception("falha ao iniciar o motor de áudio; UI segue no ar")
+        orchestrator.report_error(f"início do motor: {exc}")
     global _engine_status_task
     _engine_status_task = asyncio.create_task(_broadcast_engine_status_loop())
 
 
-@app.on_event("shutdown")
 async def on_shutdown() -> None:
     await sequencer.stop()
     await metronome.stop()
@@ -1173,6 +1230,27 @@ def browse_sounds(folder: str = ""):
         raise HTTPException(400, str(exc))
 
 
+MAX_SAMPLE_UPLOAD_BYTES = 200 * 1024 * 1024
+MAX_KIT_PACK_UPLOAD_BYTES = 1024 * 1024 * 1024
+
+
+async def _save_upload(file: UploadFile, dest: Path, max_bytes: int) -> None:
+    """Grava o upload em dest em blocos, abortando com 413 (e apagando o
+    arquivo parcial) se passar de max_bytes - um envio enorme não pode encher
+    o disco do laptop no meio do show."""
+    written = 0
+    try:
+        with dest.open("wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                written += len(chunk)
+                if written > max_bytes:
+                    raise HTTPException(413, f"arquivo maior que o limite de {max_bytes // (1024 * 1024)} MB")
+                out.write(chunk)
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        raise
+
+
 @app.post("/api/sounds/upload")
 async def upload_sound(file: UploadFile, folder: str = Form("")):
     try:
@@ -1189,9 +1267,7 @@ async def upload_sound(file: UploadFile, folder: str = Form("")):
     stored_filename = f"{safe_stem}-{uuid.uuid4().hex[:8]}{ext}"
     dest = SAMPLES_DIR / stored_filename
 
-    with dest.open("wb") as out:
-        while chunk := await file.read(1024 * 1024):
-            out.write(chunk)
+    await _save_upload(file, dest, MAX_SAMPLE_UPLOAD_BYTES)
 
     sample_id = storage.add_sample(stored_filename, display_name, folder)
     await _broadcast_sounds()
@@ -1435,13 +1511,115 @@ def delete_kit(kit_id: int):
     return {"ok": True}
 
 
+class KitPadRequest(BaseModel):
+    pad_number: int
+    sample_id: Optional[int] = None
+    display_name: Optional[str] = None
+
+
+class KitCreateRequest(BaseModel):
+    name: str
+    category: str = ""
+    sort_index: int = 0
+    pads: list[KitPadRequest]
+    # create_kit() upserts by name; without this flag an existing kit is never
+    # silently replaced (e.g. by an agent picking a name already in use).
+    overwrite: bool = False
+
+
+class KitFromPadsRequest(BaseModel):
+    name: str
+    category: str = ""
+    sort_index: int = 0
+    overwrite: bool = False
+
+
+class KitLoadRequest(BaseModel):
+    # True: pads the kit has no sound for are emptied. False: they keep
+    # whatever they are playing now.
+    clear_other_pads: bool = False
+
+
+def _create_kit_or_4xx(name: str, category: str, sort_index: int, pads: list[dict], overwrite: bool) -> dict:
+    name = name.strip()
+    if not name:
+        raise HTTPException(400, "name must not be empty")
+    if not overwrite and any(k["name"] == name for k in storage.list_kits()):
+        raise HTTPException(409, "a kit with this name already exists (pass overwrite=true to replace it)")
+    kit_id = storage.create_kit(name, category.strip(), sort_index, pads)
+    return storage.get_kit(kit_id)
+
+
+@app.post("/api/kits")
+def create_kit(body: KitCreateRequest):
+    """Creates a kit from samples already in the library (no upload)."""
+    samples = {s["id"]: s for s in storage.list_samples()}
+    seen: set[int] = set()
+    pads = []
+    for pad in body.pads:
+        if not 1 <= pad.pad_number <= 16:
+            raise HTTPException(400, "pad_number must be between 1 and 16")
+        if pad.pad_number in seen:
+            raise HTTPException(400, f"pad_number {pad.pad_number} appears more than once")
+        seen.add(pad.pad_number)
+        if pad.sample_id is not None and pad.sample_id not in samples:
+            raise HTTPException(404, f"sample not found: {pad.sample_id}")
+        display_name = pad.display_name
+        if display_name is None and pad.sample_id is not None:
+            display_name = samples[pad.sample_id]["display_name"]
+        pads.append({"pad_number": pad.pad_number, "sample_id": pad.sample_id, "display_name": display_name})
+    kit = _create_kit_or_4xx(body.name, body.category, body.sort_index, pads, body.overwrite)
+    return {"ok": True, "kit": kit}
+
+
+@app.post("/api/kits/from-pads")
+def create_kit_from_pads(body: KitFromPadsRequest):
+    """Snapshots the sounds currently on the 16 pads as a new kit."""
+    samples = {s["id"]: s for s in storage.list_samples()}
+    pads = [
+        {
+            "pad_number": p["pad_number"],
+            "sample_id": p["sample_id"],
+            "display_name": samples[p["sample_id"]]["display_name"] if p["sample_id"] in samples else None,
+        }
+        for p in storage.list_pads()
+        if p["sample_id"] is not None
+    ]
+    if not pads:
+        raise HTTPException(400, "no pad has a sound assigned")
+    kit = _create_kit_or_4xx(body.name, body.category, body.sort_index, pads, body.overwrite)
+    return {"ok": True, "kit": kit}
+
+
+@app.post("/api/kits/{kit_id}/load")
+async def load_kit(kit_id: int, body: KitLoadRequest):
+    """Assigns every sound of the kit onto the pad with the same number, in
+    one go (the hardware kit-browse mode only swaps one pad at a time). Only
+    the pads whose sound actually changes get their sfizz respawned."""
+    kit = storage.get_kit(kit_id)
+    if kit is None:
+        raise HTTPException(404, "kit not found")
+    old_pads = storage.list_pads()
+    kit_samples = {p["pad_number"]: p["sample_id"] for p in kit["pads"]}
+    for pad in old_pads:
+        n = pad["pad_number"]
+        if n in kit_samples:
+            storage.assign_sample(n, kit_samples[n])
+        elif body.clear_other_pads:
+            storage.assign_sample(n, None)
+    await orchestrator.apply_changed_pads(
+        old_pads, storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
+    )
+    await _broadcast_pads()
+    return {"ok": True, "kit": {"id": kit["id"], "name": kit["name"]}}
+
+
 @app.post("/api/kits/import")
 async def import_kit_pack(file: UploadFile):
     """Uploads a kit pack (.zip, see curate_kit_pack.py) from the Config tab."""
     with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
         tmp_path = Path(tmp.name)
-        while chunk := await file.read(1024 * 1024):
-            tmp.write(chunk)
+    await _save_upload(file, tmp_path, MAX_KIT_PACK_UPLOAD_BYTES)
     try:
         kit_ids = kit_import.import_pack(tmp_path)
     except (ValueError, KeyError) as exc:
@@ -1805,6 +1983,10 @@ async def set_metronome_signature(body: MetronomeSignatureRequest):
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
+    # O middleware HTTP não vê o handshake do WebSocket; checa aqui também.
+    if not _is_authorized(ws.client.host if ws.client else None, ws.cookies.get(AUTH_COOKIE)):
+        await ws.close(code=1008)
+        return
     await manager.connect(ws)
     try:
         await ws.send_json({"type": "pads", "pads": _pads_payload()})

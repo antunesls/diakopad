@@ -39,6 +39,29 @@ html, body {
   position: relative;
 }
 
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.brand img {
+  display: block;
+  height: 32px;
+  width: auto;
+  -webkit-user-drag: none;
+}
+
+/* Full church logo on wide screens; just the book mark when the topbar
+   gets crowded. */
+.brand-mark { display: none !important; }
+
+@media (max-width: 1100px) {
+  .brand-logo { display: none !important; }
+  .brand-mark { display: block !important; height: 28px; }
+}
+
 .topbar h1 {
   font-size: 20px;
   margin: 0;

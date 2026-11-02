@@ -346,10 +346,39 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=5)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
+
+
+BACKUPS_KEEP = 10
+
+
+def backup_db(keep: int = BACKUPS_KEEP) -> Optional[Path]:
+    """Copia o banco para backups/diakopad-AAAAMMDD-HHMMSS.db (ao lado do
+    DB_PATH) usando a API de backup do SQLite - consistente mesmo com o app
+    escrevendo - e apaga as cópias mais antigas além das `keep` mais
+    recentes. Sem banco ainda (primeira execução) não há o que copiar."""
+    if not DB_PATH.exists():
+        return None
+    backups_dir = DB_PATH.parent / "backups"
+    backups_dir.mkdir(exist_ok=True)
+    dest = backups_dir / f"{DB_PATH.stem}-{time.strftime('%Y%m%d-%H%M%S')}.db"
+    src = get_connection()
+    try:
+        dst = sqlite3.connect(dest)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    old = sorted(backups_dir.glob(f"{DB_PATH.stem}-*.db"), reverse=True)[keep:]
+    for path in old:
+        path.unlink(missing_ok=True)
+    return dest
 
 
 def _migrate_rename_old_kits_table(conn: sqlite3.Connection) -> None:
@@ -474,6 +503,9 @@ def _migrate_rename_old_kits_table(conn: sqlite3.Connection) -> None:
 def init_db() -> None:
     conn = get_connection()
     try:
+        # WAL deixa leituras (UI, thread de MIDI) correrem junto com escritas
+        # sem "database is locked"; fica gravado no arquivo, basta uma vez.
+        conn.execute("PRAGMA journal_mode = WAL")
         _migrate_rename_old_kits_table(conn)
         conn.executescript(SCHEMA)
         _migrate(conn)

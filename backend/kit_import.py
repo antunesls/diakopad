@@ -18,6 +18,10 @@ import storage
 
 SAMPLES_DIR = Path(__file__).parent / "samples"
 
+# Teto para o conteúdo descompactado do pacote - um zip pequeno pode expandir
+# para gigabytes (zip bomb) e encher o disco do laptop do show.
+MAX_PACK_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
+
 
 def import_pack(zip_path: Path) -> list[int]:
     storage.init_db()
@@ -26,7 +30,11 @@ def import_pack(zip_path: Path) -> list[int]:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
         with zipfile.ZipFile(zip_path) as zf:
+            total = sum(info.file_size for info in zf.infolist())
+            if total > MAX_PACK_UNCOMPRESSED_BYTES:
+                raise ValueError("pacote inválido: conteúdo descompactado grande demais")
             zf.extractall(tmp_dir)
+        tmp_root = tmp_dir.resolve()
 
         manifest_path = tmp_dir / "manifest.json"
         if not manifest_path.is_file():
@@ -38,7 +46,14 @@ def import_pack(zip_path: Path) -> list[int]:
             pads = []
             for pad in kit.get("pads", []):
                 rel = pad["filename"]
-                src = tmp_dir / rel
+                # O manifest vem de fora: um filename absoluto ou com "../"
+                # apontaria para arquivos fora do pacote.
+                src = (tmp_root / rel).resolve()
+                if not src.is_relative_to(tmp_root):
+                    raise ValueError(f"pacote inválido: caminho fora do pacote: {rel}")
+                pad_number = pad["pad_number"]
+                if not isinstance(pad_number, int) or isinstance(pad_number, bool) or not 1 <= pad_number <= 16:
+                    raise ValueError(f"pacote inválido: pad_number fora de 1-16: {pad_number!r}")
                 if not src.is_file():
                     raise ValueError(f"pacote inválido: arquivo referenciado ausente: {rel}")
                 ext = src.suffix.lower()
@@ -54,7 +69,7 @@ def import_pack(zip_path: Path) -> list[int]:
                 sample_id = storage.add_sample(stored_filename, display_name, storage.normalize_folder(_safe_folder(folder)))
                 pads.append(
                     {
-                        "pad_number": pad["pad_number"],
+                        "pad_number": pad_number,
                         "sample_id": sample_id,
                         "display_name": display_name,
                     }

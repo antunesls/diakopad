@@ -10,7 +10,10 @@
 # Studio Controls, or PipeWire auto-start; this unit does not manage it.
 [Unit]
 Description=DiakoPad web app + audio engine orchestrator (pad grid, sound library, sfizz/mod-host)
-After=graphical-session.target
+After=graphical-session.target pipewire.service wireplumber.service
+# On a headless Raspberry Pi (linger, no login) nothing else starts PipeWire,
+# so pull it in explicitly. No-op on the laptop, where the session already has.
+Wants=pipewire.service wireplumber.service
 
 [Service]
 Type=simple
@@ -50,7 +53,14 @@ Environment=DIAKOPAD_FX_MASTER_GAIN_MIN=-20
 Environment=DIAKOPAD_FX_MASTER_GAIN_MAX=0
 Environment=DIAKOPAD_FX_MASTER_GAIN_IN_PORTS=in_left,in_right
 Environment=DIAKOPAD_FX_MASTER_GAIN_OUT_PORTS=out_left,out_right
-ExecStart=__INSTALL_DIR__/backend/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8080
+# Rede: por padrão só o próprio laptop acessa a UI. Para controlar por
+# tablet/celular, troque DIAKOPAD_HOST para 0.0.0.0 E defina um
+# DIAKOPAD_TOKEN; no outro aparelho, abra uma vez
+# http://<ip-do-laptop>:8080/?token=<token> (vira cookie). Sem token, qualquer
+# um no Wi-Fi do local do show poderia apagar samples ou disparar PANIC.
+Environment=DIAKOPAD_HOST=127.0.0.1
+#Environment=DIAKOPAD_TOKEN=troque-por-um-segredo
+ExecStart=__INSTALL_DIR__/backend/.venv/bin/uvicorn app:app --host ${DIAKOPAD_HOST} --port 8080
 Restart=on-failure
 RestartSec=2
 

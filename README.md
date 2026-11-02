@@ -10,7 +10,9 @@ metrônomo, looper MIDI, efeitos LV2, cenas e controles de palco em uma única
 interface web local.
 
 O laptop executa o motor de áudio e a interface. Use um navegador no próprio
-equipamento ou outro dispositivo conectado à mesma rede para controlar o set.
+equipamento ou, com o acesso pela rede habilitado (veja
+[Controle por tablet ou celular](#controle-por-tablet-ou-celular)), outro
+dispositivo conectado à mesma rede para controlar o set.
 
 ## Recursos para palco
 
@@ -28,7 +30,9 @@ equipamento ou outro dispositivo conectado à mesma rede para controlar o set.
 
 ## Requisitos
 
-- Laptop com Ubuntu Studio ou outra distribuição Debian/Ubuntu compatível.
+- Laptop com Ubuntu Studio ou outra distribuição Debian/Ubuntu compatível,
+  **ou** Raspberry Pi 4/5 com Raspberry Pi OS Lite 64-bit, sem monitor (veja
+  [Raspberry Pi sem monitor](#raspberry-pi-sem-monitor)).
 - PipeWire com compatibilidade JACK ou jackd2 em execução na sessão do usuário.
 - Controlador M-Vave SMC-PAD por USB ou Bluetooth.
 - Acesso a `sudo` durante a instalação das dependências e compilação do motor.
@@ -68,6 +72,106 @@ login gráfico, opcionalmente execute:
 loginctl enable-linger "$USER"
 ```
 
+### Ligar e cair direto no DiakoPad
+
+Para o laptop funcionar como um aparelho (liga e já está no DiakoPad em tela
+cheia), execute depois do instalador:
+
+```bash
+bash deploy/setup-autoboot.sh          # login automático + serviço + sessão limpa
+bash deploy/setup-autoboot.sh --grub   # também esconde o menu do GRUB (0 s)
+```
+
+O script configura o login automático no SDDM, faz o KDE iniciar sem
+restaurar janelas da sessão anterior e habilita `diakopad.service`. No login,
+`diakopad-open-browser.sh` espera o backend responder e abre o Firefox em modo
+quiosque, com perfil próprio, sem telas de primeira execução. Enquanto a
+janela estiver aberta, apagar a tela, bloquear e suspender ficam inibidos. Se
+o Firefox travar, ele é reaberto.
+
+- **Alt+F4** sai do modo quiosque.
+- Para uma janela normal, edite `~/.config/autostart/diakopad-browser.desktop`
+  e use `Exec=env DIAKOPAD_KIOSK=0 /home/<usuário>/.local/bin/diakopad-open-browser.sh`.
+- Para voltar à tela de senha: `bash deploy/setup-autoboot.sh --disable`.
+- Se aparecer o pedido de senha do KWallet após o login automático, marque a
+  rede Wi-Fi como "Todos os usuários podem se conectar a esta rede".
+
+## Raspberry Pi sem monitor
+
+O mesmo instalador também prepara um Raspberry Pi 4/5 como "caixa" de som:
+sem monitor, com o SMC-PAD por **USB** e a interface aberta pelo navegador de
+outro aparelho (celular, tablet ou notebook) na mesma rede.
+
+Requisitos:
+
+- Raspberry Pi OS **Lite 64-bit**. No Raspberry Pi Imager, já defina hostname,
+  usuário e SSH.
+- Placa DAC I2S **PCM5122** (HAT), padrão do instalador, ou uma interface de
+  áudio USB. A saída P2/HDMI do Pi não serve para palco.
+- Fonte oficial e dissipador ou cooler. De preferência, rede cabeada.
+
+Pelo SSH, no checkout do projeto:
+
+```bash
+bash deploy/install-ubuntu-studio.sh   # detecta o Pi sem monitor sozinho
+systemctl --user enable diakopad.service
+sudo reboot
+```
+
+No Pi, o instalador:
+
+- instala PipeWire + WirePlumber e direciona `libjack` para o PipeWire;
+- ativa o `linger`, para PipeWire e DiakoPad subirem no boot sem ninguém logar;
+- carrega `snd-seq`/`snd-usb-audio` no boot e desliga o autosuspend USB, para
+  o SMC-PAD não "dormir" e perder notas;
+- ativa a DAC PCM5122 no `config.txt` (`dtoverlay=hifiberry-dacplus`, em um
+  bloco "DiakoPad audio", com backup em `config.txt.diakopad-bak`) e desliga
+  o áudio da placa e do HDMI, deixando a DAC como única saída;
+- fixa a CPU em `performance` e o PipeWire em 44100 Hz / **256 frames**
+  (~5,8 ms), porque o Pi 4 não segura 128 frames com 16 pads e efeitos.
+
+Como a interface só é acessível pela rede, o instalador também faz o serviço
+escutar em `0.0.0.0` e gera um `DIAKOPAD_TOKEN`, guardado em
+`~/.config/diakopad/token` e mantido nas reinstalações. Ele não instala
+navegador nem autostart. Para forçar um alvo, use
+`DIAKOPAD_TARGET=laptop` ou `DIAKOPAD_TARGET=pi-headless`. Para outro buffer,
+use `DIAKOPAD_QUANTUM=128`.
+
+Se `aplay -l` não mostrar a DAC depois do reboot, a sua placa pode precisar de
+outro overlay. Reinstale com `DIAKOPAD_PI_DAC_OVERLAY=<overlay>` e tente, nesta
+ordem, `hifiberry-dacplus-std` (placa sem cristal próprio), `iqaudio-dacplus`
+ou `allo-boss-dac-pcm512x-audio`, conforme o fabricante. Com interface USB, use
+`DIAKOPAD_PI_DAC_OVERLAY=none`.
+
+A PCM5122 tem volume digital próprio. Deixe-o em 0 dB (sem corte e sem
+distorção) e controle o nível pelo Master do DiakoPad:
+
+```bash
+amixer -c sndrpihifiberry sset Digital 0dB
+sudo alsactl store
+```
+
+Depois do reboot, sem logar no Pi, confira pelo SSH:
+
+```bash
+systemctl --user status pipewire wireplumber diakopad
+pw-metadata -n settings | grep clock   # rate=44100 quantum=256
+aplay -l                               # a DAC (sndrpihifiberry) aparece?
+wpctl status                           # a DAC é o sink padrão?
+wpctl set-default <id>                 # se não for
+jack_lsp | grep -i -E "sinco|smc-pad"  # porta Midi-Bridge do SMC-PAD
+pw-top                                 # xruns durante o teste de carga
+```
+
+No outro aparelho, abra uma vez
+`http://<hostname>.local:8080/?token=<token>`, com o token mostrado no fim da
+instalação (`cat ~/.config/diakopad/token`). Ele vira cookie, e depois basta
+`http://<hostname>.local:8080/`. O SMC-PAD pode ser
+plugado e desplugado com o sistema rodando: o DiakoPad reconecta a porta MIDI
+em até 3 s. No Pi 4, evite usar reverbs Dragonfly em muitos pads ao mesmo
+tempo. Se usar Wi-Fi, desligue a economia de energia
+(`sudo iw dev wlan0 set power_save off`).
+
 ## Preparação para apresentação
 
 1. Conecte o SMC-PAD por USB ou Bluetooth e confirme a porta MIDI:
@@ -90,6 +194,25 @@ exibido em seu laptop for diferente, defina
 `DIAKOPAD_HARDWARE_MIDI_PATTERN` no arquivo
 `~/.config/systemd/user/diakopad.service`, execute
 `systemctl --user daemon-reload` e reinicie o serviço.
+
+### Controle por tablet ou celular
+
+Por padrão o serviço escuta apenas em `127.0.0.1`: só o próprio laptop acessa
+a interface. Para controlar o set de outro aparelho na mesma rede, edite
+`~/.config/systemd/user/diakopad.service`:
+
+```ini
+Environment=DIAKOPAD_HOST=0.0.0.0
+Environment=DIAKOPAD_TOKEN=um-segredo-longo
+```
+
+Execute `systemctl --user daemon-reload && systemctl --user restart
+diakopad.service` e, no outro aparelho, abra uma vez
+`http://<ip-do-laptop>:8080/?token=um-segredo-longo`. O token fica guardado em
+cookie, e a URL sem o token passa a funcionar. Requisições sem o cookie recebem
+401; o navegador do próprio laptop nunca é bloqueado. Não exponha a porta sem
+token: qualquer pessoa no Wi-Fi do local poderia apagar samples ou disparar
+PANIC.
 
 ### Bluetooth
 
@@ -151,6 +274,45 @@ Se não houver áudio, confirme primeiro que PipeWire/JACK está ativo, que o
 SMC-PAD aparece no grafo e que `sfizz_jack` e `mod-host` estão disponíveis no
 `PATH` do serviço.
 
+## Controle por agente de IA (MCP)
+
+`mcp_server/diakopad_mcp.py` é um servidor [MCP](https://modelcontextprotocol.io)
+que permite a um agente (Claude Code, Claude Desktop ou outro cliente MCP)
+operar o DiakoPad: criar e carregar kits, enviar sons, ajustar volume, pan,
+filtro e efeitos dos pads, salvar e carregar cenas, programar o sequencer,
+controlar looper, metrônomo e master, gerenciar mapeamentos MIDI e reiniciar o
+motor. Ele roda como processo `stdio` separado e só usa a API REST, então pode
+ficar no próprio laptop/Pi ou em outra máquina da rede.
+
+```bash
+python3 -m venv mcp_server/.venv
+mcp_server/.venv/bin/pip install -r mcp_server/requirements.txt
+```
+
+Registro no Claude Code (troque a URL e o token se o DiakoPad estiver em
+outra máquina; no próprio laptop, o token não é necessário):
+
+```bash
+claude mcp add diakopad \
+  --env DIAKOPAD_URL=http://diakopad.local:8080 \
+  --env DIAKOPAD_TOKEN="$(cat ~/.config/diakopad/token)" \
+  -- "$PWD/mcp_server/.venv/bin/python" "$PWD/mcp_server/diakopad_mcp.py"
+```
+
+No Claude Desktop, use o mesmo comando, os mesmos argumentos e as mesmas
+variáveis em `mcpServers` do `claude_desktop_config.json`.
+
+Ações que apagam dados ou cortam o som (`delete_*`, `clear_*`, `panic`,
+`restart_engine`, `restart_system`) são marcadas como destrutivas, para o
+cliente pedir confirmação. As mudanças valem na hora no áudio. Durante o show,
+prefira não deixar o agente operar o set sem supervisão. Sons e packs podem
+vir de um caminho local da máquina do MCP ou de uma URL. Os learns MIDI
+(`pad_note_learn`, `knob_learn`, `controller_action_learn`) dependem de
+alguém tocar o controlador.
+
+Testes: `cd mcp_server && python -m unittest discover tests`, num ambiente com
+`mcp_server/requirements.txt` e `backend/requirements.txt` instalados.
+
 ## Desenvolvimento local
 
 Para trabalhar na interface sem o motor de áudio:
@@ -180,9 +342,25 @@ alterações não commitadas do checkout remoto. Os dados de execução, como
 `backend/diakopad.db`, `backend/samples/` e `backend/sfz_bank/`, não são
 versionados e não são removidos pelo reset.
 
-## Recuperação de pads
+## Backups e recuperação
 
-Se o banco SQLite for perdido, recupere as atribuições de pads a partir dos
+A cada início do serviço, o banco é copiado para
+`backend/backups/diakopad-AAAAMMDD-HHMMSS.db` (as 10 cópias mais recentes são
+mantidas). Para voltar a uma cópia:
+
+```bash
+systemctl --user stop diakopad.service
+cp backend/backups/diakopad-AAAAMMDD-HHMMSS.db backend/diakopad.db
+rm -f backend/diakopad.db-wal backend/diakopad.db-shm
+systemctl --user start diakopad.service
+```
+
+Os samples (`backend/samples/`) não entram no backup automático; copie essa
+pasta para um pendrive antes de cada turnê.
+
+### Recuperação de pads
+
+Se o banco SQLite e os backups forem perdidos, recupere as atribuições de pads a partir dos
 samples e arquivos `.sfz`:
 
 ```bash
@@ -201,4 +379,5 @@ backend/         FastAPI, WebSocket, SQLite e geração de arquivos .sfz
 backend/engine/  MIDI, JACK/PipeWire, sfizz, mod-host, efeitos e transportes
 frontend/        Interface web para operação e configuração ao vivo
 deploy/          Instalação Ubuntu Studio e serviços systemd --user
+mcp_server/      Servidor MCP para controle do DiakoPad por agentes de IA
 ```

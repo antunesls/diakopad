@@ -181,6 +181,13 @@ async def _supervise_engine(interval: float = 3.0) -> None:
         jack_was_available = jack_is_available
 
 
+def report_error(message: str) -> None:
+    """Registra um erro vindo de fora do orquestrador (ex.: falha no startup)
+    para aparecer em engine_status()["last_error"] na UI."""
+    global _last_engine_error
+    _last_engine_error = message
+
+
 def engine_status() -> dict:
     return {
         "jack": jackgraph.available(),

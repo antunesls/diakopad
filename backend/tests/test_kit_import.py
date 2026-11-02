@@ -134,6 +134,58 @@ class ImportPackTests(unittest.TestCase):
         # for re-imports of changed content.
         self.assertEqual(len(storage.list_kits()), 1)
 
+    def _build_single_pad_pack(self, path: Path, pad: dict, extra_files: dict | None = None) -> None:
+        manifest = {"kits": [{"name": "Evil Kit", "pads": [pad]}]}
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr("manifest.json", json.dumps(manifest))
+            for name, data in (extra_files or {}).items():
+                zf.writestr(name, data)
+
+    def test_rejects_filename_escaping_the_pack_with_dotdot(self):
+        outside = Path(self._temp_dir.name) / "outside.wav"
+        outside.write_bytes(b"not-from-the-pack")
+        pack_path = Path(self._temp_dir.name) / "pack.zip"
+        # O pacote é extraído num tmpdir do sistema; "../" suficientes saem dele.
+        target = outside.resolve()
+        rel = "../" * 40 + target.relative_to(target.anchor).as_posix()
+        self._build_single_pad_pack(pack_path, {"pad_number": 1, "filename": rel})
+
+        with self.assertRaisesRegex(ValueError, "fora do pacote"):
+            self._kit_import.import_pack(pack_path)
+        self.assertEqual(storage.list_samples(), [])
+
+    def test_rejects_absolute_filename(self):
+        outside = Path(self._temp_dir.name) / "outside.wav"
+        outside.write_bytes(b"not-from-the-pack")
+        pack_path = Path(self._temp_dir.name) / "pack.zip"
+        self._build_single_pad_pack(pack_path, {"pad_number": 1, "filename": str(outside.resolve())})
+
+        with self.assertRaisesRegex(ValueError, "fora do pacote"):
+            self._kit_import.import_pack(pack_path)
+        self.assertEqual(storage.list_samples(), [])
+
+    def test_rejects_pad_number_out_of_range(self):
+        pack_path = Path(self._temp_dir.name) / "pack.zip"
+        for bad in (0, 17, "1", True):
+            self._build_single_pad_pack(
+                pack_path,
+                {"pad_number": bad, "filename": "a.wav"},
+                {"a.wav": b"audio"},
+            )
+            with self.assertRaisesRegex(ValueError, "pad_number"):
+                self._kit_import.import_pack(pack_path)
+
+    def test_rejects_pack_whose_uncompressed_size_exceeds_limit(self):
+        pack_path = Path(self._temp_dir.name) / "pack.zip"
+        self._build_single_pad_pack(pack_path, {"pad_number": 1, "filename": "a.wav"}, {"a.wav": b"x" * 2048})
+        original = self._kit_import.MAX_PACK_UNCOMPRESSED_BYTES
+        self._kit_import.MAX_PACK_UNCOMPRESSED_BYTES = 1024
+        try:
+            with self.assertRaisesRegex(ValueError, "grande demais"):
+                self._kit_import.import_pack(pack_path)
+        finally:
+            self._kit_import.MAX_PACK_UNCOMPRESSED_BYTES = original
+
 
 if __name__ == "__main__":
     unittest.main()

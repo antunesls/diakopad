@@ -233,9 +233,17 @@ systemctl --user enable --now diakopad-bt-watchdog.service
 ### Pads, efeitos e master
 
 Na aba **Pads**, toque para disparar e segure um pad para trocar o sample. A
-aba **Volumes** controla volume e panorama; **Efeitos** oferece filtro e slots
-LV2 por pad. O catálogo padrão foi validado no Ubuntu Studio com Dragonfly,
-ZamVerb, LSP, mda e x42.
+aba **Volumes** controla volume e panorama.
+
+Na aba **Efeitos**, os **efeitos compartilhados** (Reverb Hall, Reverb Plate e
+um Delay que segue o BPM, inclusive o Tap Tempo) servem a todos os pads: cada
+pad regula quanto envia para cada um (0-100%). Eles ficam sempre carregados,
+então são a forma recomendada de dar ambiência: leves, e trocar de cena só muda
+números. Abaixo deles ficam o filtro de tom e até três **efeitos só daquele
+pad** (slots LV2: pitch, EQ, drive, chorus...). Use poucos slots por cena:
+criar e remover plugins na troca de cena mexe no grafo de áudio e pode estalar.
+O catálogo foi validado no Ubuntu Studio com Dragonfly, ZamVerb, LSP, mda e
+x42.
 
 O controle **Master** inclui limiter estéreo LSP e ganho de saída. Segure
 **PANIC** por aproximadamente 0,65 s para parar os transportes, enviar
@@ -243,10 +251,15 @@ all-notes-off e mutar a saída.
 
 ### Cenas
 
-Uma cena armazena a atribuição dos pads, mixagem, efeitos, mapeamentos de
-knob, BPM, metrônomo e grid do sequencer. As notas MIDI dos pads, o master,
-recarregam os pads e podem levar alguns segundos; faça a mudança antes do
-momento crítico da música.
+Uma cena armazena a atribuição dos pads, mixagem, efeitos (envios e ajustes
+dos efeitos compartilhados inclusive), mapeamentos de knob, BPM, metrônomo e
+grid do sequencer. As notas MIDI dos pads e o master não fazem parte da cena.
+
+Cada pad mantém na memória todos os sons que ele usa em todas as cenas salvas,
+então trocar de cena é instantâneo (cerca de 0,1 s), sem recarregar nada, e um
+prato que ainda está soando continua até o fim. Um som que ainda não está na
+memória (por exemplo, trocado pelo navegador de kits) é preparado em segundo
+plano enquanto o som atual continua tocando, sem silêncio na troca.
 
 ### Sequencer, metrônomo e looper
 

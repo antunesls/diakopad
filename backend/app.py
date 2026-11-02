@@ -106,6 +106,7 @@ class LearnRequest(BaseModel):
 class SettingsRequest(BaseModel):
     sustain_mode: Optional[bool] = None
     velocity_sensitive: Optional[bool] = None
+    auto_trim: Optional[bool] = None
 
 
 class EffectSlotRequest(BaseModel):
@@ -1169,6 +1170,8 @@ async def update_settings(body: SettingsRequest):
         storage.set_setting("sustain_mode", "1" if body.sustain_mode else "0")
     if body.velocity_sensitive is not None:
         storage.set_setting("velocity_sensitive", "1" if body.velocity_sensitive else "0")
+    if body.auto_trim is not None:
+        storage.set_setting("auto_trim", "1" if body.auto_trim else "0")
     await orchestrator.apply_all_pads(
         storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
     )

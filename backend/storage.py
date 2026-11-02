@@ -270,6 +270,8 @@ FX_BUSES = ("hall", "plate", "delay")
 # on any already-deployed DB, same as reverb_send/delay_send above.
 DEFAULT_SETTINGS = {
     "sustain_mode": "1",
+    # auto_trim=1: skip each sample's leading/trailing silence (sample_trim.py)
+    "auto_trim": "1",
     "velocity_sensitive": "0",
     "sequencer_bpm": "100",
     "metronome_style": "digital",
@@ -325,6 +327,12 @@ _MIGRATIONS = [
 # '' (root), same as a manually-uploaded sound.
 _SAMPLES_MIGRATIONS = [
     "ALTER TABLE samples ADD COLUMN folder TEXT NOT NULL DEFAULT ''",
+    # Auto-trim cache (see sample_trim.py): frames to skip at the start, last
+    # frame to play (NULL = play to the end), analysis version (NULL = not
+    # analysed yet).
+    "ALTER TABLE samples ADD COLUMN trim_start INTEGER",
+    "ALTER TABLE samples ADD COLUMN trim_end INTEGER",
+    "ALTER TABLE samples ADD COLUMN trim_version INTEGER",
 ]
 
 # scenes.active was added when scenes grew an active/inactive flag;
@@ -932,6 +940,34 @@ def set_pad_effect_param(pad_number: int, slot_index: int, symbol: str, value: f
         conn.execute(
             "UPDATE pad_effects SET params = ? WHERE pad_number = ? AND slot_index = ?",
             (json.dumps(params), pad_number, slot_index),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_sample_trims(sample_ids: list[int], version: int) -> dict[int, tuple[int, Optional[int]]]:
+    """Cached auto-trim results analysed with `version` (others are absent)."""
+    if not sample_ids:
+        return {}
+    conn = get_connection()
+    try:
+        marks = ",".join("?" * len(sample_ids))
+        rows = conn.execute(
+            f"SELECT id, trim_start, trim_end FROM samples WHERE id IN ({marks}) AND trim_version = ?",
+            (*sample_ids, version),
+        ).fetchall()
+        return {r["id"]: (r["trim_start"] or 0, r["trim_end"]) for r in rows}
+    finally:
+        conn.close()
+
+
+def set_sample_trim(sample_id: int, start: int, end: Optional[int], version: int) -> None:
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE samples SET trim_start = ?, trim_end = ?, trim_version = ? WHERE id = ?",
+            (start, end, version, sample_id),
         )
         conn.commit()
     finally:

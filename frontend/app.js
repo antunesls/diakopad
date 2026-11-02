@@ -109,6 +109,7 @@
     panicBtn: document.getElementById("panic-btn"),
     previewAudio: document.getElementById("preview-audio"),
     settingSustain: document.getElementById("setting-sustain"),
+    settingAutoTrim: document.getElementById("setting-auto-trim"),
     settingVelocity: document.getElementById("setting-velocity"),
     settingKitBrowsePreview: document.getElementById("setting-kit-browse-preview"),
     settingLooperQuantize: document.getElementById("setting-looper-quantize"),
@@ -1612,6 +1613,7 @@
 
   function renderSettings() {
     el.settingSustain.checked = state.settings.sustain_mode === "1";
+    el.settingAutoTrim.checked = (state.settings.auto_trim ?? "1") === "1";
     el.settingVelocity.checked = state.settings.velocity_sensitive === "1";
     el.settingKitBrowsePreview.checked = state.settings.kit_browse_preview_enabled === "1";
     el.settingLooperQuantize.checked = state.settings.looper_quantize_enabled === "1";
@@ -1625,6 +1627,13 @@
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sustain_mode: el.settingSustain.checked }),
+    });
+  });
+  el.settingAutoTrim.addEventListener("change", () => {
+    fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auto_trim: el.settingAutoTrim.checked }),
     });
   });
   el.settingVelocity.addEventListener("change", () => {

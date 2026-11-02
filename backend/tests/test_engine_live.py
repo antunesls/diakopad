@@ -72,6 +72,7 @@ class PadApplyResponsivenessTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("engine.orchestrator.storage.scene_pad_variants", return_value={}),
+            patch("engine.orchestrator._attach_trims"),
             patch("engine.orchestrator.sfz.write_pad_bank", side_effect=slow_write),
             patch("engine.orchestrator.sfizz_proc.prepare", return_value="diakopad_pad01_1"),
             patch("engine.orchestrator.sfizz_proc.commit", return_value=True),
@@ -101,6 +102,7 @@ class ApplyAllPadsClearsEmptyPadsTests(unittest.IsolatedAsyncioTestCase):
         ]
         with (
             patch("engine.orchestrator.storage.scene_pad_variants", return_value={}),
+            patch("engine.orchestrator._attach_trims"),
             patch("engine.orchestrator.sfz.write_pad_bank", return_value=Path("pad01_1.sfz")),
             patch("engine.orchestrator.sfizz_proc.prepare", return_value="diakopad_pad01_1"),
             patch("engine.orchestrator.sfizz_proc.commit", return_value=True),

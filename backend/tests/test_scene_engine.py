@@ -209,6 +209,7 @@ class SceneFastPathTests(unittest.IsolatedAsyncioTestCase):
             patch("engine.orchestrator.sfizz_proc.jack_name", return_value="diakopad_pad02_1"),
             patch("engine.orchestrator.midi.control_change", return_value=True) as cc,
             patch("engine.orchestrator.storage.scene_pad_variants", return_value={}),
+            patch("engine.orchestrator._attach_trims"),
             patch("engine.orchestrator.sfz.write_pad_bank", return_value=Path("p.sfz")),
             patch("engine.orchestrator.sfizz_proc.prepare", return_value="diakopad_pad02_2") as prepare,
             patch("engine.orchestrator.sfizz_proc.commit", return_value=True) as commit,

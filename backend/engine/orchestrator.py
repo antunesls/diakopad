@@ -37,6 +37,7 @@ import os
 import re
 
 import midi
+import sample_trim
 import sfz
 import storage
 import system_metrics
@@ -379,7 +380,21 @@ async def restart_engine(pads: list[dict], settings: dict, pad_effects: list[dic
 
 
 def _settings_sig(settings: dict) -> tuple:
-    return (settings.get("sustain_mode", "1"), settings.get("velocity_sensitive", "0"))
+    return (
+        settings.get("sustain_mode", "1"),
+        settings.get("velocity_sensitive", "0"),
+        settings.get("auto_trim", "1"),
+    )
+
+
+def _attach_trims(rows: list[dict]) -> None:
+    """Adds trim_start/trim_end (sample_trim.py, cached in the DB) to rows
+    that have a sample. Runs in a worker thread: a first-time analysis
+    decodes the file."""
+    trims = sample_trim.trims_for(rows, sfz.SAMPLES_DIR)
+    for row in rows:
+        start, end = trims.get(row.get("sample_id"), (0, None))
+        row["trim_start"], row["trim_end"] = start, end
 
 
 def _variant(source: dict) -> dict:
@@ -475,8 +490,10 @@ async def apply_pad(
             _banks.pop(pad_number, None)
             return False
 
+        await asyncio.to_thread(_attach_trims, variants)
+        live = {**pad, "trim_start": variants[0].get("trim_start", 0), "trim_end": variants[0].get("trim_end")}
         tag = sfizz_proc.next_tag(client)
-        sfz_path = await asyncio.to_thread(sfz.write_pad_bank, pad_number, pad, variants, settings, tag)
+        sfz_path = await asyncio.to_thread(sfz.write_pad_bank, pad_number, live, variants, settings, tag)
         new_name = sfizz_proc.prepare(client, sfz_path)
         if new_name is None:
             return False
@@ -865,6 +882,10 @@ async def apply_preview_kit(kit: dict) -> bool:
 
 
 def _apply_preview_kit_sync(kit: dict) -> bool:
+    pads = [dict(p) for p in kit.get("pads", [])]
+    if storage.get_settings().get("auto_trim", "1") == "1":
+        _attach_trims(pads)
+    kit = {**kit, "pads": pads}
     sfz_path = sfz.write_preview_kit(kit)
     if not sfizz_proc.spawn(PREVIEW_CLIENT, sfz_path):
         return False

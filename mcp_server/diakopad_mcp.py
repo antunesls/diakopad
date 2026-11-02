@@ -241,12 +241,13 @@ async def get_settings() -> dict:
 async def update_settings(
     sustain_mode: Annotated[Optional[bool], Field(description="Sample toca até o fim mesmo soltando o pad")] = None,
     velocity_sensitive: Annotated[Optional[bool], Field(description="Volume do pad segue a força da batida")] = None,
+    auto_trim: Annotated[Optional[bool], Field(description="Pular o silêncio no início/fim de cada sample (padrão: ligado)")] = None,
     kit_browse_preview: Annotated[Optional[bool], Field(description="Tocar prévia ao navegar kits no controlador")] = None,
     looper_quantize: Annotated[Optional[bool], Field(description="Quantizar gravação do looper por compasso")] = None,
     looper_duplicate_hit_window_ms: Annotated[Optional[int], Field(ge=0, le=200, description="Janela (ms) para descartar batidas duplicadas no looper")] = None,
 ) -> dict:
     """Altera configurações gerais. Só os campos informados mudam."""
-    body = _drop_none({"sustain_mode": sustain_mode, "velocity_sensitive": velocity_sensitive})
+    body = _drop_none({"sustain_mode": sustain_mode, "velocity_sensitive": velocity_sensitive, "auto_trim": auto_trim})
     if body:
         await _post("/api/settings", body)
     if kit_browse_preview is not None:

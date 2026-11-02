@@ -61,7 +61,7 @@ def _global_opcodes(settings: dict) -> list[str]:
     return global_opcodes
 
 
-def _region_opcodes(variant: dict, note: int) -> list[str]:
+def _region_opcodes(variant: dict, note: int, trim: bool = False) -> list[str]:
     sample_path = (SAMPLES_DIR / variant["filename"]).resolve()
     opcodes = [
         f"sample={sample_path}",
@@ -70,6 +70,13 @@ def _region_opcodes(variant: dict, note: int) -> list[str]:
         f"volume={variant.get('volume_db', 6)}",
         f"pan={variant.get('pan', 0)}",
     ]
+    if trim:
+        # Auto-trim (sample_trim.py): skip leading silence / stop at the
+        # end of the audible tail. Frames at the file's own sample rate.
+        if variant.get("trim_start"):
+            opcodes.append(f"offset={int(variant['trim_start'])}")
+        if variant.get("trim_end") is not None:
+            opcodes.append(f"end={int(variant['trim_end'])}")
     if variant.get("cutoff_hz"):
         opcodes += [f"cutoff={variant['cutoff_hz']:.0f}", "fil_type=lpf_2p"]
     return opcodes
@@ -81,8 +88,12 @@ def render_pad_sfz(pad: dict, settings: dict) -> str:
         f"<global> {' '.join(_global_opcodes(settings))}\n",
     ]
     if pad.get("filename"):
-        lines.append(f"<region> {' '.join(_region_opcodes(pad, pad['midi_note']))}\n")
+        lines.append(f"<region> {' '.join(_region_opcodes(pad, pad['midi_note'], _trim_on(settings)))}\n")
     return "".join(lines)
+
+
+def _trim_on(settings: dict) -> bool:
+    return settings.get("auto_trim", "1") == "1"
 
 
 def render_pad_bank(pad_number: int, note: int, variants: list[dict], settings: dict) -> str:
@@ -97,7 +108,7 @@ def render_pad_bank(pad_number: int, note: int, variants: list[dict], settings: 
     ]
     for index, variant in enumerate(variants[:MAX_VARIANTS]):
         if variant.get("filename"):
-            opcodes = _region_opcodes(variant, note) + [f"locc{cc}={index}", f"hicc{cc}={index}"]
+            opcodes = _region_opcodes(variant, note, _trim_on(settings)) + [f"locc{cc}={index}", f"hicc{cc}={index}"]
             lines.append(f"<region> {' '.join(opcodes)}\n")
     return "".join(lines)
 
@@ -143,6 +154,10 @@ def render_preview_sfz(kit: dict) -> str:
             f"pitch_keycenter={note}",
             "loop_mode=one_shot",
         ]
+        if pad.get("trim_start"):
+            opcodes.append(f"offset={int(pad['trim_start'])}")
+        if pad.get("trim_end") is not None:
+            opcodes.append(f"end={int(pad['trim_end'])}")
         lines.append(f"<region> {' '.join(opcodes)}\n")
     return "".join(lines)
 

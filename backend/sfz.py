@@ -15,6 +15,7 @@ SFZ_BANK_DIR = Path(
     )
 )
 SAMPLES_DIR = Path(__file__).parent / "samples"
+NOTE_POLYPHONY = int(__import__("os").environ.get("DIAKOPAD_NOTE_POLYPHONY", "4"))
 
 
 def render_pad_sfz(pad: dict, settings: dict) -> str:
@@ -22,7 +23,15 @@ def render_pad_sfz(pad: dict, settings: dict) -> str:
         # velocity_sensitive=0 (default): every hit plays at the pad's set
         # volume regardless of how hard it's struck - "quiet unless you hit
         # it hard" was reported as a real usability problem.
-        f"amp_veltrack={100 if settings.get('velocity_sensitive') == '1' else 0}"
+        f"amp_veltrack={100 if settings.get('velocity_sensitive') == '1' else 0}",
+        # Voice cap per pad (oldest voice is stolen, like Hydrogen's max-notes
+        # queue): hammering a 6s cymbal otherwise stacks a new full-length
+        # voice per hit - +4dB of pile-up into the limiter and a CPU spike.
+        # 4 still lets fast repeats overlap naturally.
+        f"note_polyphony={NOTE_POLYPHONY}",
+        # 0.5ms minimum attack (drumkv1 does the same) avoids a click when a
+        # sample doesn't start exactly at a zero crossing.
+        "ampeg_attack=0.0005",
     ]
     if settings.get("sustain_mode", "1") == "1":
         # Ignore note-off entirely; the sample always plays to completion

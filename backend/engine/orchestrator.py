@@ -33,7 +33,7 @@ import midi
 import sfz
 import storage
 import system_metrics
-from engine import effects_catalog, jackgraph, looper, metronome, metronome_sounds, modhost_client, sequencer, sfizz_proc
+from engine import effects_catalog, jackgraph, looper, metronome, metronome_sounds, modhost_client, pwclock, sequencer, sfizz_proc
 
 logger = logging.getLogger("diakopad.engine.orchestrator")
 
@@ -84,6 +84,10 @@ async def startup() -> None:
     """Called once from the FastAPI startup hook: spawns mod-host, opens the
     trigger-out port, and starts the sfizz watchdog. Individual pads are
     brought up afterwards via apply_all_pads() with the current DB state."""
+    # Pin the PipeWire clock BEFORE spawning anything: LV2 plugins and sfizz
+    # instantiate at the graph rate and can't follow a later rate change.
+    if (await asyncio.to_thread(pwclock.enforce))["changed"]:
+        await asyncio.sleep(1.0)  # let the graph settle on the new rate/quantum
     modhost_client.start()
     midi.open_output()
     async with _graph_lock:
@@ -147,6 +151,21 @@ async def _supervise_engine(interval: float = 3.0) -> None:
     jack_was_available = False
     while True:
         await asyncio.sleep(interval)
+        clock = await asyncio.to_thread(pwclock.enforce)
+        if pwclock.gave_up and not _last_engine_error:
+            _last_engine_error = "outro programa insiste em mudar a taxa de amostragem do PipeWire (widget do Ubuntu Studio?)"
+        if clock["rate_changed"]:
+            # Something (e.g. Ubuntu Studio's audio widget) moved the graph to
+            # another sample rate under the running engine: the clock is back,
+            # but plugins/sfizz were instantiated at the other rate - rebuild.
+            await asyncio.sleep(1.0)
+            _last_engine_error = "clock do PipeWire foi alterado por outro programa; motor reiniciado"
+            await restart_engine(
+                await asyncio.to_thread(storage.list_pads),
+                await asyncio.to_thread(storage.get_settings),
+                await asyncio.to_thread(storage.list_pad_effects),
+            )
+            continue
         jack_is_available = await asyncio.to_thread(jackgraph.available)
         if jack_is_available:
             async with _graph_lock:

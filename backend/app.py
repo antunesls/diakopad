@@ -26,7 +26,7 @@ from pydantic import BaseModel
 import kit_import
 import midi
 import storage
-from engine import effects_catalog, knob_registry, looper, metronome, metronome_sounds, orchestrator, sequencer, tempo, time_signatures, trigger
+from engine import effects_catalog, fx_buses, knob_registry, looper, metronome, metronome_sounds, orchestrator, sequencer, tempo, time_signatures, trigger
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("diakopad")
@@ -770,6 +770,13 @@ async def _apply_knob_target(key: tuple[str, Optional[int], str]) -> None:
         await _broadcast_pad_effects()
         return
 
+    bus = knob_registry.send_bus(param)
+    if bus is not None:
+        storage.set_pad_send(pad_number, bus, value)
+        await orchestrator.set_pad_send(pad_number, bus, value)
+        await _broadcast_fx_buses()
+        return
+
     if param == "volume":
         storage.set_pad_mix(pad_number, volume_db=value)
     elif param == "pan":
@@ -812,6 +819,7 @@ async def on_startup() -> None:
             settings.get("master_limiter_enabled", "1") == "1",
             float(settings.get("master_limiter_threshold_db", -1)),
         )
+        await orchestrator.apply_fx_buses(storage.list_fx_buses(), storage.list_pad_sends())
         await orchestrator.apply_all_pads(storage.list_pads(), settings, storage.list_pad_effects())
         await orchestrator.apply_metronome_style(settings.get("metronome_style", metronome_sounds.DEFAULT_STYLE))
     except Exception as exc:
@@ -892,6 +900,20 @@ async def _broadcast_knobs() -> None:
     await manager.broadcast(
         {"type": "knobs", "knobs": _enriched_knob_mappings(), "pending_learn": _pending_learn}
     )
+
+
+def _fx_buses_payload() -> dict:
+    stored = storage.list_fx_buses()
+    return {
+        "available": orchestrator.engine_status()["fx_buses"],
+        "catalog": fx_buses.list_catalog(),
+        "params": {bus: fx_buses.effective_params(bus, stored.get(bus)) for bus in fx_buses.BUSES},
+        "sends": storage.list_pad_sends(),
+    }
+
+
+async def _broadcast_fx_buses() -> None:
+    await manager.broadcast({"type": "fx_buses", **_fx_buses_payload()})
 
 
 async def _broadcast_pad_effects() -> None:
@@ -1007,9 +1029,10 @@ async def assign_pad(pad_number: int, body: AssignRequest):
 async def clear_all_pads():
     """Removes the sound from all 16 pads at once. Mix, effects and knobs are
     kept; only the sample assignment is cleared."""
+    old_pads = storage.list_pads()
     storage.clear_all_pads()
-    await orchestrator.apply_all_pads(
-        storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
+    await orchestrator.apply_changed_pads(
+        old_pads, storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
     )
     await _broadcast_pads()
     return {"ok": True}
@@ -1358,6 +1381,54 @@ async def set_pad_effect_param(pad_number: int, slot_index: int, body: EffectPar
     return {"ok": True}
 
 
+# ── Shared FX buses (hall / plate / tempo-synced delay) + per-pad sends ─────
+
+
+class FxBusParamRequest(BaseModel):
+    symbol: str
+    value: float
+
+
+class PadSendRequest(BaseModel):
+    level: float
+
+
+@app.get("/api/fx-buses")
+def get_fx_buses():
+    return _fx_buses_payload()
+
+
+@app.post("/api/fx-buses/{bus}/param")
+async def set_fx_bus_param(bus: str, body: FxBusParamRequest):
+    if bus not in fx_buses.BUSES:
+        raise HTTPException(404, "unknown bus")
+    meta = fx_buses.bus_param(bus, body.symbol)
+    if meta is None:
+        raise HTTPException(400, "unknown param symbol for this bus")
+    if not meta["min"] <= body.value <= meta["max"]:
+        raise HTTPException(400, f"value out of range ({meta['min']}..{meta['max']})")
+    if meta.get("options") and not any(abs(o["value"] - body.value) < 1e-6 for o in meta["options"]):
+        raise HTTPException(400, "value must be one of: " + ", ".join(f"{o['value']:g} ({o['label']})" for o in meta["options"]))
+    storage.set_fx_bus_param(bus, body.symbol, body.value)
+    applied = await orchestrator.set_fx_bus_param(bus, storage.list_fx_buses()[bus])
+    await _broadcast_fx_buses()
+    return {"ok": True, "engine_applied": applied}
+
+
+@app.post("/api/pads/{pad_number}/sends/{bus}")
+async def set_pad_send(pad_number: int, bus: str, body: PadSendRequest):
+    if not 1 <= pad_number <= 16:
+        raise HTTPException(400, "pad_number must be between 1 and 16")
+    if bus not in fx_buses.BUSES:
+        raise HTTPException(404, "unknown bus")
+    if not 0 <= body.level <= 100:
+        raise HTTPException(400, "level must be between 0 and 100")
+    storage.set_pad_send(pad_number, bus, body.level)
+    applied = await orchestrator.set_pad_send(pad_number, bus, body.level)
+    await _broadcast_fx_buses()
+    return {"ok": True, "engine_applied": applied}
+
+
 # ── Performance scenes ───────────────────────────────────────────────────────
 
 
@@ -1377,13 +1448,17 @@ async def _apply_scene_and_broadcast(scene: dict, old_pads: list[dict]) -> None:
     if state is not None:
         tempo.set(float(state["sequencer_bpm"]))
         metronome.set_signature(state["metronome_signature"])
-        await orchestrator.apply_metronome_style(state["metronome_style"])
     new_pads = storage.list_pads()
     _pad_notes = _build_pad_note_map(new_pads)
     sequencer.load_pattern(storage.list_sequencer_steps())
+    # Sounds first (one CC per pad when the bank has them), the shared FX
+    # right after, then anything slow (prepared swaps, metronome respawn).
     await orchestrator.apply_changed_pads(
-        old_pads, new_pads, storage.get_settings(), storage.list_pad_effects()
+        old_pads, new_pads, storage.get_settings(), storage.list_pad_effects(),
+        fx=(storage.list_fx_buses(), storage.list_pad_sends()),
     )
+    if state is not None:
+        await orchestrator.apply_metronome_style(state["metronome_style"], only_if_changed=True)
     if state is not None:
         if state["sequencer_running"] == "1":
             await sequencer.start(storage.list_pads(), storage.get_settings(), _on_sequencer_tick)
@@ -1395,6 +1470,7 @@ async def _apply_scene_and_broadcast(scene: dict, old_pads: list[dict]) -> None:
             await metronome.stop()
     await _broadcast_pads()
     await _broadcast_pad_effects()
+    await _broadcast_fx_buses()
     await _broadcast_knobs()
     await _broadcast_tempo()
     await _broadcast_sequencer()
@@ -1445,6 +1521,8 @@ async def save_scene(body: SceneRequest):
             "sequencer_running": "1" if sequencer.get_state()["running"] else "0",
         },
         sequencer_steps=storage.list_sequencer_steps(),
+        pad_sends=storage.list_pad_sends(),
+        fx_buses=storage.list_fx_buses(),
     )
     await _broadcast_scenes()
     return {"ok": True, "scene": {"id": scene_id, "name": name}}
@@ -1994,6 +2072,7 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.send_json({"type": "knobs", "knobs": _enriched_knob_mappings(), "pending_learn": _pending_learn})
         await ws.send_json({"type": "settings", "settings": _settings_payload()})
         await ws.send_json({"type": "pad_effects", "pad_effects": storage.list_pad_effects()})
+        await ws.send_json({"type": "fx_buses", **_fx_buses_payload()})
         await ws.send_json({"type": "sequencer", **sequencer.get_state()})
         await ws.send_json({"type": "looper", **looper.get_state()})
         await ws.send_json({"type": "tempo", "bpm": tempo.get()})

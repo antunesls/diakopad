@@ -1954,3 +1954,26 @@ html, body {
   .metronome-hint { margin-bottom: 16px; }
   .metronome-beat-row { margin-bottom: 16px; }
 }
+
+/* Efeitos compartilhados (hall / plate / delay) */
+.fx-bus-panel {
+  margin-bottom: 16px;
+}
+
+.fx-bus-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.fx-bus-card {
+  background: var(--panel);
+  border: 1px solid var(--panel-alt);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.fx-bus-name {
+  margin: 0 0 8px;
+  font-weight: 600;
+}

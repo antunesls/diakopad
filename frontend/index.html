@@ -151,9 +151,12 @@
 
   <main id="view-effects" class="view hidden">
     <p class="tab-note">
-      Tom é um filtro grave/agudo do próprio pad. Reverb, delay e outros
-      efeitos são plugins que você escolhe por slot, abaixo.
+      Os efeitos compartilhados (reverb hall, plate e delay no tempo da música)
+      servem a todos os pads: cada pad escolhe quanto envia para eles. Trocar de
+      cena só muda esses valores, sem recarregar nada. Tom e os slots abaixo
+      são efeitos só daquele pad.
     </p>
+    <section id="fx-bus-panel" class="fx-bus-panel"></section>
     <ul id="effects-list" class="mix-list mix-card-grid"></ul>
   </main>
 

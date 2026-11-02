@@ -174,6 +174,7 @@ async def get_overview() -> dict:
         "looper": await _get("/api/looper"),
         "settings": await _get("/api/settings"),
         "scenes": await _get("/api/scenes"),
+        "fx_buses": await _get("/api/fx-buses"),
         "engine": await _get("/api/engine/status"),
     }
 
@@ -350,6 +351,40 @@ async def set_pad_effect_param(
 ) -> dict:
     """Ajusta um parâmetro do efeito de um slot (dentro da faixa do catálogo)."""
     return await _post(f"/api/pads/{pad_number}/effects/{slot_index}/param", {"symbol": symbol, "value": value})
+
+
+# ── Efeitos compartilhados (hall / plate / delay) e envios ─────────────────
+
+
+@mcp.tool(annotations=READ)
+async def get_fx_buses() -> dict:
+    """Efeitos compartilhados por todos os pads: Reverb Hall, Reverb Plate e
+    Delay (que segue o BPM). Traz o catálogo de parâmetros, os valores atuais e
+    o envio (0-100%) de cada pad para cada um. Prefira estes efeitos para dar
+    ambiência: são leves, ficam sempre carregados e a troca de cena só muda
+    números. Os slots por pad (set_pad_effect) são para efeitos de caráter
+    (pitch, EQ, drive) - poucos por cena."""
+    return await _get("/api/fx-buses")
+
+
+@mcp.tool(annotations=IDEMPOTENT)
+async def set_pad_send(
+    pad_number: PadNumber,
+    bus: Literal["hall", "plate", "delay"],
+    level: Annotated[float, Field(ge=0, le=100, description="Quanto o pad envia (%): 0 = nada, 70 = -6 dB, 100 = 0 dB")],
+) -> dict:
+    """Quanto um pad envia para um efeito compartilhado."""
+    return await _post(f"/api/pads/{pad_number}/sends/{bus}", {"level": level})
+
+
+@mcp.tool(annotations=IDEMPOTENT)
+async def set_fx_bus_param(
+    bus: Literal["hall", "plate", "delay"],
+    symbol: Annotated[str, Field(description="symbol do parâmetro (ver get_fx_buses). No delay, 'beats' é a divisão: 1.5, 1, 0.6667, 0.75 (colcheia pontuada), 0.5, 0.375, 0.25")],
+    value: float,
+) -> dict:
+    """Ajusta um parâmetro de um efeito compartilhado (vale para todos os pads)."""
+    return await _post(f"/api/fx-buses/{bus}/param", {"symbol": symbol, "value": value})
 
 
 # ── Biblioteca de sons ───────────────────────────────────────────────────────

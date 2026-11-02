@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import logging
 import os
+
+import sfz
 from typing import Callable, Optional
 
 logger = logging.getLogger("diakopad.midi")
@@ -64,7 +66,13 @@ def open_input(on_cc: Callable[[int, int], None], on_note: Optional[Callable[[in
         import mido
 
         def _callback(msg) -> None:
-            if msg.type not in {"aftertouch", "polytouch"} and _hardware_output_port is not None:
+            # The per-pad variant selector CCs (sfz.scene_cc) belong to
+            # DiakoPad alone: never let a controller knob flip a pad's sound.
+            if (
+                msg.type not in {"aftertouch", "polytouch"}
+                and _hardware_output_port is not None
+                and not is_scene_cc(msg)
+            ):
                 _hardware_output_port.send(msg)
             if msg.type == "control_change":
                 on_cc(msg.control, msg.value)
@@ -99,6 +107,19 @@ def open_output() -> bool:
             logger.warning("MIDI trigger output unavailable (%s); sequencer/looper playback will be no-ops", exc)
             _output_unavailable_logged = True
         return False
+
+
+def is_scene_cc(msg) -> bool:
+    return msg.type == "control_change" and sfz.SCENE_CC_BASE <= msg.control < sfz.SCENE_CC_BASE + 16
+
+
+def control_change(channel: int, control: int, value: int) -> bool:
+    """CC on the trigger output, which reaches every pad's sfizz input."""
+    if _output_port is None:
+        return False
+    import mido
+    _output_port.send(mido.Message("control_change", channel=channel, control=control, value=value))
+    return True
 
 
 def note_on(channel: int, note: int, velocity: int = 100) -> bool:

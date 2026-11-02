@@ -215,10 +215,45 @@ CREATE TABLE IF NOT EXISTS pattern_steps (
     PRIMARY KEY (pattern_id, pad_number, step_index),
     FOREIGN KEY (pattern_id) REFERENCES patterns(id) ON DELETE CASCADE
 );
+
+-- Shared effect buses (one hall reverb, one plate reverb, one tempo-synced
+-- delay - see engine/fx_buses.py), fed by a per-pad send level. Unlike the
+-- per-pad insert slots (pad_effects), the bus plugins are created once and
+-- never removed, so a scene switch only changes numbers here.
+-- level: 0..100 (%). params: JSON {symbol: value} over the bus defaults.
+CREATE TABLE IF NOT EXISTS pad_sends (
+    pad_number INTEGER NOT NULL,
+    bus TEXT NOT NULL,
+    level REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (pad_number, bus)
+);
+
+CREATE TABLE IF NOT EXISTS fx_buses (
+    bus TEXT PRIMARY KEY,
+    params TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS scene_sends (
+    scene_id INTEGER NOT NULL,
+    pad_number INTEGER NOT NULL,
+    bus TEXT NOT NULL,
+    level REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (scene_id, pad_number, bus),
+    FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS scene_fx_buses (
+    scene_id INTEGER NOT NULL,
+    bus TEXT NOT NULL,
+    params TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (scene_id, bus),
+    FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
+);
 """
 
 EFFECT_SLOTS_PER_PAD = 3
 SEQUENCER_STEPS = 16
+FX_BUSES = ("hall", "plate", "delay")
 
 # sustain_mode=1: samples always play to completion once triggered
 # (loop_mode=one_shot), ignoring how long the pad is held - the usual
@@ -518,6 +553,13 @@ def init_db() -> None:
         conn.executemany(
             "INSERT OR IGNORE INTO pad_effects (pad_number, slot_index, plugin_id) VALUES (?, ?, NULL)",
             [(n, slot) for n in range(1, 17) for slot in range(1, EFFECT_SLOTS_PER_PAD + 1)],
+        )
+        conn.executemany(
+            "INSERT OR IGNORE INTO pad_sends (pad_number, bus, level) VALUES (?, ?, 0)",
+            [(n, bus) for n in range(1, 17) for bus in FX_BUSES],
+        )
+        conn.executemany(
+            "INSERT OR IGNORE INTO fx_buses (bus, params) VALUES (?, '{}')", [(bus,) for bus in FX_BUSES]
         )
         conn.executemany(
             "INSERT OR IGNORE INTO sequencer_steps (pad_number, step_index, active) VALUES (?, ?, 0)",
@@ -896,6 +938,83 @@ def set_pad_effect_param(pad_number: int, slot_index: int, symbol: str, value: f
         conn.close()
 
 
+def scene_pad_variants() -> dict[int, list[dict]]:
+    """{pad_number: [variant, ...]} - what each pad sounds like in every saved
+    scene (empty pads included, as sample_id/filename None), oldest scene
+    first. Feeds each pad's sfizz bank (see sfz.render_pad_bank)."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT sp.pad_number, sp.sample_id, s.filename, sp.volume_db, sp.pan, sp.cutoff_hz "
+            "FROM scene_pads sp LEFT JOIN samples s ON s.id = sp.sample_id "
+            "ORDER BY sp.scene_id, sp.pad_number"
+        ).fetchall()
+        result: dict[int, list[dict]] = {}
+        for r in rows:
+            variant = dict(r)
+            if variant["filename"] is None:
+                variant["sample_id"] = None
+            result.setdefault(variant.pop("pad_number"), []).append(variant)
+        return result
+    finally:
+        conn.close()
+
+
+def list_pad_sends() -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT pad_number, bus, level FROM pad_sends ORDER BY pad_number, bus"
+        ).fetchall()
+        return [dict(r) for r in rows if r["bus"] in FX_BUSES]
+    finally:
+        conn.close()
+
+
+def set_pad_send(pad_number: int, bus: str, level: float) -> None:
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO pad_sends (pad_number, bus, level) VALUES (?, ?, ?) "
+            "ON CONFLICT(pad_number, bus) DO UPDATE SET level = excluded.level",
+            (pad_number, bus, float(level)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_fx_buses() -> dict[str, dict]:
+    """{bus: stored params} - only what was changed from the defaults in
+    engine/fx_buses.py (see fx_buses.effective_params)."""
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT bus, params FROM fx_buses").fetchall()
+        result = {bus: {} for bus in FX_BUSES}
+        for r in rows:
+            if r["bus"] in result:
+                result[r["bus"]] = json.loads(r["params"])
+        return result
+    finally:
+        conn.close()
+
+
+def set_fx_bus_param(bus: str, symbol: str, value: float) -> None:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT params FROM fx_buses WHERE bus = ?", (bus,)).fetchone()
+        params = json.loads(row["params"]) if row else {}
+        params[symbol] = value
+        conn.execute(
+            "INSERT INTO fx_buses (bus, params) VALUES (?, ?) "
+            "ON CONFLICT(bus) DO UPDATE SET params = excluded.params",
+            (bus, json.dumps(params)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def list_sequencer_steps() -> list[dict]:
     conn = get_connection()
     try:
@@ -1070,6 +1189,8 @@ def save_scene(
     knob_mappings: list[dict] | None = None,
     scene_state: dict | None = None,
     sequencer_steps: list[dict] | None = None,
+    pad_sends: list[dict] | None = None,
+    fx_buses: dict[str, dict] | None = None,
 ) -> int:
     """Captures the current set state as a scene: pad assignments + mix, the
     effect chains, the knob mappings, the global tempo/metronome state and the
@@ -1090,6 +1211,8 @@ def save_scene(
             conn.execute("DELETE FROM scene_knobs WHERE scene_id = ?", (scene_id_val,))
             conn.execute("DELETE FROM scene_state WHERE scene_id = ?", (scene_id_val,))
             conn.execute("DELETE FROM scene_steps WHERE scene_id = ?", (scene_id_val,))
+            conn.execute("DELETE FROM scene_sends WHERE scene_id = ?", (scene_id_val,))
+            conn.execute("DELETE FROM scene_fx_buses WHERE scene_id = ?", (scene_id_val,))
         conn.executemany(
             "INSERT INTO scene_pads (scene_id, pad_number, sample_id, volume_db, pan, cutoff_hz) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -1140,6 +1263,16 @@ def save_scene(
                     "1" if scene_state.get("metronome_running") in (True, "1", 1) else "0",
                     "1" if scene_state.get("sequencer_running") in (True, "1", 1) else "0",
                 ),
+            )
+        if pad_sends is not None:
+            conn.executemany(
+                "INSERT INTO scene_sends (scene_id, pad_number, bus, level) VALUES (?, ?, ?, ?)",
+                [(scene_id_val, snd["pad_number"], snd["bus"], float(snd["level"])) for snd in pad_sends],
+            )
+        if fx_buses is not None:
+            conn.executemany(
+                "INSERT INTO scene_fx_buses (scene_id, bus, params) VALUES (?, ?, ?)",
+                [(scene_id_val, bus, json.dumps(params or {})) for bus, params in fx_buses.items()],
             )
         if sequencer_steps is not None:
             conn.executemany(
@@ -1204,6 +1337,17 @@ def get_scene(scene_id: int) -> Optional[dict]:
                 (scene_id,),
             ).fetchall()
         ]
+        sends = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT pad_number, bus, level FROM scene_sends WHERE scene_id = ? ORDER BY pad_number, bus",
+                (scene_id,),
+            ).fetchall()
+        ]
+        fx_buses = {
+            r["bus"]: json.loads(r["params"])
+            for r in conn.execute("SELECT bus, params FROM scene_fx_buses WHERE scene_id = ?", (scene_id,)).fetchall()
+        }
         return {
             "id": row["id"],
             "name": row["name"],
@@ -1214,6 +1358,8 @@ def get_scene(scene_id: int) -> Optional[dict]:
             "knobs": knobs,
             "state": state,
             "steps": steps,
+            "sends": sends,
+            "fx_buses": fx_buses,
         }
     finally:
         conn.close()
@@ -1390,6 +1536,23 @@ def load_scene(scene_id: int) -> Optional[dict]:
                 for e in scene["effects"]
             ],
         )
+        # A scene saved before the shared buses existed has no sends, so it
+        # loads with every send at 0 (sounding as it was saved) instead of
+        # inheriting the previous scene's sends. Bus params are only
+        # replaced when the scene carries them.
+        conn.execute("UPDATE pad_sends SET level = 0")
+        for snd in scene["sends"]:
+            conn.execute(
+                "INSERT INTO pad_sends (pad_number, bus, level) VALUES (?, ?, ?) "
+                "ON CONFLICT(pad_number, bus) DO UPDATE SET level = excluded.level",
+                (snd["pad_number"], snd["bus"], snd["level"]),
+            )
+        for bus, params in scene["fx_buses"].items():
+            conn.execute(
+                "INSERT INTO fx_buses (bus, params) VALUES (?, ?) "
+                "ON CONFLICT(bus) DO UPDATE SET params = excluded.params",
+                (bus, json.dumps(params or {})),
+            )
         if scene["knobs"]:
             conn.execute("DELETE FROM knob_mappings")
             conn.executemany(

@@ -168,5 +168,19 @@ class McpToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([s["name"] for s in await self.call("list_scenes")], ["Abertura"])
 
 
+    async def test_shared_fx_sends_and_bus_params(self):
+        fx = await self.call("get_fx_buses")
+        self.assertEqual([c["bus"] for c in fx["catalog"]], ["hall", "plate", "delay"])
+        await self.call("set_pad_send", pad_number=2, bus="hall", level=40)
+        await self.call("set_fx_bus_param", bus="delay", symbol="beats", value=0.5)
+        fx = await self.call("get_fx_buses")
+        sends = {(x["pad_number"], x["bus"]): x["level"] for x in fx["sends"]}
+        self.assertEqual(sends[(2, "hall")], 40)
+        self.assertEqual(fx["params"]["delay"]["beats"], 0.5)
+        with self.assertRaises(ToolError):
+            await self.call("set_pad_send", pad_number=2, bus="hall", level=150)
+        with self.assertRaisesRegex(ToolError, "400"):
+            await self.call("set_fx_bus_param", bus="delay", symbol="beats", value=0.6)
+
 if __name__ == "__main__":
     unittest.main()

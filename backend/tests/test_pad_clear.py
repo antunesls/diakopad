@@ -29,7 +29,7 @@ class ClearAllPadsEndpointTests(unittest.IsolatedAsyncioTestCase):
     async def test_clear_all_pads_reapplies_the_engine_and_broadcasts(self):
         with (
             patch("app.storage.clear_all_pads") as clear_all,
-            patch("app.orchestrator.apply_all_pads", new=AsyncMock()) as apply_all,
+            patch("app.orchestrator.apply_changed_pads", new=AsyncMock()) as apply_all,
             patch("app._broadcast_pads", new=AsyncMock()) as broadcast,
         ):
             result = await diakopad_app.clear_all_pads()

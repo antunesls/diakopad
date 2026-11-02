@@ -31,7 +31,19 @@ PAD_NATIVE_PARAMS: list[ParamMeta] = [
     {"param": "volume", "label": "Volume", "unit": "dB", "min": -24, "max": 12, "curve": "linear", "bypass_at_max": False},
     {"param": "pan", "label": "Pan", "unit": "", "min": -100, "max": 100, "curve": "linear", "bypass_at_max": False},
     {"param": "tone", "label": "Tom", "unit": "Hz", "min": 200, "max": 20000, "curve": "log", "bypass_at_max": True},
+    # Sends into the shared FX buses (engine/fx_buses.py): cheap to move live,
+    # no sfizz respawn - just a matrix gain in mod-host.
+    {"param": "send_hall", "label": "Envio — Reverb Hall", "unit": "%", "min": 0, "max": 100, "curve": "linear", "bypass_at_max": False},
+    {"param": "send_plate", "label": "Envio — Reverb Plate", "unit": "%", "min": 0, "max": 100, "curve": "linear", "bypass_at_max": False},
+    {"param": "send_delay", "label": "Envio — Delay", "unit": "%", "min": 0, "max": 100, "curve": "linear", "bypass_at_max": False},
 ]
+
+
+def send_bus(param: str) -> Optional[str]:
+    """'send_hall' -> 'hall' (None for any other param)."""
+    if param.startswith("send_") and param[5:] in ("hall", "plate", "delay"):
+        return param[5:]
+    return None
 
 GLOBAL_PARAMS: list[ParamMeta] = [
     {"param": "tempo", "label": "Tempo", "unit": "bpm", "min": 40, "max": 240, "curve": "linear", "bypass_at_max": False},

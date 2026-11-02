@@ -64,15 +64,17 @@ class LooperDuplicateHitWindowSettingsTests(unittest.TestCase):
 
 class PadApplyResponsivenessTests(unittest.IsolatedAsyncioTestCase):
     async def test_apply_pad_keeps_the_event_loop_responsive_during_spawn(self):
-        pads = [{"pad_number": 1, "filename": "kick.wav"}]
+        pads = [{"pad_number": 1, "filename": "kick.wav", "midi_note": 36}]
 
-        def slow_spawn(_client, _sfz_path):
+        def slow_write(*_args):
             time.sleep(0.2)
-            return True
+            return Path("pad01_1.sfz")
 
         with (
-            patch("engine.orchestrator.sfz.write_pad_kit", return_value="pad01.sfz"),
-            patch("engine.orchestrator.sfizz_proc.spawn", side_effect=slow_spawn),
+            patch("engine.orchestrator.storage.scene_pad_variants", return_value={}),
+            patch("engine.orchestrator.sfz.write_pad_bank", side_effect=slow_write),
+            patch("engine.orchestrator.sfizz_proc.prepare", return_value="diakopad_pad01_1"),
+            patch("engine.orchestrator.sfizz_proc.commit", return_value=True),
             patch("engine.orchestrator.jackgraph.wait_for_port_async", new=AsyncMock(return_value=True)),
             patch("engine.orchestrator.jackgraph.connect_pattern_to_all", return_value=True),
             patch("engine.orchestrator.apply_pad_effects", new=AsyncMock()),
@@ -94,19 +96,25 @@ class ApplyAllPadsClearsEmptyPadsTests(unittest.IsolatedAsyncioTestCase):
         to stop - its old sfizz instance kept running, still wired to
         hardware MIDI, and kept playing the previous scene's sample forever."""
         pads = [
-            {"pad_number": 1, "filename": "kick.wav"},
-            {"pad_number": 16, "filename": None},
+            {"pad_number": 1, "filename": "kick.wav", "midi_note": 36},
+            {"pad_number": 16, "filename": None, "midi_note": 51},
         ]
         with (
-            patch("engine.orchestrator.sfz.write_pad_kit", return_value="pad01.sfz"),
-            patch("engine.orchestrator.sfizz_proc.spawn", return_value=True),
-            patch("engine.orchestrator.sfizz_proc.stop") as stop,
+            patch("engine.orchestrator.storage.scene_pad_variants", return_value={}),
+            patch("engine.orchestrator.sfz.write_pad_bank", return_value=Path("pad01_1.sfz")),
+            patch("engine.orchestrator.sfizz_proc.prepare", return_value="diakopad_pad01_1"),
+            patch("engine.orchestrator.sfizz_proc.commit", return_value=True),
+            patch("engine.orchestrator.sfizz_proc.retire") as retire,
             patch("engine.orchestrator.jackgraph.wait_for_port_async", new=AsyncMock(return_value=True)),
             patch("engine.orchestrator.jackgraph.connect_pattern_to_all", return_value=True),
+            patch("engine.orchestrator.jackgraph.disconnect_all"),
+            patch("engine.orchestrator._apply_pad_effects_unlocked", new=AsyncMock()),
         ):
             await orchestrator.apply_all_pads(pads, {}, [])
 
-        stop.assert_called_once_with("diakopad_pad16")
+        # Empty everywhere -> its generation is retired (stops getting
+        # notes, rings out) instead of being left wired to the controller.
+        retire.assert_called_once_with("diakopad_pad16")
 
 
 class SfizzRecoveryQueueTests(unittest.TestCase):

@@ -1955,25 +1955,295 @@ html, body {
   .metronome-beat-row { margin-bottom: 16px; }
 }
 
-/* Efeitos compartilhados (hall / plate / delay) */
-.fx-bus-panel {
-  margin-bottom: 16px;
+/* Efeitos: mesa de envios (proposta A) */
+:root {
+  --fx-hall: #79a6ff;
+  --fx-plate: #c79bff;
+  --fx-delay: #ffc15a;
+  --fx-line: #2f3442;
 }
 
-.fx-bus-grid {
+#view-effects {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+#view-effects.hidden {
+  display: none;
+}
+
+.fx-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  background: var(--bc);
+  display: inline-block;
+  flex: none;
+  vertical-align: -1px;
+  margin-right: 6px;
+}
+
+.fx-buses {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
-.fx-bus-card {
+.fx-bus {
   background: var(--panel);
-  border: 1px solid var(--panel-alt);
-  border-radius: 12px;
-  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.fx-bus.open {
+  border-color: var(--bc);
+}
+
+.fx-bus-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .fx-bus-name {
-  margin: 0 0 8px;
   font-weight: 600;
+}
+
+.fx-bus-sum {
+  color: var(--text-dim);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.fx-bus-head button,
+.fx-own button {
+  margin-left: auto;
+  min-height: 40px;
+  min-width: 44px;
+  padding: 0 12px;
+  border-radius: 9px;
+  border: 1px solid var(--fx-line);
+  background: var(--panel-alt);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.fx-bus-params {
+  display: grid;
+  gap: 8px;
+}
+
+.fx-param {
+  display: grid;
+  grid-template-columns: 92px 1fr 70px;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.fx-param label {
+  color: var(--text-dim);
+}
+
+.fx-param output {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.fx-param input[type="range"] {
+  width: 100%;
+  accent-color: var(--bc, var(--accent));
+}
+
+.fx-param select {
+  grid-column: 2 / 4;
+  min-height: 40px;
+  border-radius: 8px;
+  background: var(--panel-alt);
+  color: var(--text);
+  border: 1px solid var(--fx-line);
+  padding: 0 8px;
+  font: inherit;
+}
+
+.fx-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.fx-mesa {
+  background: var(--panel);
+  border-radius: 14px;
+  overflow-x: auto;
+}
+
+.fx-mesa table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+.fx-mesa th {
+  text-align: left;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--fx-line);
+  background: var(--panel);
+}
+
+.fx-mesa td {
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--fx-line);
+  vertical-align: middle;
+}
+
+.fx-mesa tr.fx-expanded td,
+.fx-mesa tr.fx-detail td {
+  background: #20232d;
+}
+
+.fx-mesa tr.fx-detail td {
+  padding: 0 14px 14px;
+}
+
+.fx-padcell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 190px;
+}
+
+.fx-num {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--pad-filled);
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.fx-pname {
+  font-size: 14px;
+}
+
+.fx-pname.empty {
+  color: var(--text-dim);
+}
+
+.fx-send {
+  position: relative;
+  height: 40px;
+  min-width: 140px;
+  border-radius: 9px;
+  background: var(--panel-alt);
+  overflow: hidden;
+  cursor: ew-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.fx-send:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.fx-send-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--bc);
+  opacity: 0.85;
+}
+
+.fx-send-val {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.fx-send.zero .fx-send-val {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.fx-own {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fx-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.fx-chip {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--panel-alt);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.fx-chip.on {
+  color: var(--text);
+  background: #3a2a22;
+}
+
+.fx-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 12px;
+}
+
+.fx-box {
+  background: var(--panel-alt);
+  border-radius: 12px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.fx-box h3 {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.fx-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+@media (max-width: 860px) {
+  .fx-buses,
+  .fx-detail-grid {
+    grid-template-columns: 1fr;
+  }
 }

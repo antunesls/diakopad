@@ -18,6 +18,9 @@
     padEffects: [],
     effectsCatalog: [],
     fxBuses: { available: false, catalog: [], params: {}, sends: [] },
+    fxOpenBus: null,
+    fxOpenPad: null,
+    fxDragging: false,
     sequencer: { running: false, current_step: 0, steps: [] },
     looper: { state: "stopped", selected_track: 0, loop_duration: null, started_at: null, tracks: [] },
     tempo: { bpm: 100 },
@@ -69,6 +72,7 @@
     volumeList: document.getElementById("volume-list"),
     effectsList: document.getElementById("effects-list"),
     fxBusPanel: document.getElementById("fx-bus-panel"),
+    fxLegend: document.getElementById("fx-legend"),
     uploadZone: document.getElementById("upload-zone"),
     fileInput: document.getElementById("file-input"),
     folderInput: document.getElementById("folder-input"),
@@ -869,67 +873,12 @@
     return Math.round(frac * 100);
   }
 
-  // --- Efeitos (tom + slots configuráveis) --------------------------------
+  // --- Efeitos: mesa de envios ---------------------------------------
+  // Proposta A aprovada: os efeitos compartilhados (Hall/Plate/Delay) numa
+  // barra no topo e uma mesa com os 16 pads x 3 envios; "Só deste pad" abre
+  // tom, afinação e os slots de efeito exclusivos do pad.
 
-  function renderEffects() {
-    el.effectsList.innerHTML = "";
-    for (const pad of displayOrder(state.pads)) {
-      const tone = toneFromCutoff(pad.cutoff_hz);
-      const li = document.createElement("li");
-      li.className = "mix-card";
-      li.innerHTML = `
-        <button class="mix-card-header" type="button" data-role="mix-card-toggle" aria-expanded="false">
-          <span class="mix-card-identity">
-            <span class="pad-label">PAD ${pad.pad_number}</span>
-            <span class="pad-sound">${pad.has_sample ? escapeHtml(pad.display_name) : "Vazio"}</span>
-          </span>
-          <span class="mix-card-summary effect-summary">${escapeHtml(effectSummary(pad.pad_number))}</span>
-          <span class="mix-card-chevron" aria-hidden="true">⌄</span>
-        </button>
-        <div class="mix-card-body">
-          <div class="mix-controls">
-          <div class="mix-control">
-            <span class="mix-control-label">Tom</span>
-            <input type="range" min="0" max="100" step="1" value="${tone}" data-role="tone">
-            <span class="mix-value" data-role="tone-value">${tone >= 100 ? "aberto" : tone + "%"}</span>
-          </div>
-          </div>
-          <p class="effect-card-title">Envios para os efeitos compartilhados</p>
-          <div class="pad-sends"></div>
-          <p class="effect-card-title">Efeitos só deste pad</p>
-          <div class="effect-slots"></div>
-        </div>
-      `;
-      bindMixCard(li);
-      const toneInput = li.querySelector('[data-role="tone"]');
-      const toneValue = li.querySelector('[data-role="tone-value"]');
-      toneInput.addEventListener("input", () => {
-        const v = Number(toneInput.value);
-        toneValue.textContent = v >= 100 ? "aberto" : v + "%";
-      });
-      toneInput.addEventListener("change", () => setPadMix(pad.pad_number, { tone: Number(toneInput.value) }));
-
-      renderPadSends(li.querySelector(".pad-sends"), pad.pad_number);
-      renderEffectSlots(li.querySelector(".effect-slots"), pad.pad_number);
-      el.effectsList.appendChild(li);
-    }
-  }
-
-  function effectSummary(padNumber) {
-    const labels = state.padEffects
-      .filter((effect) => effect.pad_number === padNumber && effect.plugin_id)
-      .sort((a, b) => a.slot_index - b.slot_index)
-      .map((effect) => state.effectsCatalog.find((plugin) => plugin.plugin_id === effect.plugin_id)?.label)
-      .filter(Boolean);
-    const sends = state.fxBuses.catalog
-      .map((bus) => ({ bus, level: sendLevel(padNumber, bus.bus) }))
-      .filter((s) => s.level > 0)
-      .map((s) => `${busShortLabel(s.bus.bus)} ${Math.round(s.level)}%`);
-    const all = sends.concat(labels);
-    return all.length ? all.join(" · ") : "Sem efeitos";
-  }
-
-  // --- Efeitos compartilhados (hall / plate / delay) + envios por pad ----
+  const FX_BUS_COLOR = { hall: "var(--fx-hall)", plate: "var(--fx-plate)", delay: "var(--fx-delay)" };
 
   function busShortLabel(bus) {
     return { hall: "Hall", plate: "Plate", delay: "Delay" }[bus] || bus;
@@ -940,73 +889,221 @@
     return send ? send.level : 0;
   }
 
-  function renderPadSends(container, padNumber) {
-    container.innerHTML = "";
-    for (const bus of state.fxBuses.catalog) {
-      const level = sendLevel(padNumber, bus.bus);
-      const row = document.createElement("div");
-      row.className = "mix-control";
-      row.innerHTML = `
-        <span class="mix-control-label">${escapeHtml(busShortLabel(bus.bus))}</span>
-        <input type="range" min="0" max="100" step="1" value="${level}" data-role="send">
-        <span class="mix-value">${Math.round(level)}%</span>
-      `;
-      const input = row.querySelector("input");
-      const valueEl = row.querySelector(".mix-value");
-      input.addEventListener("input", () => (valueEl.textContent = `${input.value}%`));
-      input.addEventListener("change", () => setPadSend(padNumber, bus.bus, Number(input.value)));
-      container.appendChild(row);
+  function setLocalSend(padNumber, bus, level) {
+    const send = state.fxBuses.sends.find((s) => s.pad_number === padNumber && s.bus === bus);
+    if (send) send.level = level;
+    else state.fxBuses.sends.push({ pad_number: padNumber, bus, level });
+  }
+
+  function fmtNumber(value) {
+    return String(Math.round(value * 100) / 100).replace(".", ",");
+  }
+
+  function busSummary(bus) {
+    const p = state.fxBuses.params[bus.bus] || {};
+    if (bus.bus === "delay") {
+      const beats = p.beats ?? 0.75;
+      const division = bus.params.find((x) => x.symbol === "beats")?.options?.find((o) => Math.abs(o.value - beats) < 1e-6);
+      const bpm = Number(state.tempo?.bpm) || 100;
+      const ms = Math.round(Math.min(1000, (beats * 60000) / bpm));
+      return `${division ? division.label : beats + " tempo"} · ${ms} ms a ${Math.round(bpm)} BPM`;
     }
+    const pre = bus.bus === "hall" ? p.delay : p.predelay;
+    return `Decay ${fmtNumber(p.decay ?? 0)} s · Pré ${Math.round(pre ?? 0)} ms`;
   }
 
   function renderFxBusPanel() {
     if (!el.fxBusPanel) return;
     el.fxBusPanel.innerHTML = "";
-    const title = document.createElement("p");
-    title.className = "effect-card-title";
-    title.textContent = state.fxBuses.available
-      ? "Efeitos compartilhados (todos os pads enviam para eles)"
-      : "Efeitos compartilhados indisponíveis no motor agora";
-    el.fxBusPanel.appendChild(title);
-    const grid = document.createElement("div");
-    grid.className = "fx-bus-grid";
-    for (const bus of state.fxBuses.catalog) {
-      const params = state.fxBuses.params[bus.bus] || {};
-      const card = document.createElement("div");
-      card.className = "fx-bus-card";
-      card.innerHTML = `<p class="fx-bus-name">${escapeHtml(bus.label)}</p>`;
-      for (const p of bus.params) {
-        const value = params[p.symbol] ?? p.default;
-        const row = document.createElement("div");
-        row.className = "mix-control";
-        if (p.options) {
-          const options = p.options
-            .map((o) => `<option value="${o.value}" ${Math.abs(o.value - value) < 1e-6 ? "selected" : ""}>${escapeHtml(o.label)}</option>`)
-            .join("");
-          row.innerHTML = `
-            <span class="mix-control-label">${escapeHtml(p.label)}</span>
-            <select class="effect-slot-select" data-role="bus-option">${options}</select>
-          `;
-          row.querySelector("select").addEventListener("change", (e) =>
-            setFxBusParam(bus.bus, p.symbol, Number(e.target.value))
-          );
-        } else {
-          const step = (p.max - p.min) / 100 || 1;
-          row.innerHTML = `
-            <span class="mix-control-label">${escapeHtml(p.label)}</span>
-            <input type="range" min="${p.min}" max="${p.max}" step="${step}" value="${value}">
-            <span class="mix-value">${formatParamValue(value, p.unit)}</span>
-          `;
-          const input = row.querySelector("input");
-          const valueEl = row.querySelector(".mix-value");
-          input.addEventListener("input", () => (valueEl.textContent = formatParamValue(Number(input.value), p.unit)));
-          input.addEventListener("change", () => setFxBusParam(bus.bus, p.symbol, Number(input.value)));
-        }
-        card.appendChild(row);
-      }
-      grid.appendChild(card);
+    if (!state.fxBuses.available) {
+      el.fxBusPanel.innerHTML = '<p class="tab-note">Efeitos compartilhados indisponíveis no motor agora.</p>';
     }
-    el.fxBusPanel.appendChild(grid);
+    for (const bus of state.fxBuses.catalog) {
+      const open = state.fxOpenBus === bus.bus;
+      const params = state.fxBuses.params[bus.bus] || {};
+      const card = document.createElement("article");
+      card.className = "fx-bus" + (open ? " open" : "");
+      card.style.setProperty("--bc", FX_BUS_COLOR[bus.bus]);
+      card.innerHTML = `
+        <div class="fx-bus-head">
+          <span class="fx-swatch" aria-hidden="true"></span>
+          <div><div class="fx-bus-name">${escapeHtml(bus.label)}</div><div class="fx-bus-sum">${escapeHtml(busSummary(bus))}</div></div>
+          <button type="button" aria-expanded="${open}">${open ? "Fechar" : "Ajustar"}</button>
+        </div>
+        <div class="fx-bus-params"></div>`;
+      card.querySelector("button").addEventListener("click", () => {
+        state.fxOpenBus = open ? null : bus.bus;
+        renderFxBusPanel();
+      });
+      if (open) {
+        const box = card.querySelector(".fx-bus-params");
+        for (const p of bus.params) {
+          const value = params[p.symbol] ?? p.default;
+          const id = `fx-${bus.bus}-${p.symbol}`;
+          const row = document.createElement("div");
+          row.className = "fx-param";
+          if (p.options) {
+            row.innerHTML = `<label for="${id}">${escapeHtml(p.label)}</label>
+              <select id="${id}">${p.options.map((o) => `<option value="${o.value}" ${Math.abs(o.value - value) < 1e-6 ? "selected" : ""}>${escapeHtml(o.label)}</option>`).join("")}</select>`;
+            row.querySelector("select").addEventListener("change", (e) => setFxBusParam(bus.bus, p.symbol, Number(e.target.value)));
+          } else {
+            const step = (p.max - p.min) / 100 || 1;
+            row.innerHTML = `<label for="${id}">${escapeHtml(p.label)}</label>
+              <input id="${id}" type="range" min="${p.min}" max="${p.max}" step="${step}" value="${value}">
+              <output for="${id}">${formatParamValue(value, p.unit)}</output>`;
+            const input = row.querySelector("input");
+            input.addEventListener("input", () => (row.querySelector("output").textContent = formatParamValue(Number(input.value), p.unit)));
+            input.addEventListener("change", () => setFxBusParam(bus.bus, p.symbol, Number(input.value)));
+          }
+          box.appendChild(row);
+        }
+      }
+      el.fxBusPanel.appendChild(card);
+    }
+    renderFxLegend();
+  }
+
+  function renderFxLegend() {
+    if (!el.fxLegend) return;
+    el.fxLegend.innerHTML = state.fxBuses.catalog
+      .map((bus) => {
+        const n = state.fxBuses.sends.filter((s) => s.bus === bus.bus && s.level > 0).length;
+        return `<span><span class="fx-swatch" style="--bc:${FX_BUS_COLOR[bus.bus]}" aria-hidden="true"></span>${busShortLabel(bus.bus)}: ${n} ${n === 1 ? "pad enviando" : "pads enviando"}</span>`;
+      })
+      .join("");
+  }
+
+  function sendBar(padNumber, bus) {
+    const bar = document.createElement("div");
+    bar.className = "fx-send";
+    bar.tabIndex = 0;
+    bar.style.setProperty("--bc", FX_BUS_COLOR[bus.bus]);
+    bar.setAttribute("role", "slider");
+    bar.setAttribute("aria-label", `Envio do pad ${padNumber} para ${bus.label}`);
+    bar.setAttribute("aria-valuemin", "0");
+    bar.setAttribute("aria-valuemax", "100");
+    const draw = (level) => {
+      bar.innerHTML = `<div class="fx-send-fill" style="width:${level}%"></div><div class="fx-send-val">${level ? Math.round(level) + "%" : "—"}</div>`;
+      bar.classList.toggle("zero", !level);
+      bar.setAttribute("aria-valuenow", String(Math.round(level)));
+    };
+    let level = sendLevel(padNumber, bus.bus);
+    const fromPointer = (x) => {
+      const r = bar.getBoundingClientRect();
+      return Math.round(Math.max(0, Math.min(1, (x - r.left) / r.width)) * 20) * 5;
+    };
+    const commit = () => {
+      setLocalSend(padNumber, bus.bus, level);
+      setPadSend(padNumber, bus.bus, level);
+    };
+    bar.addEventListener("pointerdown", (e) => {
+      bar.setPointerCapture(e.pointerId);
+      state.fxDragging = true;
+      level = fromPointer(e.clientX);
+      draw(level);
+    });
+    bar.addEventListener("pointermove", (e) => {
+      if (!bar.hasPointerCapture(e.pointerId)) return;
+      level = fromPointer(e.clientX);
+      draw(level);
+    });
+    const end = () => {
+      if (!state.fxDragging) return;
+      state.fxDragging = false;
+      commit();
+    };
+    bar.addEventListener("pointerup", end);
+    bar.addEventListener("pointercancel", end);
+    bar.addEventListener("keydown", (e) => {
+      const step = { ArrowRight: 5, ArrowUp: 5, ArrowLeft: -5, ArrowDown: -5 }[e.key];
+      if (!step) return;
+      e.preventDefault();
+      level = Math.max(0, Math.min(100, level + step));
+      draw(level);
+      commit();
+    });
+    draw(level);
+    return bar;
+  }
+
+  function padOnlyChips(pad) {
+    const chips = [];
+    if (pad.tune) chips.push(`Afinação ${pad.tune > 0 ? "+" : ""}${fmtNumber(pad.tune)} st`);
+    if (pad.cutoff_hz) chips.push(`Tom ${toneFromCutoff(pad.cutoff_hz)}%`);
+    for (const effect of state.padEffects.filter((e) => e.pad_number === pad.pad_number && e.plugin_id).sort((a, b) => a.slot_index - b.slot_index)) {
+      const label = state.effectsCatalog.find((p) => p.plugin_id === effect.plugin_id)?.label;
+      if (label) chips.push(label);
+    }
+    return chips;
+  }
+
+  function effectSummary(padNumber) {
+    const pad = state.pads.find((p) => p.pad_number === padNumber);
+    const chips = pad ? padOnlyChips(pad) : [];
+    return chips.length ? chips.join(" · ") : "Sem ajuste";
+  }
+
+  function renderEffects() {
+    // Never rebuild the table under a finger dragging a send bar: the
+    // broadcast our own change triggers would kill the drag.
+    if (state.fxDragging) return;
+    el.effectsList.innerHTML = "";
+    renderFxLegend();
+    const pads = [...state.pads].sort((a, b) => a.pad_number - b.pad_number);
+    for (const pad of pads) {
+      const open = state.fxOpenPad === pad.pad_number;
+      const tr = document.createElement("tr");
+      if (open) tr.className = "fx-expanded";
+      tr.innerHTML = `<td><div class="fx-padcell"><span class="fx-num">${pad.pad_number}</span>
+        <span class="fx-pname${pad.has_sample ? "" : " empty"}">${pad.has_sample ? escapeHtml(pad.display_name) : "Vazio"}</span></div></td>`;
+      for (const bus of state.fxBuses.catalog) {
+        const td = document.createElement("td");
+        td.appendChild(sendBar(pad.pad_number, bus));
+        tr.appendChild(td);
+      }
+      const chips = padOnlyChips(pad);
+      const own = document.createElement("td");
+      own.innerHTML = `<div class="fx-own"><span class="fx-chips effect-summary">${
+        chips.length ? chips.map((c) => `<span class="fx-chip on">${escapeHtml(c)}</span>`).join("") : '<span class="fx-chip">Sem ajuste</span>'
+      }</span><button type="button" aria-expanded="${open}" aria-label="Efeitos só do pad ${pad.pad_number}">${open ? "Fechar" : "Abrir"}</button></div>`;
+      own.querySelector("button").addEventListener("click", () => {
+        state.fxOpenPad = open ? null : pad.pad_number;
+        renderEffects();
+      });
+      tr.appendChild(own);
+      el.effectsList.appendChild(tr);
+      if (open) el.effectsList.appendChild(padDetailRow(pad));
+    }
+  }
+
+  function padDetailRow(pad) {
+    const tone = toneFromCutoff(pad.cutoff_hz);
+    const tune = Number(pad.tune || 0);
+    const tr = document.createElement("tr");
+    tr.className = "fx-detail";
+    tr.innerHTML = `<td colspan="${2 + state.fxBuses.catalog.length}"><div class="fx-detail-grid">
+      <div class="fx-box"><h3>Tom e afinação</h3>
+        <div class="fx-param"><label for="fx-tone-${pad.pad_number}">Tom</label>
+          <input id="fx-tone-${pad.pad_number}" type="range" min="0" max="100" step="1" value="${tone}">
+          <output>${tone >= 100 ? "aberto" : tone + "%"}</output></div>
+        <div class="fx-param"><label for="fx-tune-${pad.pad_number}">Afinação</label>
+          <input id="fx-tune-${pad.pad_number}" type="range" min="-12" max="12" step="0.5" value="${tune}">
+          <output>${tuneLabel(tune)}</output></div>
+      </div>
+      <div class="fx-box fx-box-wide"><h3>Efeitos só deste pad (máx. 3)</h3><div class="effect-slots"></div>
+        <p class="fx-note">Use pouco: cada efeito daqui é criado e removido na troca de cena. Para ambiência, prefira os envios.</p></div>
+    </div></td>`;
+    const toneInput = tr.querySelector(`#fx-tone-${pad.pad_number}`);
+    toneInput.addEventListener("input", () => {
+      const v = Number(toneInput.value);
+      toneInput.nextElementSibling.textContent = v >= 100 ? "aberto" : v + "%";
+    });
+    toneInput.addEventListener("change", () => setPadMix(pad.pad_number, { tone: Number(toneInput.value) }));
+    const tuneInput = tr.querySelector(`#fx-tune-${pad.pad_number}`);
+    tuneInput.addEventListener("input", () => (tuneInput.nextElementSibling.textContent = tuneLabel(Number(tuneInput.value))));
+    tuneInput.addEventListener("change", () => setPadMix(pad.pad_number, { tune: Number(tuneInput.value) }));
+    renderEffectSlots(tr.querySelector(".effect-slots"), pad.pad_number);
+    return tr;
   }
 
   async function setPadSend(padNumber, bus, level) {
@@ -2356,7 +2453,7 @@
       } else if (msg.type === "fx_buses") {
         const { type, ...fx } = msg;
         state.fxBuses = fx;
-        renderFxBusPanel();
+        if (!state.fxDragging) renderFxBusPanel();
         renderEffects();
       } else if (msg.type === "sequencer") {
         state.sequencer = { running: msg.running, current_step: msg.current_step, steps: msg.steps };
@@ -2368,6 +2465,7 @@
         state.tempo.bpm = msg.bpm;
         renderTempo();
         renderLooper(); // bar-count estimate depends on the current BPM
+        if (!state.fxDragging) renderFxBusPanel(); // delay summary shows ms at the current BPM
       } else if (msg.type === "master") {
         state.master = { available: msg.available, volume: msg.volume, muted: msg.muted };
         renderMaster();

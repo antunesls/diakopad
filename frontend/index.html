@@ -167,13 +167,27 @@
 
   <main id="view-effects" class="view hidden">
     <p class="tab-note">
-      Os efeitos compartilhados (reverb hall, plate e delay no tempo da música)
-      servem a todos os pads: cada pad escolhe quanto envia para eles. Trocar de
-      cena só muda esses valores, sem recarregar nada. Tom e os slots abaixo
-      são efeitos só daquele pad.
+      Cada linha é um pad e cada coluna um efeito compartilhado: arraste a barra para
+      mudar quanto o pad manda para o efeito. Os efeitos compartilhados ficam sempre
+      carregados, então trocar de cena só muda esses valores. "Abrir" mostra tom,
+      afinação e os efeitos só daquele pad.
     </p>
-    <section id="fx-bus-panel" class="fx-bus-panel"></section>
-    <ul id="effects-list" class="mix-list mix-card-grid"></ul>
+    <section id="fx-bus-panel" class="fx-buses" aria-label="Efeitos compartilhados"></section>
+    <div id="fx-legend" class="fx-legend"></div>
+    <section class="fx-mesa" aria-label="Envios por pad">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Pad</th>
+            <th scope="col"><span class="fx-swatch" style="--bc: var(--fx-hall)" aria-hidden="true"></span>Hall</th>
+            <th scope="col"><span class="fx-swatch" style="--bc: var(--fx-plate)" aria-hidden="true"></span>Plate</th>
+            <th scope="col"><span class="fx-swatch" style="--bc: var(--fx-delay)" aria-hidden="true"></span>Delay</th>
+            <th scope="col">Só deste pad</th>
+          </tr>
+        </thead>
+        <tbody id="effects-list"></tbody>
+      </table>
+    </section>
   </main>
 
   <main id="view-sequencer" class="view hidden">

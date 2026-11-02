@@ -37,9 +37,6 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - uses: android-actions/setup-android@v3
-      - name: Instalar ferramentas Android
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
       - name: Validar tag e calcular versão do APK
         id: version
         run: |
@@ -79,6 +76,8 @@ jobs:
           set -euo pipefail
           apk=android/app/build/outputs/apk/release/app-release.apk
           test -s "$apk"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$apk"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | grep -F "package: name='org.diakopad.remote' versionCode='$VERSION_CODE' versionName='$VERSION_NAME'"
           install -m 644 "$apk" "$RUNNER_TEMP/DiakoPad-Android-$VERSION_NAME.apk"

@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DiakoPad Android — Ícone e Conexão</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+/* Layout: duas partes (ícone, tela de conexão); cada uma com 3 opções lado a lado e notas de custo.
+   Tema único escuro, igual ao app de palco. Paleta herdada de frontend/style.css. */
+:root {
+  --bg: #0d0f14;
+  --panel: #1c1f28;
+  --panel-alt: #242833;
+  --line: #2f3442;
+  --accent: #ff7a3d;
+  --accent-dim: #7a3f22;
+  --text: #f2f2f2;
+  --text-dim: #9aa0ac;
+  --ok: #3fbf6f;
+  --warn: #ffc15a;
+  --danger: #d24343;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--body); font-size: 15px; line-height: 1.5; }
+.page { max-width: 1200px; margin: 0 auto; padding: 32px 20px 64px; display: grid; gap: 40px; }
+.intro { display: grid; gap: 8px; max-width: 72ch; }
+.tag { font-family: var(--mono); font-size: 12px; color: var(--accent); text-transform: uppercase; letter-spacing: .08em; }
+h1 { font-family: var(--display); font-weight: 700; font-size: 44px; line-height: 1; margin: 0; text-wrap: balance; }
+h2 { font-family: var(--display); font-weight: 700; font-size: 32px; line-height: 1; margin: 0; }
+h3 { font-family: var(--display); font-weight: 600; font-size: 24px; margin: 0; letter-spacing: .01em; }
+p { margin: 0; }
+.dim { color: var(--text-dim); }
+section.part { display: grid; gap: 18px; }
+.part-head { display: grid; gap: 6px; max-width: 72ch; }
+.now { font-size: 13px; color: var(--text-dim); border-left: 3px solid var(--danger); padding: 4px 10px; background: #1a1214; border-radius: 0 6px 6px 0; }
+
+.options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 960px) { .options { grid-template-columns: 1fr; } }
+.opt { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 14px; align-content: start; }
+.opt-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.letter { font-family: var(--mono); font-size: 12px; color: var(--accent); border: 1px solid var(--accent-dim); border-radius: 99px; padding: 1px 8px; }
+.opt ul { margin: 0; padding-left: 18px; display: grid; gap: 5px; font-size: 14px; color: #d6d9e0; }
+.cost { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-family: var(--mono); font-size: 11px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--text-dim); }
+.chip.low { color: var(--ok); border-color: #2a5a3c; }
+.chip.mid { color: var(--warn); border-color: #6a5527; }
+.chip.high { color: #ff8a8a; border-color: #6a3030; }
+
+/* ícones */
+.stage { background: linear-gradient(160deg, #2b3550, #1a2236 60%, #2c2140); border-radius: 12px; padding: 18px 10px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px 6px; justify-items: center; }
+.app { display: grid; justify-items: center; gap: 5px; font-size: 11px; color: #e8ebf2; }
+.app svg, .app .ico { width: 54px; height: 54px; }
+.app.ghost .ico { border-radius: 50%; background: rgba(255,255,255,.12); }
+.sizes { display: flex; align-items: end; gap: 14px; justify-content: center; padding: 6px 0; }
+.sizes svg { display: block; }
+.mask-row { display: flex; gap: 12px; justify-content: center; font-size: 11px; color: var(--text-dim); }
+.mask-row div { display: grid; justify-items: center; gap: 4px; }
+
+/* celulares */
+.phone { width: 100%; max-width: 300px; justify-self: center; aspect-ratio: 9 / 18.5; background: #050608; border-radius: 34px; padding: 10px; border: 1px solid #262a33; }
+.scr { height: 100%; border-radius: 26px; background: #12141a; overflow: hidden; display: flex; flex-direction: column; position: relative; font-size: 13px; }
+.sbar { display: flex; justify-content: space-between; padding: 8px 18px 4px; font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+.scr-body { flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 12px 16px 16px; }
+.brandrow { display: flex; align-items: center; gap: 10px; }
+.brandrow svg { width: 36px; height: 36px; flex: none; }
+.brandrow strong { font-family: var(--display); font-size: 24px; line-height: 1; display: block; }
+.brandrow span { font-size: 11px; color: var(--text-dim); }
+.btn { border: 0; border-radius: 12px; padding: 12px; font: inherit; font-weight: 600; text-align: center; background: var(--panel-alt); color: var(--text); }
+.btn.primary { background: var(--accent); color: #1a0d05; }
+.btn.ghost { background: transparent; color: var(--text-dim); padding: 6px; font-weight: 500; }
+.field { border: 1px solid #3a4050; border-radius: 10px; padding: 7px 10px; display: grid; gap: 1px; }
+.field label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .06em; }
+.field b { font-family: var(--mono); font-weight: 500; font-size: 13px; }
+.field.focus { border-color: var(--accent); }
+.hint { font-size: 11px; color: var(--text-dim); line-height: 1.4; }
+.ok { color: var(--ok); }
+.card { background: var(--panel); border-radius: 12px; padding: 10px 12px; display: flex; align-items: center; gap: 10px; }
+.card .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px #3fbf6f33; flex: none; }
+.card .grow { flex: 1; min-width: 0; }
+.card strong { display: block; font-size: 14px; }
+.card small { color: var(--text-dim); font-family: var(--mono); font-size: 10px; }
+.card.sel { box-shadow: inset 0 0 0 2px var(--accent); }
+.lbl { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .1em; }
+.pin { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.pin span { aspect-ratio: 3/4; border-radius: 8px; background: var(--panel); border: 1px solid #3a4050; display: grid; place-items: center; font-family: var(--display); font-size: 24px; font-weight: 700; }
+.pin span.cur { border-color: var(--accent); }
+.viewfinder { flex: 1; border-radius: 16px; background: radial-gradient(circle at 50% 45%, #2a2f3b, #0b0c10 70%); position: relative; display: grid; place-items: center; min-height: 200px; }
+.viewfinder .frame { width: 62%; aspect-ratio: 1; position: relative; }
+.viewfinder .frame i { position: absolute; width: 26px; height: 26px; border: 3px solid var(--accent); }
+.viewfinder .frame i:nth-child(1) { top: 0; left: 0; border-right: 0; border-bottom: 0; border-radius: 8px 0 0 0; }
+.viewfinder .frame i:nth-child(2) { top: 0; right: 0; border-left: 0; border-bottom: 0; border-radius: 0 8px 0 0; }
+.viewfinder .frame i:nth-child(3) { bottom: 0; left: 0; border-right: 0; border-top: 0; border-radius: 0 0 0 8px; }
+.viewfinder .frame i:nth-child(4) { bottom: 0; right: 0; border-left: 0; border-top: 0; border-radius: 0 0 8px 0; }
+.viewfinder canvas { position: absolute; inset: 14%; width: 72%; height: 72%; opacity: .85; border-radius: 4px; }
+.laptop { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; font-size: 12px; }
+.laptop canvas { width: 76px; height: 76px; background: #fff; border-radius: 6px; padding: 5px; }
+.laptop .big { font-family: var(--display); font-size: 30px; font-weight: 700; letter-spacing: .12em; line-height: 1; }
+.flow { display: grid; gap: 10px; }
+.flow-cap { font-size: 12px; color: var(--text-dim); text-align: center; }
+
+.choose { background: #1d1510; border: 1px solid var(--accent-dim); border-radius: 12px; padding: 14px 16px; display: grid; gap: 4px; }
+.choose strong { font-family: var(--display); font-size: 22px; color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="intro">
+    <span class="tag">DiakoPad Android · v0.1.2 · propostas</span>
+    <h1>Ícone do app e tela de conexão</h1>
+    <p class="dim">Três ícones e três jeitos de conectar o celular ao laptop do palco. Escolha uma letra de cada parte (por exemplo, “ícone 2 + conexão B”). Dá para combinar ideias.</p>
+  </header>
+
+  <!-- ===================== ÍCONE ===================== -->
+  <section class="part">
+    <div class="part-head">
+      <h2>1 · Ícone</h2>
+      <p class="now">Hoje: o manifesto não declara <code>android:icon</code>, então o Android mostra o robô verde genérico.</p>
+      <p class="dim">Os três seriam ícones adaptativos (frente e fundo separados), recortados pelo formato que o celular usar: círculo, “squircle” ou quadrado arredondado.</p>
+    </div>
+    <div class="options">
+      <article class="opt">
+        <div class="opt-head"><h3>Grade de pads</h3><span class="letter">ícone 1</span></div>
+        <div class="stage" data-icon="grid"></div>
+        <div class="sizes" data-sizes="grid"></div>
+        <ul>
+          <li>Diz na hora o que o app faz: 16 pads, um aceso em laranja.</li>
+          <li>Continua legível a 24 px (barra de notificação vira 4×4 pontos).</li>
+          <li>Não carrega a marca da igreja.</li>
+        </ul>
+        <div class="cost"><span class="chip low">só vetor XML</span><span class="chip low">~1 h</span></div>
+      </article>
+      <article class="opt">
+        <div class="opt-head"><h3>Livro da Diakonia</h3><span class="letter">ícone 2</span></div>
+        <div class="stage" data-icon="book"></div>
+        <div class="sizes" data-sizes="book"></div>
+        <ul>
+          <li>Usa o mesmo livro aberto do topo do app web e do favicon.</li>
+          <li>Fundo laranja de pad, para separar do ícone de “Bíblia” comum.</li>
+          <li>Os traços finos somem abaixo de 32 px; o monocromático (Android 13) fica fraco.</li>
+        </ul>
+        <div class="cost"><span class="chip low">PNG da marca</span><span class="chip mid">vetorizar o livro p/ ficar nítido</span></div>
+      </article>
+      <article class="opt">
+        <div class="opt-head"><h3>“D” de pad</h3><span class="letter">ícone 3</span></div>
+        <div class="stage" data-icon="mono"></div>
+        <div class="sizes" data-sizes="mono"></div>
+        <ul>
+          <li>Um D desenhado como pad com o anel de toque; marca própria do DiakoPad.</li>
+          <li>Funciona bem no ícone temático monocromático.</li>
+          <li>Precisa de um tempo para virar reconhecível.</li>
+        </ul>
+        <div class="cost"><span class="chip low">só vetor XML</span><span class="chip low">~1 h</span></div>
+      </article>
+    </div>
+  </section>
+
+  <!-- ===================== CONEXÃO ===================== -->
+  <section class="part">
+    <div class="part-head">
+      <h2>2 · Tela de conexão</h2>
+      <p class="now">Hoje: barra com “DiakoPad · status”, dois campos de texto (IP e token), botão Conectar e um aviso. O token (um segredo longo) é digitado à mão a cada abertura, porque nada é salvo.</p>
+    </div>
+    <div class="options">
+      <!-- A -->
+      <article class="opt">
+        <div class="opt-head"><h3>Escanear QR</h3><span class="letter">conexão A</span></div>
+        <div class="flow">
+          <div class="laptop"><canvas width="76" height="76" data-qr="1"></canvas><div><b>No laptop: Config ▸ Conectar celular</b><br><span class="dim">QR com endereço e token. Só aparece na tela do próprio laptop.</span></div></div>
+          <div class="phone"><div class="scr">
+            <div class="sbar"><span>19:02</span><span>Wi-Fi ▾ 82%</span></div>
+            <div class="scr-body">
+              <div class="brandrow" data-mini-icon></div>
+              <div class="viewfinder"><div class="frame"><i></i><i></i><i></i><i></i></div><canvas width="120" height="120" data-qr="2"></canvas></div>
+              <p class="hint" style="text-align:center">Aponte para o QR em <b>Config ▸ Conectar celular</b> no laptop.</p>
+              <div class="btn ghost">Digitar endereço e token</div>
+            </div>
+          </div></div>
+        </div>
+        <ul>
+          <li>Zero digitação: um gesto e pronto. O app lembra o servidor depois.</li>
+          <li>O token nunca aparece em texto na tela do celular.</li>
+          <li>Pede permissão de câmera e uma biblioteca de leitura de QR (ML Kit ou ZXing), o que aumenta o APK.</li>
+        </ul>
+        <div class="cost"><span class="chip mid">app: câmera + leitor QR</span><span class="chip low">web: tela com QR</span><span class="chip mid">~1 dia</span></div>
+      </article>
+
+      <!-- B -->
+      <article class="opt">
+        <div class="opt-head"><h3>Achar na rede + código</h3><span class="letter">conexão B</span></div>
+        <div class="flow">
+          <div class="phone"><div class="scr">
+            <div class="sbar"><span>19:02</span><span>Wi-Fi ▾ 82%</span></div>
+            <div class="scr-body">
+              <div class="brandrow" data-mini-icon></div>
+              <span class="lbl">Encontrados nesta rede</span>
+              <div class="card sel"><span class="dot"></span><div class="grow"><strong>DiakoPad do palco</strong><small>diakopad.local · 192.168.0.40</small></div><span>›</span></div>
+              <div class="card"><span class="dot" style="background:var(--text-dim);box-shadow:none"></span><div class="grow"><strong>DiakoPad ensaio</strong><small>raspberrypi.local · 192.168.0.57</small></div><span>›</span></div>
+              <span class="lbl" style="margin-top:6px">Código mostrado no laptop</span>
+              <div class="pin"><span>4</span><span>8</span><span>1</span><span class="cur">7</span><span></span><span></span></div>
+              <p class="hint">O código vale por 2 minutos. Depois o celular fica pareado e entra direto.</p>
+              <div style="flex:1"></div>
+              <div class="btn ghost">Não apareceu? Digitar endereço</div>
+            </div>
+          </div></div>
+          <div class="laptop"><div class="big">481 7__</div><div><b>No laptop: aviso “Celular quer conectar”</b><br><span class="dim">Mostra o código de 6 dígitos e o nome do aparelho; dá para recusar.</span></div></div>
+        </div>
+        <ul>
+          <li>Não precisa saber IP nem token: o app acha o DiakoPad sozinho (mDNS, já existe no Android).</li>
+          <li>Cada celular ganha seu próprio acesso, que pode ser revogado no laptop.</li>
+          <li>Mais trabalho no servidor: anunciar na rede (Avahi) e criar o pareamento por código.</li>
+        </ul>
+        <div class="cost"><span class="chip low">app: sem bibliotecas novas</span><span class="chip high">backend: pareamento + Avahi</span><span class="chip high">~2 dias</span></div>
+      </article>
+
+      <!-- C -->
+      <article class="opt">
+        <div class="opt-head"><h3>Tela atual, bem feita</h3><span class="letter">conexão C</span></div>
+        <div class="flow">
+          <div class="phone"><div class="scr">
+            <div class="sbar"><span>19:02</span><span>Wi-Fi ▾ 82%</span></div>
+            <div class="scr-body">
+              <div class="brandrow" data-mini-icon></div>
+              <span class="lbl">Último usado</span>
+              <div class="card"><span class="dot"></span><div class="grow"><strong>diakopad.local:8080</strong><small>conectado ontem, 21:14</small></div><div class="btn primary" style="padding:6px 12px">Entrar</div></div>
+              <span class="lbl" style="margin-top:6px">Outro servidor</span>
+              <div class="field focus"><label>Endereço ou link com token</label><b>192.168.0.40:8080/?token=••••</b></div>
+              <p class="hint ok">✓ Link reconhecido: endereço e token preenchidos.</p>
+              <div class="field"><label>Token</label><b>•••••••••••••••• 👁</b></div>
+              <label class="hint" style="display:flex;gap:8px;align-items:center"><span style="width:16px;height:16px;border-radius:4px;background:var(--accent);display:inline-block"></span>Lembrar neste aparelho (guardado cifrado)</label>
+              <div style="flex:1"></div>
+              <div class="btn primary">Testar e conectar</div>
+            </div>
+          </div></div>
+          <p class="flow-cap">Erros viram frases claras: “Servidor não respondeu: o celular está no mesmo Wi-Fi?”, “Token recusado”.</p>
+        </div>
+        <ul>
+          <li>Aceita colar o link inteiro <code>http://…:8080/?token=…</code> do README ou da instalação.</li>
+          <li>Botão de mostrar token, último servidor com um toque, “lembrar” opcional usando o Keystore do Android.</li>
+          <li>Ainda exige copiar o token para o celular na primeira vez.</li>
+        </ul>
+        <div class="cost"><span class="chip low">só app</span><span class="chip low">sem mudança no backend</span><span class="chip low">~meio dia</span></div>
+      </article>
+    </div>
+    <div class="choose">
+      <strong>Recomendação</strong>
+      <p>Ícone 1 e conexão C agora (é rápido e já resolve o “péssimo”). Depois, se quiser, A entra por cima de C como botão “Escanear QR”, reaproveitando a mesma tela.</p>
+    </div>
+  </section>
+</div>
+
+<script>
+const LOGO = "data:image/png;base64,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";
+const NS = "http://www.w3.org/2000/svg";
+function svgIcon(kind, size, mask = "squircle") {
+  const clip = {
+    circle: '<circle cx="54" cy="54" r="54"/>',
+    squircle: '<path d="M54 0C90 0 108 18 108 54S90 108 54 108 0 90 0 54 18 0 54 0Z"/>',
+    rounded: '<rect width="108" height="108" rx="24"/>',
+  }[mask];
+  const id = "c" + Math.random().toString(36).slice(2);
+  let art = "";
+  if (kind === "grid") {
+    art += '<rect width="108" height="108" fill="#171a22"/>';
+    const lit = 6;
+    for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) {
+      const i = r * 4 + c;
+      const x = 27 + c * 14, y = 27 + r * 14;
+      art += `<rect x="${x}" y="${y}" width="11" height="11" rx="2.5" fill="${i === lit ? "#ff7a3d" : "#33507a"}"/>`;
+    }
+    art += '<rect x="39" y="39" width="17" height="17" rx="5" fill="none" stroke="#ff7a3d" stroke-opacity=".35" stroke-width="2" transform="translate(-0.5 -0.5)"/>';
+  } else if (kind === "book") {
+    art += '<rect width="108" height="108" fill="#ff7a3d"/>';
+    art += '<rect x="20" y="20" width="68" height="68" rx="14" fill="#1a1d26"/>';
+    art += `<image href="${LOGO}" x="26" y="34" width="56" height="40" preserveAspectRatio="xMidYMid meet"/>`;
+  } else {
+    art += '<rect width="108" height="108" fill="#12141a"/>';
+    art += '<circle cx="56" cy="54" r="30" fill="none" stroke="#ff7a3d" stroke-opacity=".28" stroke-width="3"/>';
+    art += '<path d="M38 32h18a22 22 0 0 1 0 44H38Z" fill="#ff7a3d"/>';
+    art += '<path d="M48 42h8a12 12 0 0 1 0 24h-8Z" fill="#12141a"/>';
+  }
+  return `<svg xmlns="${NS}" viewBox="0 0 108 108" width="${size}" height="${size}" role="img" aria-label="Ícone ${kind}"><defs><clipPath id="${id}">${clip}</clipPath></defs><g clip-path="url(#${id})">${art}</g></svg>`;
+}
+const neighbors = ["Câmera", "Agenda", "Spotify", "Fotos", "Mensagens", "Relógio", "Bíblia"];
+document.querySelectorAll("[data-icon]").forEach((stage) => {
+  const kind = stage.dataset.icon;
+  const items = [...neighbors.slice(0, 5)];
+  items.splice(2, 0, "DiakoPad");
+  items.push("Bíblia");
+  stage.innerHTML = items.map((n) => n === "DiakoPad"
+    ? `<div class="app">${svgIcon(kind, 54)}<span>DiakoPad</span></div>`
+    : `<div class="app ghost"><div class="ico"></div><span>${n}</span></div>`).join("");
+});
+document.querySelectorAll("[data-sizes]").forEach((row) => {
+  const kind = row.dataset.sizes;
+  row.innerHTML = [72, 48, 32, 24].map((s) => svgIcon(kind, s)).join("") +
+    `<div class="mask-row">${["circle", "rounded"].map((m) => `<div>${svgIcon(kind, 40, m)}<span>${m === "circle" ? "círculo" : "quadrado"}</span></div>`).join("")}</div>`;
+});
+document.querySelectorAll("[data-mini-icon]").forEach((el) => {
+  el.innerHTML = `${svgIcon("grid", 36)}<div><strong>DiakoPad</strong><span>Controle remoto do palco</span></div>`;
+});
+// QR ilustrativo (padrão pseudo-aleatório com os 3 marcadores; não é um QR legível)
+document.querySelectorAll("canvas[data-qr]").forEach((cv) => {
+  const ctx = cv.getContext("2d");
+  const n = 25, s = cv.width / n;
+  let seed = Number(cv.dataset.qr) * 9301;
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = "#111";
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (rnd() > 0.52) ctx.fillRect(x * s, y * s, s, s);
+  const finder = (fx, fy) => {
+    ctx.fillStyle = "#111"; ctx.fillRect(fx * s, fy * s, 7 * s, 7 * s);
+    ctx.fillStyle = "#fff"; ctx.fillRect((fx + 1) * s, (fy + 1) * s, 5 * s, 5 * s);
+    ctx.fillStyle = "#111"; ctx.fillRect((fx + 2) * s, (fy + 2) * s, 3 * s, 3 * s);
+  };
+  finder(0, 0); finder(n - 7, 0); finder(0, n - 7);
+});
+</script>
+</body>
+</html>

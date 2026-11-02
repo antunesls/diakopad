@@ -110,7 +110,7 @@ sudo apt-get install -y \
   python3-venv python3-pip \
   build-essential cmake git pkg-config curl \
   libjack-jackd2-dev liblilv-dev lv2-dev libreadline-dev \
-  lilv-utils
+  lilv-utils avahi-utils
 install_first_available mda-lv2
 install_first_available x42-plugins
 install_first_available dragonfly-reverb dragonfly-reverb-lv2

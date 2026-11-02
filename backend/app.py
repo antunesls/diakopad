@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import secrets
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -26,6 +27,7 @@ from pydantic import BaseModel
 import hydrogen_kits
 import kit_import
 import midi
+import pairing
 import storage
 from engine import effects_catalog, fx_buses, knob_registry, looper, metronome, metronome_sounds, orchestrator, sequencer, tempo, time_signatures, trigger
 
@@ -62,11 +64,40 @@ def _auth_token() -> str:
     return os.environ.get("DIAKOPAD_TOKEN", "")
 
 
+# Rotas abertas para o app achar e parear sem token (ver pairing.py). Nenhuma
+# delas devolve o código: ele só aparece nas telas já autorizadas.
+PAIR_PUBLIC_PATHS = {"/api/pair/info", "/api/pair/request", "/api/pair/confirm"}
+APP_VERSION = "0.1.3"
+
+_pairing = pairing.PairingManager()
+_advertiser = pairing.Advertiser()
+
+
+def _same_secret(given: str, expected: str) -> bool:
+    try:
+        return secrets.compare_digest(given.encode("utf-8"), expected.encode("utf-8"))
+    except (AttributeError, TypeError):
+        return False
+
+
+def _paired_device(cookie_token: Optional[str]) -> Optional[dict]:
+    if not cookie_token:
+        return None
+    try:
+        return storage.find_paired_device(pairing.hash_token(cookie_token))
+    except sqlite3.Error:
+        # Banco indisponível: nega o acesso em vez de responder 500.
+        logger.exception("falha ao consultar aparelhos pareados")
+        return None
+
+
 def _is_authorized(client_host: Optional[str], cookie_token: Optional[str]) -> bool:
     token = _auth_token()
     if not token or client_host in LOOPBACK_HOSTS:
         return True
-    return cookie_token is not None and secrets.compare_digest(cookie_token, token)
+    if cookie_token is None:
+        return False
+    return _same_secret(cookie_token, token) or _paired_device(cookie_token) is not None
 
 
 @app.middleware("http")
@@ -74,11 +105,13 @@ async def _require_token(request: Request, call_next):
     client_host = request.client.host if request.client else None
     query_token = request.query_params.get("token")
     token = _auth_token()
-    if token and query_token is not None and secrets.compare_digest(query_token, token):
+    if token and query_token is not None and _same_secret(query_token, token):
         # Grava o cookie e tira o token da URL (não fica no histórico/tela).
         response = RedirectResponse(request.url.remove_query_params("token"), status_code=303)
         response.set_cookie(AUTH_COOKIE, token, max_age=365 * 24 * 3600, httponly=True, samesite="strict")
         return response
+    if request.url.path in PAIR_PUBLIC_PATHS:
+        return await call_next(request)
     if not _is_authorized(client_host, request.cookies.get(AUTH_COOKIE)):
         return PlainTextResponse("DiakoPad: acesso negado. Abra a URL com ?token=<DIAKOPAD_TOKEN>.", status_code=401)
     return await call_next(request)
@@ -810,6 +843,7 @@ async def on_startup() -> None:
         logger.exception("falha ao fazer backup do banco; seguindo sem backup")
     storage.init_db()
     _main_loop = asyncio.get_event_loop()
+    _advertiser.start(APP_VERSION)
     settings = storage.get_settings()
     _pad_notes = _build_pad_note_map(storage.list_pads())
     sequencer.load_pattern(storage.list_sequencer_steps())
@@ -839,6 +873,7 @@ async def on_startup() -> None:
 
 
 async def on_shutdown() -> None:
+    _advertiser.stop()
     await sequencer.stop()
     await metronome.stop()
     looper.stop()
@@ -2112,14 +2147,110 @@ async def set_metronome_signature(body: MetronomeSignatureRequest):
     return {"ok": True}
 
 
+# --- Pareamento de celulares ---------------------------------------------
+
+
+class PairRequestBody(BaseModel):
+    device_name: str = "Celular"
+
+
+class PairConfirmBody(BaseModel):
+    request_id: str
+    code: str
+
+
+def _pair_requests_payload() -> dict:
+    now = time.time()
+    requests = _pairing.pending(now)
+    for r in requests:
+        r["expires_in"] = max(0, round(r["expires_at"] - now))
+    return {"type": "pair_requests", "requests": requests}
+
+
+def _paired_devices_payload() -> dict:
+    return {"type": "paired_devices", "devices": storage.list_paired_devices()}
+
+
+async def _expire_pair_request_later(request_id: str) -> None:
+    await asyncio.sleep(pairing.CODE_TTL_S + 1)
+    if request_id not in _pairing.requests:
+        await manager.broadcast(_pair_requests_payload())
+
+
+@app.get("/api/pair/info")
+async def pair_info():
+    return {"service": "diakopad", "name": pairing.server_name(), "version": APP_VERSION, "pairing": True}
+
+
+@app.post("/api/pair/request")
+async def pair_request(body: PairRequestBody, request: Request):
+    client_host = request.client.host if request.client else None
+    try:
+        pending = _pairing.create(body.device_name, client_host)
+    except pairing.PairingError as e:
+        raise HTTPException(e.status, str(e)) from e
+    await manager.broadcast(_pair_requests_payload())
+    asyncio.create_task(_expire_pair_request_later(pending.request_id))
+    return {"request_id": pending.request_id, "expires_in": pairing.CODE_TTL_S, "server_name": pairing.server_name()}
+
+
+@app.post("/api/pair/confirm")
+async def pair_confirm(body: PairConfirmBody):
+    try:
+        pending = _pairing.confirm(body.request_id, body.code)
+    except pairing.PairingError as e:
+        await manager.broadcast(_pair_requests_payload())
+        raise HTTPException(e.status, str(e)) from e
+    token = secrets.token_urlsafe(32)
+    device_id = storage.add_paired_device(pending.device_name, pairing.hash_token(token))
+    await manager.broadcast(_pair_requests_payload())
+    await manager.broadcast(_paired_devices_payload())
+    return {"token": token, "device_id": device_id, "server_name": pairing.server_name()}
+
+
+@app.post("/api/pair/{request_id}/reject")
+async def pair_reject(request_id: str):
+    if not _pairing.reject(request_id):
+        raise HTTPException(404, "Pedido não encontrado")
+    await manager.broadcast(_pair_requests_payload())
+    return {"ok": True}
+
+
+@app.get("/api/paired-devices")
+async def list_paired_devices():
+    return storage.list_paired_devices()
+
+
+@app.delete("/api/paired-devices/{device_id}")
+async def delete_paired_device(device_id: int):
+    if not storage.delete_paired_device(device_id):
+        raise HTTPException(404, "Aparelho não encontrado")
+    # Derruba a conexão ao vivo do aparelho removido; ao reconectar, o token
+    # já não vale e o app volta para a tela de pareamento.
+    for ws in list(manager.active):
+        if getattr(ws.state, "paired_device_id", None) == device_id:
+            try:
+                await ws.close(code=1008)
+            except RuntimeError:
+                pass
+    await manager.broadcast(_paired_devices_payload())
+    return {"ok": True}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     # O middleware HTTP não vê o handshake do WebSocket; checa aqui também.
     if not _is_authorized(ws.client.host if ws.client else None, ws.cookies.get(AUTH_COOKIE)):
         await ws.close(code=1008)
         return
+    device = _paired_device(ws.cookies.get(AUTH_COOKIE))
+    if device is not None:
+        storage.touch_paired_device(device["id"])
+        ws.state.paired_device_id = device["id"]
     await manager.connect(ws)
     try:
+        await ws.send_json(_pair_requests_payload())
+        await ws.send_json(_paired_devices_payload())
         await ws.send_json({"type": "pads", "pads": _pads_payload()})
         await ws.send_json({"type": "sounds", "sounds": storage.list_samples()})
         await ws.send_json({"type": "knobs", "knobs": _enriched_knob_mappings(), "pending_learn": _pending_learn})

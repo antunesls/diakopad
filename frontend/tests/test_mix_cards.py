@@ -178,6 +178,16 @@ class MixCardsTest(unittest.TestCase):
         self.assertIn("state.inspectorEditing", app)
         self.assertIn('body[data-view="pads"] .inspector', css)
 
+    def test_pareamento_mostra_codigo_e_lista_celulares(self):
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="pair-requests"', html)
+        self.assertIn('id="paired-devices-list"', html)
+        self.assertIn('msg.type === "pair_requests"', app)
+        self.assertIn("/reject`", app)
+        self.assertIn("/api/paired-devices/${d.id}", app)
+
     def test_config_tem_mapa_midi_unificado_com_filtro_e_banner(self):
         html = (FRONTEND / "index.html").read_text(encoding="utf-8")
         app = (FRONTEND / "app.js").read_text(encoding="utf-8")

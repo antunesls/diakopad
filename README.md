@@ -214,10 +214,22 @@ está em `docs/plans/2026-11-02-native-android-ci.md`.
 Para compilar um APK de testes, use `cd android && bash gradlew
 :app:assembleDebug` (ou `gradlew.bat :app:assembleDebug` no Windows); o arquivo
 gerado é `android/app/build/outputs/apk/debug/app-debug.apk`. Ele é assinado
-com uma chave de desenvolvimento, não serve como release. Conecte o Android
-na mesma rede do servidor, informe `IP:8080` e `DIAKOPAD_TOKEN`. O app não
-grava o token; a rede HTTP local não é criptografada, portanto não use Wi-Fi
-desconhecido nem exponha a porta 8080 à internet.
+com uma chave de desenvolvimento, não serve como release.
+
+**Parear o celular.** Com o servidor escutando na rede (`DIAKOPAD_HOST=0.0.0.0`)
+e o pacote `avahi-utils` instalado (o instalador já instala), o DiakoPad se
+anuncia no Wi-Fi como `_diakopad._tcp`. No app, toque no DiakoPad da lista
+“Encontrados nesta rede”: a tela do laptop (ou qualquer tela já autorizada)
+mostra um código de 6 dígitos, válido por 2 minutos, que você digita no
+celular. O celular recebe um acesso próprio, guardado cifrado no Android
+Keystore, e entra direto nas próximas vezes. Os aparelhos pareados aparecem em
+**Config ▸ Celulares pareados**, onde podem ser removidos sem trocar o
+`DIAKOPAD_TOKEN`. Para nomear o servidor na lista, defina `DIAKOPAD_NAME` no
+serviço.
+
+Se o DiakoPad não aparecer (rede que bloqueia mDNS, por exemplo), use “Digitar
+endereço e token” com `IP:8080` e o `DIAKOPAD_TOKEN`. A rede HTTP local não é
+criptografada: não use Wi-Fi desconhecido nem exponha a porta 8080 à internet.
 
 #### Publicar o APK no GitHub Releases
 

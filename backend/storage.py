@@ -249,6 +249,16 @@ CREATE TABLE IF NOT EXISTS scene_fx_buses (
     PRIMARY KEY (scene_id, bus),
     FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
 );
+
+-- Celulares pareados pelo código de 6 dígitos (app Android). Guarda só o
+-- SHA-256 do token do aparelho; o token em si fica apenas no celular.
+CREATE TABLE IF NOT EXISTS paired_devices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at REAL NOT NULL,
+    last_seen_at REAL
+);
 """
 
 EFFECT_SLOTS_PER_PAD = 3
@@ -1013,6 +1023,60 @@ def scene_pad_variants() -> dict[int, list[dict]]:
                 variant["sample_id"] = None
             result.setdefault(variant.pop("pad_number"), []).append(variant)
         return result
+    finally:
+        conn.close()
+
+
+def add_paired_device(name: str, token_hash: str) -> int:
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO paired_devices (name, token_hash, created_at) VALUES (?, ?, ?)",
+            (name, token_hash, time.time()),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def list_paired_devices() -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, name, created_at, last_seen_at FROM paired_devices ORDER BY created_at"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def find_paired_device(token_hash: str) -> Optional[dict]:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, name FROM paired_devices WHERE token_hash = ?", (token_hash,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def touch_paired_device(device_id: int) -> None:
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE paired_devices SET last_seen_at = ? WHERE id = ?", (time.time(), device_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_paired_device(device_id: int) -> bool:
+    conn = get_connection()
+    try:
+        cursor = conn.execute("DELETE FROM paired_devices WHERE id = ?", (device_id,))
+        conn.commit()
+        return cursor.rowcount > 0
     finally:
         conn.close()
 

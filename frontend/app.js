@@ -40,6 +40,8 @@
     inspectorPad: null,
     inspectorPinned: false,
     inspectorEditing: false,
+    pairRequests: [],
+    pairedDevices: [],
   };
 
   const KIT_BROWSE_RESERVED_PADS = { 13: "up", 14: "left", 15: "right", 16: "down", 1: "back", 4: "confirm" };
@@ -53,6 +55,8 @@
   const el = {
     padGrid: document.getElementById("pad-grid"),
     inspector: document.getElementById("pad-inspector"),
+    pairRequests: document.getElementById("pair-requests"),
+    pairedDevicesList: document.getElementById("paired-devices-list"),
     topbarScene: document.getElementById("topbar-scene"),
     navBadgePads: document.getElementById("nav-badge-pads"),
     navBadgeScenes: document.getElementById("nav-badge-scenes"),
@@ -608,6 +612,70 @@
     };
     document.addEventListener("pointerup", endEditing);
     document.addEventListener("pointercancel", endEditing);
+  }
+
+  // --- Pareamento de celulares ---------------------------------------
+  // O código só aparece aqui (telas autorizadas); o celular que pediu nunca
+  // o recebe. Sem pedidos, o aviso some.
+
+  let pairTimer = null;
+
+  function renderPairRequests() {
+    if (!el.pairRequests) return;
+    const now = Date.now();
+    const live = state.pairRequests.filter((r) => r.deadline > now);
+    el.pairRequests.classList.toggle("hidden", live.length === 0);
+    el.pairRequests.innerHTML = "";
+    for (const r of live) {
+      const secs = Math.max(0, Math.round((r.deadline - now) / 1000));
+      const card = document.createElement("article");
+      card.className = "pair-card";
+      card.innerHTML = `
+        <div class="pair-card-text">
+          <span class="pair-eyebrow">Celular quer conectar</span>
+          <strong class="pair-device">${escapeHtml(r.device_name)}</strong>
+          <span class="pair-help">Digite este código no celular · expira em ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}</span>
+        </div>
+        <output class="pair-code" aria-label="Código ${r.code.split("").join(" ")}">${r.code.slice(0, 3)} ${r.code.slice(3)}</output>
+        <button type="button" class="secondary-btn">Recusar</button>`;
+      card.querySelector("button").addEventListener("click", () =>
+        fetch(`/api/pair/${encodeURIComponent(r.request_id)}/reject`, { method: "POST" }));
+      el.pairRequests.appendChild(card);
+    }
+    if (live.length && pairTimer === null) {
+      pairTimer = setInterval(renderPairRequests, 1000);
+    } else if (!live.length && pairTimer !== null) {
+      clearInterval(pairTimer);
+      pairTimer = null;
+    }
+  }
+
+  function formatWhen(epochSeconds) {
+    if (!epochSeconds) return "nunca";
+    return new Date(epochSeconds * 1000).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+  }
+
+  function renderPairedDevices() {
+    if (!el.pairedDevicesList) return;
+    el.pairedDevicesList.innerHTML = "";
+    if (!state.pairedDevices.length) {
+      el.pairedDevicesList.innerHTML = '<li class="settings-row"><span class="settings-desc">Nenhum celular pareado.</span></li>';
+      return;
+    }
+    for (const d of state.pairedDevices) {
+      const li = document.createElement("li");
+      li.className = "settings-row";
+      li.innerHTML = `<div class="settings-text">
+          <span class="settings-label">${escapeHtml(d.name)}</span>
+          <span class="settings-desc">Pareado em ${formatWhen(d.created_at)} · visto por último: ${formatWhen(d.last_seen_at)}</span>
+        </div>
+        <button type="button" class="danger-btn">Remover</button>`;
+      li.querySelector("button").addEventListener("click", async () => {
+        if (!window.confirm(`Remover "${d.name}"? Ele vai precisar parear de novo.`)) return;
+        await fetch(`/api/paired-devices/${d.id}`, { method: "DELETE" });
+      });
+      el.pairedDevicesList.appendChild(li);
+    }
   }
 
   function renderNavBadges() {
@@ -2619,6 +2687,14 @@
           el.knobModal.classList.add("hidden");
           knobPicker.step = null;
         }
+      } else if (msg.type === "pair_requests") {
+        // Prazo local: o relógio do navegador pode diferir do servidor.
+        const now = Date.now();
+        state.pairRequests = msg.requests.map((r) => ({ ...r, deadline: now + r.expires_in * 1000 }));
+        renderPairRequests();
+      } else if (msg.type === "paired_devices") {
+        state.pairedDevices = msg.devices;
+        renderPairedDevices();
       } else if (msg.type === "settings") {
         state.settings = msg.settings;
         renderSettings();

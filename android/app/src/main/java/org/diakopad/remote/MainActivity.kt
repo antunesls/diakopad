@@ -23,6 +23,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -32,8 +35,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -48,17 +51,33 @@ import org.json.JSONObject
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { RemoteScreen() } }
+        setContent { MaterialTheme(colorScheme = DiakoColors) { RemoteScreen() } }
     }
 }
+
+private val DiakoColors = darkColorScheme(
+    primary = Color(0xFFFF7A3D),
+    onPrimary = Color(0xFF1A0D05),
+    secondary = Color(0xFF79A6FF),
+    background = Color(0xFF12141A),
+    onBackground = Color(0xFFF2F2F2),
+    surface = Color(0xFF12141A),
+    onSurface = Color(0xFFF2F2F2),
+    surfaceVariant = Color(0xFF1C1F28),
+    onSurfaceVariant = Color(0xFF9AA0AC),
+    error = Color(0xFFFF8A8A),
+)
 
 private fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RemoteScreen() {
-    var host by remember { mutableStateOf("") }
-    var token by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val store = remember { SavedServerStore(context) }
+    var saved by remember { mutableStateOf(store.load()) }
+    var connectMessage by remember { mutableStateOf<String?>(null) }
+    var serverName by remember { mutableStateOf("") }
     var api by remember { mutableStateOf<RemoteApi?>(null) }
     var status by remember { mutableStateOf("Desconectado") }
     var pads by remember { mutableStateOf(emptyList<JSONObject>()) }
@@ -88,6 +107,27 @@ private fun RemoteScreen() {
     var deleteScene by remember { mutableStateOf<Int?>(null) }
     var deleteKit by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
+
+    fun connect(server: SavedServer) {
+        try {
+            api = RemoteApi(ServerAddress.parse(server.address), server.token)
+            serverName = server.name
+            status = "Conectando…"
+            connectMessage = null
+        } catch (e: Exception) {
+            connectMessage = e.message ?: "Endereço ou token inválido"
+        }
+    }
+
+    fun forget(message: String) {
+        store.clear()
+        saved = null
+        api = null
+        status = "Desconectado"
+        connectMessage = message
+    }
+
+    LaunchedEffect(Unit) { saved?.let { connect(it) } }
 
     fun command(method: String, path: String, body: String? = null, onSuccess: (() -> Unit)? = null) {
         val remote = api ?: return
@@ -123,10 +163,18 @@ private fun RemoteScreen() {
             tempo = JSONObject(withContext(Dispatchers.IO) { remote.request("GET", "/api/tempo") }).optString("bpm", "--")
             master = JSONObject(withContext(Dispatchers.IO) { remote.request("GET", "/api/master") })
         } catch (e: Exception) {
-            status = "Conexão recusada: ${e.message ?: "verifique o endereço e token"}"
+            if (e is CancellationException) throw e
+            if (e is RemoteApi.HttpError && e.status == 401) {
+                forget("Este celular foi removido no DiakoPad (ou o token mudou). Pareie de novo.")
+            } else {
+                api = null
+                status = "Desconectado"
+                connectMessage = "Não consegui falar com $serverName. O celular está no mesmo Wi-Fi e o DiakoPad está ligado?"
+            }
             return@LaunchedEffect
         }
-        while (true) {
+        var revoked = false
+        while (!revoked) {
             val closed = CompletableDeferred<Unit>()
             val socket = remote.subscribe(object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -153,32 +201,50 @@ private fun RemoteScreen() {
                     }
                 }
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { closed.complete(Unit) }
-                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { closed.complete(Unit) }
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    // Handshake recusado = acesso removido no laptop.
+                    if (response?.code == 403 || response?.code == 401) revoked = true
+                    closed.complete(Unit)
+                }
             })
             try { closed.await() } finally { socket.cancel() }
+            if (revoked) break
             status = "Reconectando…"
             delay(2000)
         }
+        forget("Este celular foi removido no DiakoPad. Pareie de novo.")
     }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("DiakoPad · $status") }) }) { insets ->
+    if (api == null) {
+        Scaffold { insets ->
+            Column(Modifier.fillMaxSize().padding(insets)) {
+                ConnectScreen(
+                    saved = saved,
+                    message = connectMessage,
+                    onConnect = { server ->
+                        try {
+                            store.save(server)
+                            saved = server
+                        } catch (_: Exception) {
+                            // Sem Keystore: conecta mesmo assim, só não lembra.
+                        }
+                        connect(server)
+                    },
+                    onForget = { forget("DiakoPad esquecido. Para voltar, pareie de novo.") },
+                )
+            }
+        }
+        return
+    }
+
+    Scaffold(topBar = { TopAppBar(title = { Text("$serverName · $status") }) }) { insets ->
         Column(Modifier.fillMaxSize().padding(insets).padding(12.dp)) {
-            if (api == null) {
-                Text("Conectar ao DiakoPad na mesma rede Wi-Fi")
-                OutlinedTextField(host, { host = it }, label = { Text("IP ou nome .local:8080") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(token, { token = it }, label = { Text("Token do servidor") },
-                    visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-                Button(onClick = {
-                    try { api = RemoteApi(ServerAddress.parse(host), token); status = "Conectando…" }
-                    catch (e: Exception) { status = e.message ?: "Endereço ou token inválido" }
-                }) { Text("Conectar") }
-                Text("O token não é salvo no aparelho. Use apenas em Wi-Fi confiável: HTTP não criptografa a conexão.")
-            } else {
+            run {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     for (name in listOf("Pads", "Cenas", "Kits", "Sons", "Mix", "Efeitos", "Transporte", "Master")) {
                         TextButton(onClick = { tab = name }) { Text(if (tab == name) "● $name" else name) }
                     }
-                    TextButton(onClick = { api = null; token = ""; status = "Desconectado" }) { Text("Sair") }
+                    TextButton(onClick = { api = null; status = "Desconectado"; connectMessage = null }) { Text("Trocar") }
                 }
                 when (tab) {
                     "Pads" -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {

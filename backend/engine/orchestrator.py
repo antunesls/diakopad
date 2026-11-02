@@ -611,45 +611,46 @@ async def rewire_audio_routes(pad_effects: list[dict]) -> None:
 
 
 def _rewire_pad_chain(pad_number: int, slots: list[dict]) -> None:
+    """Makes the pad's audio chain match its slots - by diff: only the edges
+    that actually change are touched. Every JACK connect/disconnect makes
+    PipeWire reconfigure the graph, and the old disconnect-everything-and-
+    reconnect version cost ~1 xrun per scene switch even when nothing
+    changed (measured on the laptop, nov/2026)."""
     client = sfizz_proc.client_name(pad_number)
     if not jackgraph.available():
         return
 
-    # Wired even if the process isn't confirmed running yet (connect() to a
-    # missing port is a harmless no-op), same as before generations existed.
-    current = sfizz_proc.jack_name(client)
-    jackgraph.disconnect_all(rf"^{re.escape(current)}:output_.$")
-    # Retired generations still ringing out are fed through the same chain;
-    # their existing connections are left alone (only (re)connected), so the
-    # tail isn't interrupted by this rewire.
-    heads = ([current] if current else []) + sfizz_proc.retired_names(client)
+    # The current generation is wired even if the process isn't confirmed
+    # running yet (connect() to a missing port is a harmless no-op). Retired
+    # generations still ringing out are fed through the same chain.
+    heads = [sfizz_proc.jack_name(client)] + sfizz_proc.retired_names(client)
     outs = [(f"{h}:output_1", f"{h}:output_2") for h in heads]
+    owned = {port for pair in outs for port in pair}
+    desired: set[tuple[str, str]] = set()
     for row in slots:
         plugin_id = _live_slot_plugin.get((pad_number, row["slot_index"]))
         if not plugin_id:
             continue
         plugin = effects_catalog.PLUGIN_CATALOG[plugin_id]
-        instance = _slot_instance(pad_number, row["slot_index"])
-        slot_client = _effect_client(instance)
-        jackgraph.disconnect_all(rf"^{re.escape(slot_client)}:")
+        slot_client = _effect_client(_slot_instance(pad_number, row["slot_index"]))
         in_ports, out_ports = plugin["in_ports"], plugin["out_ports"]
         for prev_out in outs:
             for index, in_port in enumerate(in_ports):
-                jackgraph.connect(prev_out[min(index, len(prev_out) - 1)], f"{slot_client}:{in_port}")
+                desired.add((prev_out[min(index, len(prev_out) - 1)], f"{slot_client}:{in_port}"))
         if len(out_ports) == 1:
             outs = [(f"{slot_client}:{out_ports[0]}",) * 2]
         else:
             outs = [(f"{slot_client}:{out_ports[0]}", f"{slot_client}:{out_ports[1]}")]
+        owned |= {port for pair in outs for port in pair}
 
     master_l, master_r = _master_destinations()
     send_port = _matrix_input_port(pad_number) if _buses_ready else None
     for prev_out in outs:
-        jackgraph.connect(prev_out[0], master_l)
-        jackgraph.connect(prev_out[1], master_r)
+        desired |= {(prev_out[0], master_l), (prev_out[1], master_r)}
         if send_port:
             # L and R both into one matrix input: JACK sums them (mono send).
-            jackgraph.connect(prev_out[0], send_port)
-            jackgraph.connect(prev_out[1], send_port)
+            desired |= {(prev_out[0], send_port), (prev_out[1], send_port)}
+    jackgraph.sync_edges(owned, desired)
 
 
 # --- Shared FX buses (engine/fx_buses.py) ---------------------------------

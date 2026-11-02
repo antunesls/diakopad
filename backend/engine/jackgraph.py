@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import Optional
 
 logger = logging.getLogger("diakopad.engine.jackgraph")
 
@@ -123,6 +124,45 @@ def disconnect(src: str, dst: str) -> bool:
     except Exception as exc:
         logger.debug("jack disconnect(%s, %s): %s", src, dst, exc)
         return False
+
+
+def connections(port_name: str) -> Optional[set[str]]:
+    """Names of the ports connected to `port_name` (empty set if the port
+    doesn't exist), or None if the graph can't be read."""
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        port = client.get_port_by_name(port_name)
+    except Exception:
+        return set()
+    try:
+        return {other.name for other in client.get_all_connections(port)}
+    except Exception as exc:
+        logger.debug("jack get_all_connections(%s): %s", port_name, exc)
+        return None
+
+
+def sync_edges(owned_outputs: set[str], desired: set[tuple[str, str]]) -> tuple[int, int]:
+    """Makes the connections leaving `owned_outputs` exactly `desired`,
+    touching only what differs. Every connect/disconnect makes PipeWire
+    reconfigure the graph (an xrun on a busy cycle), so an unchanged chain
+    must cost zero graph operations. Returns (connected, disconnected)."""
+    current: set[tuple[str, str]] = set()
+    readable = True
+    for src in owned_outputs:
+        dsts = connections(src)
+        if dsts is None:
+            readable = False
+            break
+        current |= {(src, dst) for dst in dsts}
+    if not readable:
+        # Can't diff: fall back to "connect what's wanted" (connect is
+        # idempotent; stale edges stay until the next readable rewire).
+        return sum(connect(s, d) for s, d in desired), 0
+    removed = sum(disconnect(s, d) for s, d in current - desired)
+    added = sum(connect(s, d) for s, d in desired - current)
+    return added, removed
 
 
 def connect_pattern_to_all(src_pattern: str, dst_pattern: str) -> bool:

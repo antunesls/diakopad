@@ -241,6 +241,46 @@ class SceneFastPathTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(orchestrator._select_bank_slot(3, a, {"sustain_mode": "0"}))
 
 
+
+class DiffRewireTests(unittest.TestCase):
+    """Every JACK connect/disconnect is a graph reconfiguration (an xrun on
+    a busy cycle): an unchanged chain must cost zero operations."""
+
+    def _graph(self, edges):
+        graph = {}
+        for src, dst in edges:
+            graph.setdefault(src, set()).add(dst)
+        return lambda port: set(graph.get(port, set()))
+
+    def test_unchanged_chain_touches_nothing_and_a_change_touches_only_the_diff(self):
+        from engine import jackgraph
+        with (
+            patch.object(orchestrator, "_buses_ready", False),
+            patch("engine.orchestrator.jackgraph.available", return_value=True),
+            patch("engine.orchestrator.sfizz_proc.jack_name", return_value="diakopad_pad05_2"),
+            patch("engine.orchestrator.sfizz_proc.retired_names", return_value=[]),
+            patch("engine.orchestrator._master_destinations", return_value=("m:L", "m:R")),
+        ):
+            wired = {("diakopad_pad05_2:output_1", "m:L"), ("diakopad_pad05_2:output_2", "m:R")}
+            with (
+                patch.object(jackgraph, "connections", side_effect=self._graph(wired)),
+                patch.object(jackgraph, "connect", return_value=True) as connect,
+                patch.object(jackgraph, "disconnect", return_value=True) as disconnect,
+            ):
+                orchestrator._rewire_pad_chain(5, [])
+            connect.assert_not_called()
+            disconnect.assert_not_called()
+
+            stale = wired | {("diakopad_pad05_2:output_1", "old:in")}
+            with (
+                patch.object(jackgraph, "connections", side_effect=self._graph(stale)),
+                patch.object(jackgraph, "connect", return_value=True) as connect,
+                patch.object(jackgraph, "disconnect", return_value=True) as disconnect,
+            ):
+                orchestrator._rewire_pad_chain(5, [])
+            connect.assert_not_called()
+            disconnect.assert_called_once_with("diakopad_pad05_2:output_1", "old:in")
+
 class FxBusCatalogTests(unittest.TestCase):
     def test_delay_follows_tempo_in_beats(self):
         self.assertAlmostEqual(fx_buses.delay_time_ms(70, 0.75), 642.857, places=2)

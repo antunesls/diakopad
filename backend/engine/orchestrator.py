@@ -64,6 +64,9 @@ MASTER_LIMITER_INSTANCE = 2
 MASTER_LIMITER_CLIENT = f"effect_{MASTER_LIMITER_INSTANCE}"
 # Shared FX (engine/fx_buses.py): created once, never removed.
 BUS_INSTANCES = {"hall": 3, "plate": 4, "delay": 5}
+MASTER_COMPRESSOR_INSTANCE = 6
+MASTER_COMPRESSOR_CLIENT = f"effect_{MASTER_COMPRESSOR_INSTANCE}"
+_master_compressor_available = False
 MATRIX_INSTANCES = (8, 9)  # pads 1-8, pads 9-16
 _buses_ready = False
 _live_sends: dict[tuple[int, str], float] = {}
@@ -206,6 +209,7 @@ async def _supervise_engine(interval: float = 3.0) -> None:
         effects = await asyncio.to_thread(storage.list_pad_effects)
         if modhost_client.is_configured() and not modhost_client.is_alive():
             _reset_buses()
+            _reset_master_compressor()
             if not await asyncio.to_thread(modhost_client.restart):
                 _last_engine_error = "mod-host não reiniciou; rotas diretas restauradas"
                 _live_slot_plugin.clear()
@@ -256,8 +260,29 @@ def engine_status() -> dict:
     }
 
 
-def master_state() -> dict:
+def _compressor_settings() -> dict:
+    s = storage.get_settings()
     return {
+        "enabled": s.get("master_comp_enabled", "1") == "1",
+        "threshold_db": float(s.get("master_comp_threshold_db", -12)),
+        "ratio": float(s.get("master_comp_ratio", 2)),
+        "makeup_db": float(s.get("master_comp_makeup_db", 2)),
+    }
+
+
+# Last compressor settings applied (master_state() is polled by the status
+# loop - it must not hit the database).
+_comp_state: dict = {"enabled": True, "threshold_db": -12.0, "ratio": 2.0, "makeup_db": 2.0}
+
+
+def master_state() -> dict:
+    comp = _comp_state
+    return {
+        "compressor_available": _master_compressor_available,
+        "compressor_enabled": comp["enabled"],
+        "compressor_threshold_db": comp["threshold_db"],
+        "compressor_ratio": comp["ratio"],
+        "compressor_makeup_db": comp["makeup_db"],
         "available": _master_available,
         "volume": _master_volume,
         "muted": _master_muted,
@@ -269,6 +294,9 @@ def master_state() -> dict:
 
 def _master_destinations() -> tuple[str, str]:
     if _master_available:
+        if _master_compressor_available:
+            config = effects_catalog.master_compressor_config()
+            return f"{MASTER_COMPRESSOR_CLIENT}:{config['in_ports'][0]}", f"{MASTER_COMPRESSOR_CLIENT}:{config['in_ports'][1]}"
         if _master_limiter_available:
             config = effects_catalog.master_limiter_config()
             return f"{MASTER_LIMITER_CLIENT}:{config['in_ports'][0]}", f"{MASTER_LIMITER_CLIENT}:{config['in_ports'][1]}"
@@ -285,6 +313,48 @@ def _wire_master_output(config: dict, limiter_config: dict | None = None) -> Non
         jackgraph.disconnect_all(rf"^{re.escape(MASTER_LIMITER_CLIENT)}:output_.$")
         jackgraph.connect(f"{MASTER_LIMITER_CLIENT}:{limiter_config['out_ports'][0]}", f"{MASTER_CLIENT}:{config['in_ports'][0]}")
         jackgraph.connect(f"{MASTER_LIMITER_CLIENT}:{limiter_config['out_ports'][1]}", f"{MASTER_CLIENT}:{config['in_ports'][1]}")
+    if _master_compressor_available:
+        comp = effects_catalog.master_compressor_config()
+        nxt = limiter_config if limiter_config is not None else config
+        nxt_client = MASTER_LIMITER_CLIENT if limiter_config is not None else MASTER_CLIENT
+        jackgraph.sync_edges(
+            {f"{MASTER_COMPRESSOR_CLIENT}:{p}" for p in comp["out_ports"]},
+            {
+                (f"{MASTER_COMPRESSOR_CLIENT}:{comp['out_ports'][0]}", f"{nxt_client}:{nxt['in_ports'][0]}"),
+                (f"{MASTER_COMPRESSOR_CLIENT}:{comp['out_ports'][1]}", f"{nxt_client}:{nxt['in_ports'][1]}"),
+            },
+        )
+
+
+async def _apply_master_compressor() -> bool:
+    """(Creates once and) configures the glue compressor. Disabling it only
+    flips its LSP `enabled` switch (audio passes through) - the plugin is
+    never removed, so toggling it costs no graph change."""
+    global _master_compressor_available
+    config = effects_catalog.master_compressor_config()
+    if not config.get("lv2_uri"):
+        return False
+    created = False
+    if not _master_compressor_available:
+        if not await modhost_client.add(config["lv2_uri"], MASTER_COMPRESSOR_INSTANCE):
+            return False
+        await jackgraph.wait_for_port_async(f"^{re.escape(MASTER_COMPRESSOR_CLIENT)}:{config['out_ports'][0]}$")
+        _master_compressor_available = created = True
+    comp = _compressor_settings()
+    _comp_state.update(comp)
+    for symbol, value in (
+        ("sla", 0.0),          # no lookahead = no latency
+        ("cm", 0.0),           # downward compression
+        ("at", 20.0),          # ms: let the stick attack through
+        ("rt", 150.0),         # ms
+        ("kn", 0.5),           # soft knee
+        ("cr", comp["ratio"]),
+        ("al", 10 ** (comp["threshold_db"] / 20.0)),
+        ("mk", 10 ** (comp["makeup_db"] / 20.0)),
+        ("enabled", 1.0 if comp["enabled"] else 0.0),
+    ):
+        await modhost_client.param_set(MASTER_COMPRESSOR_INSTANCE, symbol, value)
+    return created
 
 
 async def apply_master(
@@ -315,6 +385,15 @@ async def apply_master(
         if limiter_config.get("lv2_uri") and not _master_limiter_available:
             _master_limiter_available = await modhost_client.add(limiter_config["lv2_uri"], MASTER_LIMITER_INSTANCE)
             needs_route_rewire = _master_limiter_available
+            if _master_limiter_available and limiter_config.get("lookahead_symbol"):
+                await modhost_client.param_set(
+                    MASTER_LIMITER_INSTANCE, limiter_config["lookahead_symbol"], limiter_config["lookahead_ms"]
+                )
+                await modhost_client.param_set(
+                    MASTER_LIMITER_INSTANCE, limiter_config["attack_symbol"], limiter_config["lookahead_ms"]
+                )
+        if await _apply_master_compressor():
+            needs_route_rewire = True
         await asyncio.to_thread(_wire_master_output, config, limiter_config if _master_limiter_available else None)
         if _master_limiter_available:
             threshold = 10 ** (_master_limiter_threshold_db / 20.0)
@@ -360,7 +439,9 @@ async def panic(pads: list[dict]) -> bool:
 async def restart_engine(pads: list[dict], settings: dict, pad_effects: list[dict]) -> dict:
     """Rebuilds the controllable engine graph without restarting FastAPI."""
     global _live_slot_plugin, _master_available, _master_limiter_available
+    global _master_compressor_available
     _reset_buses()
+    _master_compressor_available = False
     if modhost_client.is_configured():
         await asyncio.to_thread(modhost_client.restart)
     _live_slot_plugin.clear()
@@ -405,6 +486,7 @@ def _variant(source: dict) -> dict:
         "volume_db": source.get("volume_db", 6),
         "pan": source.get("pan", 0),
         "cutoff_hz": source.get("cutoff_hz"),
+        "tune": source.get("tune") or 0,
     }
 
 
@@ -418,6 +500,7 @@ def _variant_key(variant: dict) -> tuple:
         round(float(variant.get("volume_db") or 0), 3),
         round(float(variant.get("pan") or 0), 3),
         None if cutoff is None else round(float(cutoff), 1),
+        round(float(variant.get("tune") or 0), 2),
     )
 
 
@@ -676,6 +759,11 @@ def _rewire_pad_chain(pad_number: int, slots: list[dict]) -> None:
 def _matrix_input_port(pad_number: int) -> str:
     index, inp = fx_buses.matrix_slot(pad_number)
     return f"{_effect_client(MATRIX_INSTANCES[index])}:in{inp}"
+
+
+def _reset_master_compressor() -> None:
+    global _master_compressor_available
+    _master_compressor_available = False
 
 
 def _reset_buses() -> None:

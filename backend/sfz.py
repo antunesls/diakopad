@@ -79,6 +79,15 @@ def _region_opcodes(variant: dict, note: int, trim: bool = False) -> list[str]:
             opcodes.append(f"end={int(variant['trim_end'])}")
     if variant.get("cutoff_hz"):
         opcodes += [f"cutoff={variant['cutoff_hz']:.0f}", "fil_type=lpf_2p"]
+    tune = float(variant.get("tune") or 0)
+    if tune:
+        # Resampled pitch (like a sampler's "tune" knob): whole semitones as
+        # transpose, the remainder in cents - sfizz handles both natively.
+        semis = int(tune)
+        opcodes.append(f"transpose={semis}")
+        cents = round((tune - semis) * 100)
+        if cents:
+            opcodes.append(f"tune={cents}")
     return opcodes
 
 

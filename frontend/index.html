@@ -146,6 +146,22 @@
         <input id="master-limiter-threshold" type="range" min="-12" max="0" step="1" value="-1">
       </label>
       <p id="master-limiter-warning" class="tab-note">Protege contra clipping quando vários pads tocam ao mesmo tempo.</p>
+      <label class="master-limiter-toggle">
+        <input id="master-comp-enabled" type="checkbox" checked>
+        <span>Compressor (une bumbo e caixa nos crescendos)</span>
+      </label>
+      <label class="master-large-control">
+        <span>Compressor — limiar <strong id="master-comp-threshold-value">-12 dB</strong></span>
+        <input id="master-comp-threshold" type="range" min="-30" max="0" step="1" value="-12">
+      </label>
+      <label class="master-large-control">
+        <span>Compressor — razão <strong id="master-comp-ratio-value">2:1</strong></span>
+        <input id="master-comp-ratio" type="range" min="1" max="10" step="0.5" value="2">
+      </label>
+      <label class="master-large-control">
+        <span>Compressor — ganho de compensação <strong id="master-comp-makeup-value">+2 dB</strong></span>
+        <input id="master-comp-makeup" type="range" min="0" max="12" step="0.5" value="2">
+      </label>
     </section>
   </main>
 

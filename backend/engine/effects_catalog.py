@@ -64,6 +64,20 @@ def master_gain_config() -> dict:
     }
 
 
+def master_compressor_config() -> dict:
+    """LSP Compressor Stereo before the limiter. Its sidechain lookahead
+    (`sla`) is forced to 0: measured on the laptop with an impulse, it then
+    adds no latency of its own (nov/2026)."""
+    in_ports, out_ports = _ports("DIAKOPAD_FX_MASTER_COMPRESSOR", "in_l,in_r", "out_l,out_r")
+    return {
+        "lv2_uri": os.environ.get(
+            "DIAKOPAD_FX_MASTER_COMPRESSOR_LV2_URI", "http://lsp-plug.in/plugins/lv2/compressor_stereo"
+        ),
+        "in_ports": in_ports,
+        "out_ports": out_ports,
+    }
+
+
 def master_limiter_config() -> dict:
     """Validated LSP limiter configuration for the Ubuntu Studio target."""
     in_ports, out_ports = _ports("DIAKOPAD_FX_MASTER_LIMITER", "in_l,in_r", "out_l,out_r")
@@ -75,6 +89,12 @@ def master_limiter_config() -> dict:
         "out_ports": out_ports,
         "symbol": os.environ.get("DIAKOPAD_FX_MASTER_LIMITER_SYMBOL", "th"),
         "enabled_symbol": os.environ.get("DIAKOPAD_FX_MASTER_LIMITER_ENABLED_SYMBOL", "enabled"),
+        # LSP's default lookahead is 5 ms - measured: every pad reached the
+        # speakers ~5 ms later than the buffer alone. 1 ms keeps the limiter
+        # safe with near-zero added latency (attack follows it).
+        "lookahead_symbol": "lk",
+        "lookahead_ms": float(os.environ.get("DIAKOPAD_FX_MASTER_LIMITER_LOOKAHEAD_MS", "1.0")),
+        "attack_symbol": "at",
     }
 
 

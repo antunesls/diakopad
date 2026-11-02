@@ -98,6 +98,13 @@
     masterVolumeValue: document.getElementById("master-volume-value"),
     masterMuteLargeBtn: document.getElementById("master-mute-large-btn"),
     masterLimiterEnabled: document.getElementById("master-limiter-enabled"),
+    masterCompEnabled: document.getElementById("master-comp-enabled"),
+    masterCompThreshold: document.getElementById("master-comp-threshold"),
+    masterCompThresholdValue: document.getElementById("master-comp-threshold-value"),
+    masterCompRatio: document.getElementById("master-comp-ratio"),
+    masterCompRatioValue: document.getElementById("master-comp-ratio-value"),
+    masterCompMakeup: document.getElementById("master-comp-makeup"),
+    masterCompMakeupValue: document.getElementById("master-comp-makeup-value"),
     masterLimiterThreshold: document.getElementById("master-limiter-threshold"),
     masterLimiterThresholdValue: document.getElementById("master-limiter-threshold-value"),
     masterLimiterWarning: document.getElementById("master-limiter-warning"),
@@ -201,6 +208,18 @@
     el.masterLimiterThreshold.value = state.master.limiter_threshold_db;
     el.masterLimiterThreshold.disabled = !state.master.limiter_available || !state.master.limiter_enabled;
     el.masterLimiterThresholdValue.textContent = `${state.master.limiter_threshold_db} dB`;
+    const compOk = Boolean(state.master.compressor_available);
+    el.masterCompEnabled.checked = state.master.compressor_enabled !== false;
+    el.masterCompEnabled.disabled = !compOk;
+    for (const [input, label, key, fmt] of [
+      [el.masterCompThreshold, el.masterCompThresholdValue, "compressor_threshold_db", (v) => `${v} dB`],
+      [el.masterCompRatio, el.masterCompRatioValue, "compressor_ratio", (v) => `${v}:1`],
+      [el.masterCompMakeup, el.masterCompMakeupValue, "compressor_makeup_db", (v) => `+${v} dB`],
+    ]) {
+      if (state.master[key] !== undefined) input.value = state.master[key];
+      label.textContent = fmt(input.value);
+      input.disabled = !compOk || !el.masterCompEnabled.checked;
+    }
     el.masterLimiterWarning.textContent = state.master.limiter_available
       ? "Protege contra clipping quando vários pads tocam ao mesmo tempo."
       : "Limiter indisponível neste motor.";
@@ -269,6 +288,15 @@
   el.masterMuteLargeBtn.addEventListener("click", () => setMaster({ muted: !state.master.muted }));
   el.masterLimiterEnabled.addEventListener("change", () => setMaster({ limiter_enabled: el.masterLimiterEnabled.checked }));
   el.masterLimiterThreshold.addEventListener("change", () => setMaster({ limiter_threshold_db: Number(el.masterLimiterThreshold.value) }));
+  el.masterCompEnabled.addEventListener("change", () => setMaster({ compressor_enabled: el.masterCompEnabled.checked }));
+  for (const [input, label, key, fmt] of [
+    [el.masterCompThreshold, el.masterCompThresholdValue, "compressor_threshold_db", (v) => `${v} dB`],
+    [el.masterCompRatio, el.masterCompRatioValue, "compressor_ratio", (v) => `${v}:1`],
+    [el.masterCompMakeup, el.masterCompMakeupValue, "compressor_makeup_db", (v) => `+${v} dB`],
+  ]) {
+    input.addEventListener("input", () => (label.textContent = fmt(input.value)));
+    input.addEventListener("change", () => setMaster({ [key]: Number(input.value) }));
+  }
   el.engineStatus.addEventListener("click", () => {
     const hidden = el.engineStatusDetail.classList.toggle("hidden");
     el.engineStatus.setAttribute("aria-expanded", String(!hidden));
@@ -782,6 +810,11 @@
             <input type="range" min="-100" max="100" step="1" value="${pad.pan}" data-role="pan">
             <span class="mix-value" data-role="pan-value">${panLabel(pad.pan)}</span>
           </div>
+          <div class="mix-control">
+            <span class="mix-control-label">Afinação</span>
+            <input type="range" min="-12" max="12" step="0.5" value="${pad.tune || 0}" data-role="tune">
+            <span class="mix-value" data-role="tune-value">${tuneLabel(pad.tune || 0)}</span>
+          </div>
           </div>
         </div>
       `;
@@ -803,8 +836,18 @@
       });
       panInput.addEventListener("change", () => setPadMix(pad.pad_number, { pan: Number(panInput.value) }));
 
+      const tuneInput = li.querySelector('[data-role="tune"]');
+      const tuneValue = li.querySelector('[data-role="tune-value"]');
+      tuneInput.addEventListener("input", () => (tuneValue.textContent = tuneLabel(Number(tuneInput.value))));
+      tuneInput.addEventListener("change", () => setPadMix(pad.pad_number, { tune: Number(tuneInput.value) }));
+
       el.volumeList.appendChild(li);
     }
+  }
+
+  function tuneLabel(tune) {
+    if (!tune) return "original";
+    return `${tune > 0 ? "+" : ""}${tune} st`;
   }
 
   function panLabel(pan) {

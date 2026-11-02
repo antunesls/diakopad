@@ -220,11 +220,17 @@ async def set_master(
     muted: Optional[bool] = None,
     limiter_enabled: Optional[bool] = None,
     limiter_threshold_db: Annotated[Optional[float], Field(ge=-12, le=0, description="Teto do limiter em dB (-12 a 0)")] = None,
+    compressor_enabled: Annotated[Optional[bool], Field(description="Compressor do master (une bumbo/caixa)")] = None,
+    compressor_threshold_db: Annotated[Optional[float], Field(ge=-30, le=0, description="Limiar do compressor em dB")] = None,
+    compressor_ratio: Annotated[Optional[float], Field(ge=1, le=10, description="Razão do compressor (2 = 2:1, suave)")] = None,
+    compressor_makeup_db: Annotated[Optional[float], Field(ge=0, le=12, description="Ganho de compensação do compressor em dB")] = None,
 ) -> dict:
-    """Ajusta o master. Só os campos informados mudam."""
+    """Ajusta o master (volume, mute, limiter e compressor). Só os campos informados mudam."""
     return await _post("/api/master", _drop_none({
         "volume": volume, "muted": muted,
         "limiter_enabled": limiter_enabled, "limiter_threshold_db": limiter_threshold_db,
+        "compressor_enabled": compressor_enabled, "compressor_threshold_db": compressor_threshold_db,
+        "compressor_ratio": compressor_ratio, "compressor_makeup_db": compressor_makeup_db,
     }))
 
 
@@ -289,9 +295,10 @@ async def set_pad_mix(
     volume_db: Annotated[Optional[float], Field(ge=-24, le=12, description="Volume em dB (-24 a +12; 0 = original)")] = None,
     pan: Annotated[Optional[float], Field(ge=-100, le=100, description="Pan: -100 esquerda, 0 centro, 100 direita")] = None,
     tone: Annotated[Optional[float], Field(ge=0, le=100, description="Filtro passa-baixa 0-100; 100 = sem filtro")] = None,
+    tune: Annotated[Optional[float], Field(ge=-12, le=12, description="Afinação em semitons (-12 a +12; ex.: -2 a -4 deixa a caixa mais grave e encorpada)")] = None,
 ) -> dict:
-    """Ajusta volume, pan e/ou tom (filtro) de um pad. Só os campos informados mudam."""
-    return await _post(f"/api/pads/{pad_number}/mix", _drop_none({"volume_db": volume_db, "pan": pan, "tone": tone}))
+    """Ajusta volume, pan, tom (filtro) e/ou afinação de um pad. Só os campos informados mudam."""
+    return await _post(f"/api/pads/{pad_number}/mix", _drop_none({"volume_db": volume_db, "pan": pan, "tone": tone, "tune": tune}))
 
 
 @mcp.tool(annotations=IDEMPOTENT)
@@ -544,6 +551,23 @@ async def load_kit(
     """Carrega um kit nos pads: cada som do kit vai para o pad de mesmo número.
     Mix/efeitos dos pads são mantidos."""
     return await _post(f"/api/kits/{kit_id}/load", {"clear_other_pads": clear_other_pads})
+
+
+@mcp.tool(annotations=READ)
+async def list_hydrogen_kits() -> list[dict]:
+    """Kits do Hydrogen instalados no computador do DiakoPad (nome, autor,
+    licença, nº de instrumentos), prontos para importar."""
+    return await _get("/api/hydrogen-kits")
+
+
+@mcp.tool(annotations=WRITE)
+async def import_hydrogen_kit(
+    name: Annotated[str, Field(description="name de list_hydrogen_kits (pasta do kit)")],
+) -> dict:
+    """Importa um kit do Hydrogen: copia a camada de toque forte de cada
+    instrumento para a biblioteca e cria um kit DiakoPad (categoria
+    05_hydrogen) no layout padrão de pads. Reimportar atualiza o kit."""
+    return await _post("/api/hydrogen-kits/import", {"name": name})
 
 
 @mcp.tool(annotations=DESTRUCTIVE)

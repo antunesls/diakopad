@@ -31,6 +31,7 @@ PAD_NATIVE_PARAMS: list[ParamMeta] = [
     {"param": "volume", "label": "Volume", "unit": "dB", "min": -24, "max": 12, "curve": "linear", "bypass_at_max": False},
     {"param": "pan", "label": "Pan", "unit": "", "min": -100, "max": 100, "curve": "linear", "bypass_at_max": False},
     {"param": "tone", "label": "Tom", "unit": "Hz", "min": 200, "max": 20000, "curve": "log", "bypass_at_max": True},
+    {"param": "tune", "label": "Afinação", "unit": "st", "min": -12, "max": 12, "curve": "linear", "bypass_at_max": False},
     # Sends into the shared FX buses (engine/fx_buses.py): cheap to move live,
     # no sfizz respawn - just a matrix gain in mod-host.
     {"param": "send_hall", "label": "Envio — Reverb Hall", "unit": "%", "min": 0, "max": 100, "curve": "linear", "bypass_at_max": False},

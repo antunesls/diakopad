@@ -272,6 +272,11 @@ DEFAULT_SETTINGS = {
     "sustain_mode": "1",
     # auto_trim=1: skip each sample's leading/trailing silence (sample_trim.py)
     "auto_trim": "1",
+    # Glue compressor on the master, before the limiter (LSP, no lookahead).
+    "master_comp_enabled": "1",
+    "master_comp_threshold_db": "-12",
+    "master_comp_ratio": "2",
+    "master_comp_makeup_db": "2",
     "velocity_sensitive": "0",
     "sequencer_bpm": "100",
     "metronome_style": "digital",
@@ -320,6 +325,12 @@ _MIGRATIONS = [
     "ALTER TABLE pads ADD COLUMN volume_db REAL NOT NULL DEFAULT 6",
     "ALTER TABLE pads ADD COLUMN pan REAL NOT NULL DEFAULT 0",
     "ALTER TABLE pads ADD COLUMN cutoff_hz REAL",
+    # Pitch in semitones (sfz transpose/tune) - e.g. a fatter, lower snare.
+    "ALTER TABLE pads ADD COLUMN tune REAL NOT NULL DEFAULT 0",
+]
+
+_SCENE_PADS_MIGRATIONS = [
+    "ALTER TABLE scene_pads ADD COLUMN tune REAL NOT NULL DEFAULT 0",
 ]
 
 # samples.folder was added to support importing a whole sample library while
@@ -353,6 +364,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     for stmt in _SAMPLES_MIGRATIONS:
         col = stmt.split("ADD COLUMN")[1].split()[0]
         if col not in existing_sample_cols:
+            conn.execute(stmt)
+
+    existing_scene_pad_cols = {row["name"] for row in conn.execute("PRAGMA table_info(scene_pads)")}
+    for stmt in _SCENE_PADS_MIGRATIONS:
+        col = stmt.split("ADD COLUMN")[1].split()[0]
+        if col not in existing_scene_pad_cols:
             conn.execute(stmt)
 
     existing_scene_cols = {row["name"] for row in conn.execute("PRAGMA table_info(scenes)")}
@@ -585,7 +602,7 @@ def list_pads() -> list[dict]:
     try:
         rows = conn.execute(
             """
-            SELECT p.pad_number, p.midi_note, p.sample_id, p.volume_db, p.pan, p.cutoff_hz,
+            SELECT p.pad_number, p.midi_note, p.sample_id, p.volume_db, p.pan, p.cutoff_hz, p.tune,
                    s.display_name, s.filename
             FROM pads p
             LEFT JOIN samples s ON s.id = p.sample_id
@@ -602,6 +619,7 @@ def set_pad_mix(
     volume_db: Optional[float] = None,
     pan: Optional[float] = None,
     cutoff_hz: Optional[float] = "__unset__",  # type: ignore[assignment]
+    tune: Optional[float] = None,
 ) -> None:
     """Partial update. volume_db/pan: None means "leave unchanged". cutoff_hz
     is tri-state (unset sentinel vs None vs a float), since None is itself a
@@ -616,6 +634,9 @@ def set_pad_mix(
     if cutoff_hz != "__unset__":
         fields.append("cutoff_hz = ?")
         values.append(cutoff_hz)
+    if tune is not None:
+        fields.append("tune = ?")
+        values.append(tune)
     if not fields:
         return
     conn = get_connection()
@@ -981,7 +1002,7 @@ def scene_pad_variants() -> dict[int, list[dict]]:
     conn = get_connection()
     try:
         rows = conn.execute(
-            "SELECT sp.pad_number, sp.sample_id, s.filename, sp.volume_db, sp.pan, sp.cutoff_hz "
+            "SELECT sp.pad_number, sp.sample_id, s.filename, sp.volume_db, sp.pan, sp.cutoff_hz, sp.tune "
             "FROM scene_pads sp LEFT JOIN samples s ON s.id = sp.sample_id "
             "ORDER BY sp.scene_id, sp.pad_number"
         ).fetchall()
@@ -1250,11 +1271,11 @@ def save_scene(
             conn.execute("DELETE FROM scene_sends WHERE scene_id = ?", (scene_id_val,))
             conn.execute("DELETE FROM scene_fx_buses WHERE scene_id = ?", (scene_id_val,))
         conn.executemany(
-            "INSERT INTO scene_pads (scene_id, pad_number, sample_id, volume_db, pan, cutoff_hz) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO scene_pads (scene_id, pad_number, sample_id, volume_db, pan, cutoff_hz, tune) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
                 (scene_id_val, p["pad_number"], p.get("sample_id"), p.get("volume_db", 6),
-                 p.get("pan", 0), p.get("cutoff_hz"))
+                 p.get("pan", 0), p.get("cutoff_hz"), p.get("tune") or 0)
                 for p in pads
             ],
         )
@@ -1337,7 +1358,7 @@ def get_scene(scene_id: int) -> Optional[dict]:
         if row is None:
             return None
         pads = conn.execute(
-            "SELECT pad_number, sample_id, volume_db, pan, cutoff_hz FROM scene_pads "
+            "SELECT pad_number, sample_id, volume_db, pan, cutoff_hz, tune FROM scene_pads "
             "WHERE scene_id = ? ORDER BY pad_number",
             (scene_id,),
         ).fetchall()
@@ -1555,9 +1576,9 @@ def load_scene(scene_id: int) -> Optional[dict]:
     try:
         for p in scene["pads"]:
             conn.execute(
-                "UPDATE pads SET sample_id = ?, volume_db = ?, pan = ?, cutoff_hz = ? "
+                "UPDATE pads SET sample_id = ?, volume_db = ?, pan = ?, cutoff_hz = ?, tune = ? "
                 "WHERE pad_number = ?",
-                (p["sample_id"], p["volume_db"], p["pan"], p["cutoff_hz"], p["pad_number"]),
+                (p["sample_id"], p["volume_db"], p["pan"], p["cutoff_hz"], p.get("tune") or 0, p["pad_number"]),
             )
         conn.execute("DELETE FROM pad_effects")
         conn.executemany(

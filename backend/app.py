@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import hydrogen_kits
 import kit_import
 import midi
 import storage
@@ -95,6 +96,7 @@ class MixRequest(BaseModel):
     volume_db: Optional[float] = None
     pan: Optional[float] = None
     tone: Optional[float] = None  # 0-100; 100 = filter bypassed. None = leave unchanged.
+    tune: Optional[float] = None  # semitones -12..12 (resampled pitch)
 
 
 class LearnRequest(BaseModel):
@@ -147,6 +149,10 @@ class MasterRequest(BaseModel):
     muted: Optional[bool] = None
     limiter_enabled: Optional[bool] = None
     limiter_threshold_db: Optional[float] = None
+    compressor_enabled: Optional[bool] = None
+    compressor_threshold_db: Optional[float] = None
+    compressor_ratio: Optional[float] = None
+    compressor_makeup_db: Optional[float] = None
 
 
 class SceneRequest(BaseModel):
@@ -784,6 +790,8 @@ async def _apply_knob_target(key: tuple[str, Optional[int], str]) -> None:
         storage.set_pad_mix(pad_number, pan=value)
     elif param == "tone":
         storage.set_pad_mix(pad_number, cutoff_hz=value)
+    elif param == "tune":
+        storage.set_pad_mix(pad_number, tune=round(value * 2) / 2)
     await orchestrator.apply_pad(pad_number, storage.list_pads(), storage.get_settings(), pad_effects)
     await _broadcast_pads()
 
@@ -1096,9 +1104,11 @@ async def set_pad_mix(pad_number: int, body: MixRequest):
         if not 0 <= body.tone <= 100:
             raise HTTPException(400, "tone must be between 0 and 100")
         cutoff_hz = _frac_to_cutoff(body.tone / 100)
+    if body.tune is not None and not -12 <= body.tune <= 12:
+        raise HTTPException(400, "tune must be between -12 and 12 semitones")
 
-    storage.set_pad_mix(pad_number, volume_db=body.volume_db, pan=body.pan, cutoff_hz=cutoff_hz)
-    if body.volume_db is not None or body.pan is not None or body.tone is not None:
+    storage.set_pad_mix(pad_number, volume_db=body.volume_db, pan=body.pan, cutoff_hz=cutoff_hz, tune=body.tune)
+    if body.volume_db is not None or body.pan is not None or body.tone is not None or body.tune is not None:
         await orchestrator.apply_pad(
             pad_number, storage.list_pads(), storage.get_settings(), storage.list_pad_effects()
         )
@@ -1195,6 +1205,22 @@ async def set_master(body: MasterRequest):
         raise HTTPException(400, "volume must be between 0 and 100")
     if not -12 <= limiter_threshold_db <= 0:
         raise HTTPException(400, "limiter_threshold_db must be between -12 and 0")
+    for value, lo, hi, field in (
+        (body.compressor_threshold_db, -30, 0, "compressor_threshold_db"),
+        (body.compressor_ratio, 1, 10, "compressor_ratio"),
+        (body.compressor_makeup_db, 0, 12, "compressor_makeup_db"),
+    ):
+        if value is not None and not lo <= value <= hi:
+            raise HTTPException(400, f"{field} must be between {lo} and {hi}")
+    if body.compressor_enabled is not None:
+        storage.set_setting("master_comp_enabled", "1" if body.compressor_enabled else "0")
+    for value, key in (
+        (body.compressor_threshold_db, "master_comp_threshold_db"),
+        (body.compressor_ratio, "master_comp_ratio"),
+        (body.compressor_makeup_db, "master_comp_makeup_db"),
+    ):
+        if value is not None:
+            storage.set_setting(key, str(value))
     storage.set_setting("master_volume", str(volume))
     storage.set_setting("master_muted", "1" if muted else "0")
     storage.set_setting("master_limiter_enabled", "1" if limiter_enabled else "0")
@@ -1382,6 +1408,30 @@ async def set_pad_effect_param(pad_number: int, slot_index: int, body: EffectPar
     await orchestrator.set_effect_param(pad_number, slot_index, body.symbol, body.value)
     await _broadcast_pad_effects()
     return {"ok": True}
+
+
+# ── Hydrogen drumkits installed on this machine ─────────────────────────────
+
+
+class HydrogenImportRequest(BaseModel):
+    name: str
+
+
+@app.get("/api/hydrogen-kits")
+def list_hydrogen_kits():
+    return hydrogen_kits.list_kits()
+
+
+@app.post("/api/hydrogen-kits/import")
+async def import_hydrogen_kit(body: HydrogenImportRequest):
+    try:
+        kit_id = await asyncio.to_thread(hydrogen_kits.import_kit, body.name)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    await _broadcast_sounds()
+    return {"ok": True, "kit": storage.get_kit(kit_id)}
 
 
 # ── Shared FX buses (hall / plate / tempo-synced delay) + per-pad sends ─────

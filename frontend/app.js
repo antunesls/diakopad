@@ -57,6 +57,9 @@
     pairQrBtn: document.getElementById("pair-qr-btn"),
     pairQr: document.getElementById("pair-qr"),
     perfPadGrid: document.getElementById("perf-pad-grid"),
+    smcKnobs: document.getElementById("smc-knobs"),
+    smcButtons: document.getElementById("smc-buttons"),
+    smcNotes: document.getElementById("smc-notes"),
     scenePrev: document.getElementById("scene-prev"),
     sceneNext: document.getElementById("scene-next"),
     sceneName: document.getElementById("scene-name"),
@@ -181,7 +184,7 @@
     knobModalWaiting: document.getElementById("knob-modal-waiting"),
   };
 
-  const VIEWS = ["pads", "performance", "sounds", "volumes", "master", "effects", "sequencer", "metronome", "looper", "knobs", "config"];
+  const VIEWS = ["pads", "performance", "sounds", "volumes", "master", "effects", "sequencer", "metronome", "looper", "knobs", "smcpad", "config"];
   const SUPPORTED_AUDIO_EXTENSIONS = new Set([".wav", ".mp3", ".ogg", ".flac", ".aiff", ".aif"]);
   // Uploading a big folder (or several dropped together) can mean hundreds
   // of files - firing every XHR at once used to overwhelm the connection
@@ -1853,6 +1856,132 @@
     { key: "knobs", title: "Knobs — CCs" },
   ];
 
+  // --- Painel do SMC-PAD (aba Performance) ----------------------------
+  // Réplica do aparelho: knobs 1-8 à esquerda (7·8 em cima, 1·2 embaixo, como
+  // na face do SMC-PAD), pads no centro e a coluna de botões à direita. Tudo
+  // é derivado dos mapeamentos reais (state.knobs / state.controllerActions).
+  // Suposição: o knob N envia o CC (SMC_KNOB_CC_BASE + N - 1); ajuste a base
+  // se o seu aparelho usar outra faixa de CCs.
+  const SMC_KNOB_CC_BASE = 30;
+  const SMC_KNOB_ORDER = [7, 8, 5, 6, 3, 4, 1, 2];
+  const SMC_KNOB_LEGEND = { 1: "RATE", 2: "SWING", 3: "TEMPO", 4: "LATCH" };
+  const SMC_BUTTONS = [
+    { sym: "BT", hw: true },
+    { sym: "PAD BANK", hw: true, note: "alterna o banco dos pads" },
+    { sym: "KNOB BANK", hw: true },
+    { sym: "◀", type: "cc", number: 25 },
+    { sym: "▶", type: "cc", number: 26 },
+    { sym: "▷", type: "cc", number: 27 },
+    { sym: "❚❚", type: "cc", number: 28 },
+    { sym: "●", type: "cc", number: 29, rec: true },
+    { sym: "SHIFT", hw: true },
+    { sym: "NOTE REPEAT", hw: true },
+  ];
+  const smcCc = {};
+  let smcRaf = null;
+
+  function smcActionFor(type, number) {
+    const bindings = (state.controllerActions && state.controllerActions.bindings) || {};
+    for (const [action, list] of Object.entries(bindings)) {
+      if (list.some((b) => b.midi_type === type && b.number === number)) {
+        const known = MIDI_ACTIONS.find((a) => a.action === action);
+        return known ? known.label : action;
+      }
+    }
+    return null;
+  }
+
+  function smcDial(value01, mapped) {
+    const size = 64, cx = 32, r = 26;
+    const pt = (deg) => {
+      const t = ((deg - 90) * Math.PI) / 180;
+      return [cx + r * Math.cos(t), cx + r * Math.sin(t)];
+    };
+    const arc = (a, b) => {
+      const [x0, y0] = pt(a), [x1, y1] = pt(b);
+      return `M${x0} ${y0} A${r} ${r} 0 ${b - a > 180 ? 1 : 0} 1 ${x1} ${y1}`;
+    };
+    const ang = -135 + 270 * value01;
+    const [nx, ny] = pt(ang);
+    return `<svg width="${size}" height="${size}" aria-hidden="true">
+      <circle cx="${cx}" cy="${cx}" r="${r - 7}" class="smc-dial-body"/>
+      <path d="${arc(-135, 135)}" class="smc-dial-track"/>
+      ${mapped ? `<path d="${arc(-135, Math.max(ang, -134.9))}" class="smc-dial-fill"/>` : ""}
+      <line x1="${cx}" y1="${cx}" x2="${nx}" y2="${ny}" class="smc-dial-needle ${mapped ? "" : "off"}"/>
+    </svg>`;
+  }
+
+  function renderSmcPanel() {
+    if (!el.smcKnobs) return;
+    el.smcKnobs.innerHTML = SMC_KNOB_ORDER.map((n) => {
+      const cc = SMC_KNOB_CC_BASE + n - 1;
+      const mapping = state.knobs.find((k) => k.cc_number === cc);
+      const raw = smcCc[cc];
+      const v = raw == null ? 0 : raw / 127;
+      const legend = SMC_KNOB_LEGEND[n] ? `<span class="smc-legend">${SMC_KNOB_LEGEND[n]}</span>` : `<span class="smc-legend empty"></span>`;
+      return `<div class="smc-knob ${mapping ? "" : "free"}" data-cc="${cc}">
+        <span class="smc-num">${n}</span>${smcDial(v, !!mapping)}${legend}
+        <div class="smc-target">${mapping ? mapping.label : "Livre"}</div>
+        <div class="smc-meta">CC ${cc}${mapping && raw != null ? ` · ${Math.round((raw / 127) * 100)}%` : ""}</div>
+      </div>`;
+    }).join("");
+
+    el.smcButtons.innerHTML = SMC_BUTTONS.map((b) => {
+      let text, meta = "";
+      if (b.hw) {
+        text = b.note || "função do aparelho";
+      } else {
+        const action = smcActionFor(b.type, b.number);
+        text = action || "sem ligação";
+        meta = `CC ${b.number}`;
+      }
+      return `<div class="smc-btn-row ${b.hw ? "hw" : ""} ${!b.hw && text === "sem ligação" ? "free" : ""}" ${b.type === "cc" ? `data-cc="${b.number}"` : ""}>
+        <span class="smc-btn ${b.rec ? "rec" : ""}">${b.sym}</span>
+        <span class="smc-btn-text">${text}${meta ? `<small>${meta}</small>` : ""}</span>
+      </div>`;
+    }).join("");
+
+    const bindings = (state.controllerActions && state.controllerActions.bindings) || {};
+    const notes = [];
+    for (const [action, list] of Object.entries(bindings)) {
+      for (const b of list) {
+        if (b.midi_type !== "note") continue;
+        const known = MIDI_ACTIONS.find((a) => a.action === action);
+        notes.push({ number: b.number, label: known ? known.label : action });
+      }
+    }
+    notes.sort((a, b) => a.number - b.number);
+    el.smcNotes.innerHTML = notes.length
+      ? notes.map((n) => `<div class="smc-note-row" data-note="${n.number}"><span class="smc-note-chip">N${n.number}</span>${n.label}</div>`).join("")
+      : `<div class="smc-note-row free">Nenhum comando em nota ligado.</div>`;
+  }
+
+  function scheduleSmcRender() {
+    if (smcRaf !== null) return;
+    smcRaf = requestAnimationFrame(() => {
+      smcRaf = null;
+      renderSmcPanel();
+    });
+  }
+
+  function flashSmc(selector) {
+    for (const node of el.smcButtons.parentElement.parentElement.querySelectorAll(selector)) {
+      node.classList.remove("hit");
+      void node.offsetWidth;
+      node.classList.add("hit");
+      setTimeout(() => node.classList.remove("hit"), 200);
+    }
+  }
+
+  function onSmcCc(control, value) {
+    smcCc[control] = value;
+    if (control >= SMC_KNOB_CC_BASE && control < SMC_KNOB_CC_BASE + 8) {
+      scheduleSmcRender();
+    } else if (value > 0) {
+      flashSmc(`.smc-btn-row[data-cc="${control}"]`);
+    }
+  }
+
   // In-memory only: the kit-browse group starts collapsed so the optional
   // navigation buttons don't push Panic/Looper/Scenes below the fold.
   const midiSectionCollapsed = { kit_browse: true };
@@ -2547,6 +2676,9 @@
         flashPadHit(msg.pad_number);
       } else if (msg.type === "midi_note") {
         showMidiNote(msg.note);
+        flashSmc(`.smc-note-row[data-note="${msg.note}"]`);
+      } else if (msg.type === "midi_cc") {
+        onSmcCc(msg.control, msg.value);
       } else if (msg.type === "sounds") {
         state.sounds = msg.sounds;
         loadSoundBrowser();
@@ -2554,6 +2686,7 @@
         state.knobs = msg.knobs;
         state.pendingLearn = msg.pending_learn;
         renderKnobs();
+        renderSmcPanel();
         renderEffects();
         renderMidiMap();
         if (knobPicker.step === "capture" && !state.pendingLearn) {
@@ -2638,6 +2771,7 @@
       } else if (msg.type === "controller_actions") {
         state.controllerActions = { bindings: msg.bindings, pending_learn: msg.pending_learn };
         renderMidiMap();
+        renderSmcPanel();
       } else if (msg.type === "navigate") {
         switchView(msg.view);
       } else if (msg.type === "kit_browse") {
@@ -2825,6 +2959,7 @@
     renderEngineStatus();
     renderLooper();
     renderKnobs();
+    renderSmcPanel();
     connectWebSocket();
   }
 

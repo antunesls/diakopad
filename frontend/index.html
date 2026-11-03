@@ -25,6 +25,7 @@
       <button id="tab-metronome" class="tab" type="button">Metrônomo</button>
       <button id="tab-looper" class="tab" type="button">Looper</button>
       <button id="tab-knobs" class="tab" type="button">Knobs</button>
+      <button id="tab-smcpad" class="tab" type="button">SMCPAD Config</button>
       <button id="tab-config" class="tab" type="button">Config</button>
     </nav>
     <div class="live-controls">
@@ -88,7 +89,19 @@
       <button id="scene-delete" class="carousel-action danger" type="button">Excluir</button>
     </div>
     <p class="pad-live-hint">Toque para tocar, segure para trocar o som. ◀ ▶ troca a cena ao vivo (só as ativas).</p>
-    <div id="perf-pad-grid" class="pad-grid perf-grid"></div>
+    <div class="smc">
+      <aside class="smc-side">
+        <h3 class="smc-title">Knobs</h3>
+        <div id="smc-knobs" class="smc-knobs"></div>
+      </aside>
+      <div id="perf-pad-grid" class="pad-grid perf-grid"></div>
+      <aside class="smc-side">
+        <h3 class="smc-title">Botões</h3>
+        <div id="smc-buttons" class="smc-buttons"></div>
+        <h3 class="smc-title">Pads do banco B</h3>
+        <div id="smc-notes" class="smc-notes"></div>
+      </aside>
+    </div>
   </main>
 
   <main id="view-sounds" class="view hidden">
@@ -285,6 +298,8 @@
     <ul id="knobs-list" class="sound-list"></ul>
   </main>
 
+  <main id="view-smcpad" class="view hidden smcp"></main>
+
   <main id="view-config" class="view hidden">
     <ul class="settings-list">
       <li class="settings-row">
@@ -449,5 +464,6 @@
   <audio id="preview-audio" hidden></audio>
 
   <script src="app.js"></script>
+  <script src="smcpad.js"></script>
 </body>
 </html>

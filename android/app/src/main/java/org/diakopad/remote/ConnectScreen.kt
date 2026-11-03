@@ -190,7 +190,7 @@ fun ConnectScreen(
 
         val shownError = error ?: message
         if (shownError != null) {
-            Surface(color = Color(0xFF2A1416), shape = RoundedCornerShape(12.dp)) {
+            Surface(color = Color(0xFF2A1416), contentColor = Color(0xFFF2F2F2), shape = RoundedCornerShape(12.dp)) {
                 Text(shownError, color = Danger, modifier = Modifier.padding(12.dp), fontSize = 14.sp)
             }
         }

@@ -336,6 +336,35 @@ demais gravam relativas a esse ciclo. A quantização por compasso pode ser
 ativada em **Config**. Na mesma tela, o filtro de toque duplicado descarta
 Note On repetidos do controlador dentro da janela configurada.
 
+## SMCPAD Config
+
+A aba **SMCPAD Config** lê e edita a configuração que fica dentro do próprio
+SMC-PAD (o que o Midi Suite da M-Vave faz): os 8 presets, com 128 pads
+(tipo, canal, nota, velocidades, cor RGB e LED), 5 botões (modo, CC, valores,
+SysEx e LED), 16 knobs (tipo, velocidade, canal, CC, mínimo e máximo), os
+globais (tempo, swing, Time, Sync, Latch, Octave, Transpose, PadCurve,
+PadAftertouch, preset ativo) e a **calibração** dos pads (níveis 1 a 8). Também
+exporta e importa um preset como arquivo `.spc` (o mesmo formato do Midi Suite).
+
+- O aparelho precisa estar ligado por **USB** neste laptop. Feche o Midi Suite:
+  ele usa a mesma porta. A porta é achada pelo nome (`SINCO` ou `SMC-PAD`); para
+  outro padrão, defina `DIAKOPAD_SMCPAD_PORT_PATTERN`.
+- A **gravação no aparelho vem desligada**. O botão *Gravação* da aba a liga
+  (configuração `smcpad_write_enabled`). Com ela ligada, cada alteração envia só
+  os campos que mudaram, na ordem: backup do aparelho inteiro em
+  `backend/smcpad_backups/`, escrita, leitura de conferência e só então a gravação
+  definitiva. Se a conferência falhar, os bytes originais são restaurados e nada é
+  gravado de vez.
+- Pads, botões e knobs só são editados no **preset ativo** do aparelho (como no
+  Midi Suite); para outro preset, ative-o em *Globais*.
+- Evite editar durante o show: cada leitura ou gravação usa a porta MIDI do
+  aparelho por alguns instantes.
+- Para recuperar um backup (`.bin` de 28.312 bytes, o mesmo formato do `SPB.bin`
+  do Midi Suite), importe o preset desejado pela própria aba ou pelo Midi Suite.
+
+O protocolo, obtido por engenharia reversa e conferido no aparelho real, está em
+[`docs/smcpad-protocolo.md`](docs/smcpad-protocolo.md).
+
 ## Reinício e diagnóstico
 
 O botão **Config > Reiniciar DiakoPad e áudio** reinicia DiakoPad, PipeWire e
@@ -387,6 +416,17 @@ prefira não deixar o agente operar o set sem supervisão. Sons e packs podem
 vir de um caminho local da máquina do MCP ou de uma URL. Os learns MIDI
 (`pad_note_learn`, `knob_learn`, `controller_action_learn`) dependem de
 alguém tocar o controlador.
+
+**Configuração do SMC-PAD pelo agente.** As ferramentas `smcpad_*` leem e editam
+a memória do próprio controlador (a mesma da aba [SMCPAD Config](#smcpad-config)):
+`smcpad_status`, `smcpad_get_config` (por seção: resumo, pads de um grupo, botões,
+knobs, globais, calibração), `smcpad_edit` (lista de alterações de campo),
+`smcpad_list_backups`, `smcpad_export_preset` e `smcpad_import_preset` (arquivos
+`.spc`). `smcpad_edit` e `smcpad_import_preset` são marcadas como destrutivas e só
+funcionam se **o usuário ligar "Gravação"** na aba SMCPAD Config: o agente não tem
+como ligá-la, e sem isso o servidor responde 403. Cada gravação faz backup, confere
+a leitura e só então grava de vez. Pads, botões e knobs só são editados no preset
+ativo do aparelho.
 
 Testes: `cd mcp_server && python -m unittest discover tests`, num ambiente com
 `mcp_server/requirements.txt` e `backend/requirements.txt` instalados.

@@ -6,6 +6,7 @@ backend/diakopad.db
 backend/diakopad.db-wal
 backend/diakopad.db-shm
 backend/backups/
+backend/smcpad_backups/
 backend/samples/*
 !backend/samples/.gitkeep
 backend/sfz_bank/*

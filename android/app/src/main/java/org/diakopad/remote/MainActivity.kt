@@ -57,7 +57,14 @@ class MainActivity : ComponentActivity() {
         incomingLink.value = intent?.dataString
         setContent {
             MaterialTheme(colorScheme = DiakoColors) {
-                RemoteScreen(incomingLink.value) { incomingLink.value = null }
+                // Sem esta Surface, textos sem cor explícita saem pretos no fundo escuro.
+                androidx.compose.material3.Surface(
+                    color = DiakoColors.background,
+                    contentColor = DiakoColors.onBackground,
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    RemoteScreen(incomingLink.value) { incomingLink.value = null }
+                }
             }
         }
     }

@@ -58,7 +58,11 @@ mcp = MCPServer(
         "pad->sample; cenas guardam o set inteiro (pads, mix, efeitos, knobs, "
         "BPM, metrônomo, sequencer). Mudanças valem imediatamente no áudio: "
         "durante um show, prefira mudanças pequenas e confirme antes de ações "
-        "destrutivas. Use panic para silenciar tudo numa emergência."
+        "destrutivas. Use panic para silenciar tudo numa emergência. "
+        "O controlador SMC-PAD tem a própria configuração interna (pads, botões, "
+        "knobs, globais, calibração): comece com smcpad_status e smcpad_get_config; "
+        "smcpad_edit grava no aparelho e só funciona se o usuário ligou "
+        "\"Gravação\" na aba SMCPAD Config."
     ),
 )
 
@@ -862,6 +866,139 @@ async def controller_action_learn(
 async def delete_controller_binding(binding_id: int) -> dict:
     """Remove a ligação de um botão a uma ação."""
     return await _delete(f"/api/controller-actions/bindings/{binding_id}")
+
+
+# ── SMC-PAD: configuração do controlador (pads, botões, knobs, globais, calibração) ──
+# A memória do aparelho é lida/gravada pela aba "SMCPAD Config" do DiakoPad. Gravar é opt-in:
+# o USUÁRIO liga "Gravação" nessa aba; sem isso o servidor recusa as edições (403) e o agente
+# não consegue ligar sozinho. Cada gravação faz backup, confere a leitura e só então grava de vez.
+
+SmcPadSection = Literal["summary", "pads", "buttons", "knobs", "globals", "calibration", "all"]
+
+
+class SmcPadEdit(BaseModel):
+    """Uma alteração de campo, com o valor como aparece na tela do Midi Suite."""
+
+    scope: Literal["pad", "button", "knob", "globals", "calibration"]
+    field: str = Field(
+        description=(
+            "pad: type, channel(1-16), note, min_vel, max_vel, color(#RRGGBB), led(0-255) · "
+            "button: mode, channel, cc, value1, value2, led, sysex('F0 7F ... F7', até 16 bytes) · "
+            "knob: type, speed, channel, cc, min, max · "
+            "globals: tempo, swing, time, sync, latch, octave, transpose, pad_curve, aftertouch, preset · "
+            "calibration: level(1-8) ou raw(50-750). Os valores de type/mode/speed/time são o ÍNDICE da lista "
+            "em smcpad_get_config(section='summary').enums."
+        )
+    )
+    value: int | str
+    preset: Optional[int] = Field(default=None, ge=1, le=8, description="1-8; obrigatório para pad/button/knob. Só o preset ATIVO no aparelho pode ser editado")
+    index: Optional[int] = Field(default=None, ge=0, le=127, description="pad: 0-127 = (grupo-1)*16 + (nº do pad-1); button: 0-4; knob: 0-15 (0-7 banco 1, 8-15 banco 2)")
+    pad: Optional[int] = Field(default=None, ge=1, le=16, description="só para calibration: nº do pad (1-16)")
+    expected: Optional[int | str] = Field(default=None, description="valor atual esperado; se o aparelho tiver outro, a edição é recusada (evita sobrescrever mudança alheia)")
+
+
+async def _get_bytes(path: str) -> bytes:
+    try:
+        res = await _http().get(path)
+    except httpx.HTTPError as exc:
+        raise ToolError(f"DiakoPad inacessível em {BASE_URL}: {exc}") from exc
+    if res.status_code >= 400:
+        try:
+            detail = res.json().get("detail", res.text)
+        except ValueError:
+            detail = res.text
+        raise ToolError(f"DiakoPad respondeu {res.status_code}: {detail}")
+    return res.content
+
+
+def _compact_pad(pad: dict) -> dict:
+    out = {k: v for k, v in pad.items() if k != "extra"}
+    if any(c != "0" for c in pad.get("extra", "")):
+        out["extra"] = pad["extra"]
+    return out
+
+
+@mcp.tool(annotations=READ)
+async def smcpad_status() -> dict:
+    """SMC-PAD conectado? Modelo, globais atuais (preset ativo, banco de pads A/B) e se a
+    gravação no aparelho está ligada. Sem aparelho retorna connected=false e o motivo."""
+    return await _get("/api/smcpad/status")
+
+
+@mcp.tool(annotations=READ)
+async def smcpad_get_config(
+    preset: Annotated[Optional[int], Field(ge=1, le=8, description="Preset 1-8 (padrão: o ativo no aparelho)")] = None,
+    section: Annotated[SmcPadSection, Field(description="summary (globais, calibração, listas de opções e limites), pads, buttons, knobs, globals, calibration ou all")] = "summary",
+    group: Annotated[Optional[int], Field(ge=1, le=8, description="Só para section=pads: grupo de 16 pads (grupo 3 = notas 36-51, o banco A de fábrica; grupo 4 = 52-67, banco B)")] = None,
+) -> dict:
+    """Lê a configuração do SMC-PAD direto do aparelho. Cada preset tem 128 pads (8 grupos de 16),
+    5 botões, 16 knobs; há ainda os globais e a calibração (16 pads). Use section para não trazer tudo."""
+    res = await _get("/api/smcpad/config", params={"preset": preset} if preset else None)
+    cfg = res["preset"]
+    head = {k: res[k] for k in ("identity", "write_enabled", "current_preset", "preset_number")}
+    globals_ = {k: v for k, v in res["globals"].items() if k != "raw"}
+    if section == "pads":
+        pads = cfg["pads"] if group is None else [p for p in cfg["pads"] if p["group"] == group]
+        return {**head, "pads": [_compact_pad(p) for p in pads]}
+    if section == "buttons":
+        return {**head, "buttons": cfg["buttons"]}
+    if section == "knobs":
+        return {**head, "knobs": cfg["knobs"]}
+    if section == "globals":
+        return {**head, "globals": globals_}
+    if section == "calibration":
+        return {**head, "calibration": res["calibration"]}
+    if section == "all":
+        return {**head, "globals": globals_, "calibration": res["calibration"], "buttons": cfg["buttons"], "knobs": cfg["knobs"], "pads": [_compact_pad(p) for p in cfg["pads"]], "enums": res["enums"], "limits": res["limits"]}
+    return {**head, "globals": globals_, "calibration": res["calibration"], "enums": res["enums"], "limits": res["limits"]}
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+async def smcpad_edit(
+    edits: Annotated[list[SmcPadEdit], Field(min_length=1, max_length=64, description="Alterações a gravar; vão juntas num único backup")],
+    commit: Annotated[bool, Field(description="Gravar de vez no aparelho (padrão). False deixa só ativo até desligar")] = True,
+) -> dict:
+    """Grava alterações no SMC-PAD: valida tudo antes, faz backup do aparelho inteiro, escreve, lê de
+    volta para conferir (se divergir, restaura os bytes originais e não grava de vez) e dá o commit.
+    Exige que o usuário tenha ligado "Gravação" na aba SMCPAD Config (senão responde 403 — peça a ele; não há
+    como ligar por aqui). Pads/botões/knobs só valem no preset ativo; para outro preset, edite
+    scope=globals field=preset primeiro (na mesma chamada). Evite durante o show."""
+    return await _post("/api/smcpad/edits", {"edits": [e.model_dump(exclude_none=True) for e in edits], "commit": commit})
+
+
+@mcp.tool(annotations=READ)
+async def smcpad_list_backups() -> list[dict]:
+    """Backups do aparelho feitos antes de cada gravação (arquivos .bin de 28.312 bytes em
+    backend/smcpad_backups/ no DiakoPad)."""
+    return await _get("/api/smcpad/backups")
+
+
+@mcp.tool(annotations=WRITE)
+async def smcpad_export_preset(
+    preset: Annotated[int, Field(ge=1, le=8)],
+    destination: Annotated[str, Field(description="Caminho local (máquina do MCP) do arquivo .spc a criar")],
+) -> dict:
+    """Salva um preset do aparelho num arquivo .spc (3.539 bytes, o mesmo formato do Midi Suite)."""
+    path = Path(destination).expanduser()
+    if path.suffix.lower() != ".spc":
+        raise ToolError("o arquivo deve terminar em .spc")
+    data = await _get_bytes(f"/api/smcpad/preset/{preset}/export")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return {"path": str(path), "bytes": len(data), "preset": preset}
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+async def smcpad_import_preset(
+    preset: Annotated[int, Field(ge=1, le=8, description="Preset de destino; precisa ser o ativo no aparelho")],
+    source: Annotated[str, Field(description="Caminho local (máquina do MCP) de um arquivo .spc de 3.539 bytes")],
+) -> dict:
+    """Grava um arquivo .spc no preset ativo do aparelho, SOBRESCREVENDO-o (com backup, conferência e commit).
+    Exige "Gravação" ligada pelo usuário na aba SMCPAD Config."""
+    path = Path(source).expanduser()
+    if path.suffix.lower() not in (".spc", ".bin") or not path.is_file():
+        raise ToolError(f"arquivo .spc não encontrado: {path}")
+    return await _call("POST", f"/api/smcpad/preset/{preset}/import", content=path.read_bytes(), headers={"Content-Type": "application/octet-stream"})
 
 
 def main() -> None:

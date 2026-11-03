@@ -28,6 +28,7 @@ import hydrogen_kits
 import kit_import
 import midi
 import pairing
+import smcpad_api
 import storage
 from engine import effects_catalog, fx_buses, knob_registry, looper, metronome, metronome_sounds, orchestrator, sequencer, tempo, time_signatures, trigger
 
@@ -51,6 +52,7 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="DiakoPad", lifespan=_lifespan)
+app.include_router(smcpad_api.router)  # antes do mount estático (no fim do arquivo)
 
 # Controle pela rede (tablet/celular): com DIAKOPAD_TOKEN definido, clientes
 # que não sejam o próprio laptop precisam abrir http://<laptop>:8080/?token=...
@@ -738,6 +740,7 @@ async def _dispatch_controller_action(action: str) -> None:
 
 def _handle_cc(control: int, value: int) -> None:
     global _pending_learn, _pending_controller_learn
+    asyncio.create_task(_broadcast_midi_cc(control, value))
     if _pending_controller_learn is not None:
         action = _pending_controller_learn
         _pending_controller_learn = None
@@ -901,6 +904,12 @@ async def _broadcast_pad_hit(pad_number: int, velocity: int) -> None:
 
 async def _broadcast_midi_note(note: int, velocity: int) -> None:
     await manager.broadcast({"type": "midi_note", "note": note, "velocity": velocity})
+
+
+async def _broadcast_midi_cc(control: int, value: int) -> None:
+    # Alimenta o painel do SMC-PAD na aba Performance (ponteiro do knob e
+    # LED dos botões); não participa de nenhuma decisão de áudio.
+    await manager.broadcast({"type": "midi_cc", "control": control, "value": value})
 
 
 def _build_pad_note_map(pads: list[dict]) -> dict[int, list[int]]:

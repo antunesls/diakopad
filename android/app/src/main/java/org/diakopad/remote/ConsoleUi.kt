@@ -135,7 +135,7 @@ fun ConsoleShell(
         val wide = maxWidth >= 700.dp
         if (wide) {
             Row(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-                Surface(color = Sidebar, modifier = Modifier.width(220.dp).fillMaxHeight()) {
+                Surface(color = Sidebar, contentColor = Color(0xFFF2F2F2), modifier = Modifier.width(220.dp).fillMaxHeight()) {
                     NavigationList(section, stage, onSection, onSwitchServer)
                 }
                 Column(Modifier.weight(1f).fillMaxHeight()) {
@@ -143,7 +143,7 @@ fun ConsoleShell(
                     Box(Modifier.weight(1f).fillMaxWidth().padding(12.dp)) { content(sideInspector) }
                 }
                 if (inspector != null && sideInspector) {
-                    Surface(color = Sidebar, modifier = Modifier.width(320.dp).fillMaxHeight()) {
+                    Surface(color = Sidebar, contentColor = Color(0xFFF2F2F2), modifier = Modifier.width(320.dp).fillMaxHeight()) {
                         Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp), content = inspector)
                     }
@@ -155,7 +155,7 @@ fun ConsoleShell(
             ModalNavigationDrawer(
                 drawerState = drawer,
                 drawerContent = {
-                    ModalDrawerSheet(drawerContainerColor = Sidebar, modifier = Modifier.width(260.dp)) {
+                    ModalDrawerSheet(drawerContainerColor = Sidebar, drawerContentColor = Color(0xFFF2F2F2), modifier = Modifier.width(260.dp)) {
                         NavigationList(section, stage, { scope.launch { drawer.close() }; onSection(it) }, onSwitchServer)
                     }
                 },
@@ -169,7 +169,7 @@ fun ConsoleShell(
         }
         if (inspector != null && inspectorOpen && !sideInspector) {
             ModalBottomSheet(onDismissRequest = onCloseInspector, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-                containerColor = Sidebar) {
+                containerColor = Sidebar, contentColor = Color(0xFFF2F2F2)) {
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp), content = inspector)
             }
@@ -222,7 +222,7 @@ private fun NavigationList(section: Section, stage: StageStatus, onSection: (Sec
 
 @Composable
 private fun StageBar(stage: StageStatus, menu: (() -> Unit)?, onToggleSequencer: () -> Unit, onPanic: () -> Unit) {
-    Surface(color = Color(0xFF171A22)) {
+    Surface(color = Color(0xFF171A22), contentColor = Color(0xFFF2F2F2)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (menu != null) TextButton(onClick = menu) { Text("☰", fontSize = 22.sp) }
@@ -357,7 +357,7 @@ private fun InspectorSlider(
 /** Barra do pad selecionado sob a grade (celular): abre o painel. */
 @Composable
 fun SelectedPadBar(pad: JSONObject?, onOpen: () -> Unit) {
-    Surface(color = Color(0xFF1C1F28), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+    Surface(color = Color(0xFF1C1F28), contentColor = Color(0xFFF2F2F2), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(if (pad == null) "Toque num pad" else "Pad ${pad.optInt("pad_number")}", fontSize = 11.sp,

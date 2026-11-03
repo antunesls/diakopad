@@ -15,6 +15,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -128,6 +129,26 @@ def server_name() -> str:
     return os.environ.get("DIAKOPAD_NAME") or f"DiakoPad ({socket.gethostname()})"
 
 
+def _cli_option(name: str) -> Optional[str]:
+    """Lê `--name valor` ou `--name=valor` da linha de comando do uvicorn."""
+    argv = sys.argv
+    for i, arg in enumerate(argv):
+        if arg == name and i + 1 < len(argv):
+            return argv[i + 1]
+        if arg.startswith(name + "="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def listen_host() -> str:
+    # Há serviços que passam --host direto ao uvicorn, sem DIAKOPAD_HOST.
+    return os.environ.get("DIAKOPAD_HOST") or _cli_option("--host") or "127.0.0.1"
+
+
+def listen_port() -> str:
+    return os.environ.get("DIAKOPAD_PORT") or _cli_option("--port") or "8080"
+
+
 class Advertiser:
     """Anuncia `_diakopad._tcp` via avahi-publish-service enquanto o servidor
     roda. Só anuncia quando escuta na rede (DIAKOPAD_HOST fora do loopback):
@@ -137,7 +158,7 @@ class Advertiser:
         self._proc: Optional[subprocess.Popen] = None
 
     def start(self, version: str) -> None:
-        host = os.environ.get("DIAKOPAD_HOST", "127.0.0.1")
+        host = listen_host()
         if host in {"127.0.0.1", "::1", "localhost"}:
             logger.info("mDNS: servidor só no localhost, sem anúncio na rede")
             return
@@ -145,7 +166,7 @@ class Advertiser:
         if binary is None:
             logger.warning("mDNS: avahi-publish-service ausente (instale avahi-utils); o app não vai achar o DiakoPad sozinho")
             return
-        port = os.environ.get("DIAKOPAD_PORT", "8080")
+        port = listen_port()
         try:
             self._proc = subprocess.Popen(
                 [binary, server_name(), SERVICE_TYPE, port, f"version={version}", "pair=1"],

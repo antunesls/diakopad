@@ -70,6 +70,22 @@ class PairingManagerTests(unittest.TestCase):
         self.assertEqual(args[1:4], ["Palco", "_diakopad._tcp", "8080"])
 
 
+class ListenAddressTests(unittest.TestCase):
+    def test_reads_uvicorn_cli_when_env_is_missing(self):
+        argv = ["uvicorn", "app:app", "--host", "0.0.0.0", "--port=9090"]
+        env = {k: v for k, v in os.environ.items() if k not in ("DIAKOPAD_HOST", "DIAKOPAD_PORT")}
+        with patch.dict(os.environ, env, clear=True), patch("pairing.sys.argv", argv):
+            self.assertEqual(pairing.listen_host(), "0.0.0.0")
+            self.assertEqual(pairing.listen_port(), "9090")
+
+    def test_env_wins_and_default_is_localhost(self):
+        with patch.dict(os.environ, {"DIAKOPAD_HOST": "192.168.0.5"}), patch("pairing.sys.argv", ["uvicorn", "--host", "0.0.0.0"]):
+            self.assertEqual(pairing.listen_host(), "192.168.0.5")
+        env = {k: v for k, v in os.environ.items() if k != "DIAKOPAD_HOST"}
+        with patch.dict(os.environ, env, clear=True), patch("pairing.sys.argv", ["uvicorn", "app:app"]):
+            self.assertEqual(pairing.listen_host(), "127.0.0.1")
+
+
 class PairingApiTests(unittest.TestCase):
     def setUp(self):
         self._original_db_path = storage.DB_PATH

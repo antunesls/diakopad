@@ -2476,3 +2476,16 @@ html, body {
   .smcp-row { grid-template-columns: 1fr; }
   .smcp-write { margin-left: 0; }
 }
+
+.smcp-toggle { flex-direction: row; align-items: center; gap: 10px; color: var(--text); font-size: 14px; margin-bottom: 12px; }
+.smcp-toggle input { width: 20px; height: 20px; accent-color: var(--accent); }
+.smcp-scenes { display: flex; flex-direction: column; gap: 10px; }
+.smcp-scene-row {
+  display: grid; grid-template-columns: minmax(120px, 200px) auto 1fr auto; gap: 12px;
+  align-items: center; background: var(--panel-alt); border-radius: 10px; padding: 10px 12px;
+}
+.smcp-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--pad-empty); color: var(--text-dim); }
+.smcp-badge.on { background: #1f4d34; color: #8be0b0; }
+.smcp-swatches { display: grid; grid-template-columns: repeat(32, 1fr); gap: 1px; min-height: 28px; max-width: 520px; }
+.smcp-swatches i { display: block; aspect-ratio: 1; border-radius: 2px; }
+@media (max-width: 860px) { .smcp-scene-row { grid-template-columns: 1fr; } }

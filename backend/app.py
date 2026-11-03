@@ -1572,6 +1572,49 @@ async def _apply_scene_and_broadcast(scene: dict, old_pads: list[dict]) -> None:
     await _broadcast_tempo()
     await _broadcast_sequencer()
     await _broadcast_metronome()
+    if scene.get("id") is not None:
+        _schedule_scene_colors(scene["id"])
+
+
+# SMC-PAD: cada cena guarda as cores dos pads do controlador. Salvar a cena lê as
+# cores do aparelho; carregar a cena as aplica ao vivo (sem gravar de vez no aparelho).
+# Tudo é "melhor esforço": nunca atrasa nem impede salvar/trocar de cena.
+_scene_colors_lock = asyncio.Lock()
+_scene_colors_latest: Optional[int] = None
+_background_tasks: set = set()
+
+
+async def _capture_scene_colors(scene_id: int) -> bool:
+    if not smcpad_api.scene_colors_enabled():
+        return False
+    try:
+        return await asyncio.to_thread(smcpad_api.capture_scene_colors, scene_id)
+    except Exception as exc:
+        logging.getLogger("diakopad.smcpad").info("cores do SMC-PAD não salvas na cena %s: %s", scene_id, exc)
+        return False
+
+
+async def _apply_scene_colors(scene_id: int, colors: list[str]) -> None:
+    async with _scene_colors_lock:
+        if _scene_colors_latest != scene_id:
+            return  # outra cena foi carregada enquanto esta esperava: só a mais recente pinta
+        try:
+            await asyncio.to_thread(smcpad_api.get_service().apply_pad_colors, colors)
+        except Exception as exc:
+            logging.getLogger("diakopad.smcpad").info("cores do SMC-PAD não aplicadas (cena %s): %s", scene_id, exc)
+
+
+def _schedule_scene_colors(scene_id: int) -> None:
+    global _scene_colors_latest
+    if not smcpad_api.scene_colors_enabled():
+        return
+    colors = storage.get_scene_smc_colors(scene_id)
+    if colors is None:
+        return  # cena sem cores: nada a fazer (e nenhuma tarefa em segundo plano)
+    _scene_colors_latest = scene_id
+    task = asyncio.create_task(_apply_scene_colors(scene_id, colors))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 async def _broadcast_scenes() -> None:
@@ -1621,8 +1664,9 @@ async def save_scene(body: SceneRequest):
         pad_sends=storage.list_pad_sends(),
         fx_buses=storage.list_fx_buses(),
     )
+    smc_colors = await _capture_scene_colors(scene_id)
     await _broadcast_scenes()
-    return {"ok": True, "scene": {"id": scene_id, "name": name}}
+    return {"ok": True, "scene": {"id": scene_id, "name": name}, "smc_colors": smc_colors}
 
 
 class SceneActiveRequest(BaseModel):

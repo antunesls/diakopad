@@ -62,7 +62,8 @@ mcp = MCPServer(
         "O controlador SMC-PAD tem a própria configuração interna (pads, botões, "
         "knobs, globais, calibração): comece com smcpad_status e smcpad_get_config; "
         "smcpad_edit grava no aparelho e só funciona se o usuário ligou "
-        "\"Gravação\" na aba SMCPAD Config."
+        "\"Gravação\" na aba SMCPAD Config. Cada cena também guarda as cores dos "
+        "pads do SMC-PAD (smcpad_scene_colors_*)."
     ),
 )
 
@@ -619,7 +620,8 @@ async def list_scenes() -> list[dict]:
 @mcp.tool(annotations=WRITE)
 async def save_scene(name: str) -> dict:
     """Salva o estado atual (pads, mix, efeitos, knobs, BPM, metrônomo,
-    sequencer) como cena. Um nome existente é sobrescrito."""
+    sequencer) como cena. Um nome existente é sobrescrito. Se o SMC-PAD estiver
+    conectado, as cores dos pads dele também entram na cena (campo smc_colors)."""
     return await _post("/api/scenes", {"name": name})
 
 
@@ -999,6 +1001,44 @@ async def smcpad_import_preset(
     if path.suffix.lower() not in (".spc", ".bin") or not path.is_file():
         raise ToolError(f"arquivo .spc não encontrado: {path}")
     return await _call("POST", f"/api/smcpad/preset/{preset}/import", content=path.read_bytes(), headers={"Content-Type": "application/octet-stream"})
+
+
+# ── SMC-PAD: cores dos pads por cena ──
+# Cada cena guarda as 128 cores dos pads do preset ativo do SMC-PAD. Salvar a cena lê as cores do
+# aparelho; carregar a cena as aplica AO VIVO (sem gravar de vez no aparelho, então não exige "Gravação").
+
+
+@mcp.tool(annotations=READ)
+async def smcpad_scene_colors_list() -> dict:
+    """Se o recurso "cores por cena" está ligado e quais cenas já têm cores do SMC-PAD salvas."""
+    return await _get("/api/smcpad/scene-colors")
+
+
+@mcp.tool(annotations=IDEMPOTENT)
+async def smcpad_scene_colors_set_enabled(enabled: bool) -> dict:
+    """Liga/desliga o salvar e aplicar cores do SMC-PAD ao salvar e trocar de cena (padrão: ligado).
+    Desligado, as cenas mantêm as cores que já têm, só não são lidas nem aplicadas."""
+    return await _post("/api/smcpad/scene-colors/enabled", {"enabled": enabled})
+
+
+@mcp.tool(annotations=WRITE)
+async def smcpad_scene_colors_save(scene_id: int) -> dict:
+    """Guarda na cena as cores que os pads do SMC-PAD têm AGORA (lidas do aparelho, preset ativo).
+    Sobrescreve as cores anteriores da cena. Exige o aparelho conectado."""
+    return await _post(f"/api/smcpad/scenes/{scene_id}/colors/capture")
+
+
+@mcp.tool(annotations=WRITE)
+async def smcpad_scene_colors_apply(scene_id: int) -> dict:
+    """Pinta os pads do SMC-PAD com as cores salvas na cena, ao vivo e sem gravar de vez no aparelho
+    (ao desligá-lo, volta às cores gravadas). Só mexe nos bytes de cor."""
+    return await _post(f"/api/smcpad/scenes/{scene_id}/colors/apply")
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+async def smcpad_scene_colors_clear(scene_id: int) -> dict:
+    """Remove as cores do SMC-PAD salvas numa cena (o restante da cena não muda)."""
+    return await _delete(f"/api/smcpad/scenes/{scene_id}/colors")
 
 
 def main() -> None:

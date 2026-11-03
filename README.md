@@ -362,6 +362,18 @@ exporta e importa um preset como arquivo `.spc` (o mesmo formato do Midi Suite).
 - Para recuperar um backup (`.bin` de 28.312 bytes, o mesmo formato do `SPB.bin`
   do Midi Suite), importe o preset desejado pela própria aba ou pelo Midi Suite.
 
+**Cores por cena.** Cada cena do DiakoPad guarda as cores dos 128 pads do preset
+ativo do SMC-PAD. Ao **salvar** uma cena, as cores atuais do aparelho entram nela
+(se ele estiver conectado; sem aparelho, a cena é salva normalmente e mantém as
+cores que já tinha). Ao **carregar** uma cena, inclusive pelos botões do próprio
+SMC-PAD, as cores são aplicadas **ao vivo** só nos bytes de cor, sem gravar de vez
+na memória do aparelho e sem fazer backup: não gasta a memória dele e não depende
+de "Gravação"; ao desligar o aparelho, ele volta às cores gravadas. Se o aparelho
+não responde, a troca de cena segue normalmente (a tentativa falha em meio segundo
+e não trava nada). A seção **Cores por cena** da aba lista as cenas e permite
+salvar as cores atuais, aplicar, remover e desligar o recurso
+(`smcpad_scene_colors` nas configurações).
+
 O protocolo, obtido por engenharia reversa e conferido no aparelho real, está em
 [`docs/smcpad-protocolo.md`](docs/smcpad-protocolo.md).
 

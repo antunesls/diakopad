@@ -22,6 +22,7 @@ import diakopad_mcp  # noqa: E402
 import smcpad as sp  # noqa: E402
 import smcpad_api  # noqa: E402
 import smcpad_device as dev  # noqa: E402
+import storage  # noqa: E402
 from smcpad_sim import FakeSmcPad  # noqa: E402
 from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
 
@@ -34,12 +35,14 @@ class SmcPadMcpTests(unittest.IsolatedAsyncioTestCase):
         self.enabled = False
         service = dev.SmcPadService(lambda: self.fake, self.tmp / "backups", lambda: self.enabled)
         patches = [
+            patch.object(storage, "DB_PATH", self.tmp / "t.db"),
             patch.object(smcpad_api, "BACKUP_DIR", self.tmp / "backups"),
             patch.dict(os.environ, {"DIAKOPAD_TOKEN": ""}),
         ]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
+        storage.init_db()
         smcpad_api.set_service(service)
         self.addCleanup(smcpad_api.set_service, None)
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=diakopad_app.app), base_url="http://test")
@@ -172,6 +175,47 @@ class SmcPadMcpTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(status["connected"])
         with self.assertRaisesRegex(ToolError, "503"):
             await self.call("smcpad_get_config")
+
+    async def test_scene_colors_save_apply_clear(self):
+        scene_id = storage.save_scene("Louvor", storage.list_pads(), storage.list_pad_effects())
+        listing = await self.call("smcpad_scene_colors_list")
+        self.assertTrue(listing["enabled"])
+        self.assertEqual(listing["scenes"], [{"id": scene_id, "name": "Louvor", "has_colors": False}])
+
+        with self.assertRaisesRegex(ToolError, "404"):  # ainda sem cores
+            await self.call("smcpad_scene_colors_apply", scene_id=scene_id)
+        await self.call("smcpad_scene_colors_save", scene_id=scene_id)
+        self.assertTrue((await self.call("smcpad_scene_colors_list"))["scenes"][0]["has_colors"])
+
+        # muda o aparelho (gravação ligada) e aplica a cena de volta, sem commit e sem precisar de "Gravação"
+        self.enabled = True
+        await self.call("smcpad_edit", edits=[{**self.NOTE, "field": "color", "value": "#ff0000"}], commit=False)
+        self.enabled = False
+        self.fake.commits.clear()
+        result = await self.call("smcpad_scene_colors_apply", scene_id=scene_id)
+        self.assertEqual((result["ok"], result["committed"]), (True, False))
+        pad = (await self.call("smcpad_get_config", section="pads", group=3))["pads"][0]
+        self.assertEqual(pad["color"], "#f000f0")
+        self.assertEqual(self.fake.commits, [])
+
+        await self.call("smcpad_scene_colors_clear", scene_id=scene_id)
+        self.assertFalse((await self.call("smcpad_scene_colors_list"))["scenes"][0]["has_colors"])
+        with self.assertRaisesRegex(ToolError, "404"):
+            await self.call("smcpad_scene_colors_save", scene_id=9999)
+
+    async def test_scene_colors_toggle_and_safety_annotations(self):
+        self.assertEqual(await self.call("smcpad_scene_colors_set_enabled", enabled=False), {"enabled": False})
+        self.assertFalse((await self.call("smcpad_scene_colors_list"))["enabled"])
+        tools = {t.name: t for t in await diakopad_mcp.mcp.list_tools()}
+        self.assertTrue(tools["smcpad_scene_colors_clear"].annotations.destructive_hint)
+        self.assertFalse(tools["smcpad_scene_colors_apply"].annotations.destructive_hint)
+        self.assertTrue(tools["smcpad_scene_colors_list"].annotations.read_only_hint)
+
+    async def test_scene_colors_save_needs_the_device(self):
+        scene_id = storage.save_scene("Louvor", storage.list_pads(), storage.list_pad_effects())
+        self.fake.drop = 1000
+        with self.assertRaisesRegex(ToolError, "503"):
+            await self.call("smcpad_scene_colors_save", scene_id=scene_id)
 
 
 if __name__ == "__main__":

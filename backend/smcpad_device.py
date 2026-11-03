@@ -332,6 +332,78 @@ class SmcPadService:
             finally:
                 device.close()
 
+    # -- cores dos pads (usadas pelas cenas) ------------------------------------
+    @staticmethod
+    def _pad_area(preset: int) -> tuple[int, int]:
+        """(endereço, tamanho) dos 128 registros de pad do preset (1..8) na região de configuração."""
+        return (preset - 1) * sp.PRESET_SIZE + sp.PAD_BASE, sp.PAD_COUNT * sp.PAD_SIZE
+
+    @staticmethod
+    def _colors_of(block: bytes) -> list[str]:
+        out = []
+        for i in range(sp.PAD_COUNT):
+            r, g, b = block[i * sp.PAD_SIZE + 5 : i * sp.PAD_SIZE + 8]
+            out.append(f"#{r:02x}{g:02x}{b:02x}")
+        return out
+
+    def _open_fast(self) -> SmcPadDevice:
+        """Para ganchos de cena: se o aparelho não responde, desiste rápido em vez de travar a troca de cena."""
+        try:
+            return SmcPadDevice(self._factory(), timeout=0.5, retries=0)
+        except DeviceError:
+            raise
+        except Exception as exc:
+            raise DeviceError(f"não foi possível abrir a porta MIDI do SMC-PAD: {exc}") from exc
+
+    def read_pad_colors(self) -> list[str]:
+        """As 128 cores dos pads do preset ATIVO no aparelho, como "#rrggbb"."""
+        with self._lock:
+            device = self._open_fast()
+            try:
+                preset = sp.parse_globals(device.read_globals())["preset"]
+                address, length = self._pad_area(preset)
+                return self._colors_of(device.read_region(sp.REGION_CONFIG, address, length))
+            finally:
+                device.close()
+
+    def apply_pad_colors(self, colors: list[str]) -> dict[str, Any]:
+        """Pinta os pads do preset ativo AO VIVO: só os bytes de cor que diferem, na memória de trabalho
+        do aparelho. Sem backup e sem commit (nada vai para a memória permanente: ao desligar o aparelho
+        volta às cores gravadas), por isso não depende de "Gravação" e é seguro numa troca de cena.
+        Confere a leitura; se divergir, restaura os bytes originais."""
+        if len(colors) != sp.PAD_COUNT:
+            raise sp.EditError(f"são necessárias {sp.PAD_COUNT} cores")
+        wanted = [sp._hex_color(c) for c in colors]
+        with self._lock:
+            device = self._open_fast()
+            try:
+                preset = sp.parse_globals(device.read_globals())["preset"]
+                address, length = self._pad_area(preset)
+                block = device.read_region(sp.REGION_CONFIG, address, length)
+                new = bytearray(block)
+                changed = []
+                for i, rgb in enumerate(wanted):
+                    off = i * sp.PAD_SIZE + 5
+                    if new[off : off + 3] != rgb:
+                        new[off : off + 3] = rgb
+                        changed.append(off)
+                if not changed:
+                    return {"changed": 0, "committed": False}
+                lo, hi = changed[0], changed[-1] + 3  # trecho contíguo que cobre todas as cores alteradas
+                try:
+                    device.write_region(sp.REGION_CONFIG, address + lo, bytes(new[lo:hi]))
+                    if device.read_region(sp.REGION_CONFIG, address + lo, hi - lo) != bytes(new[lo:hi]):
+                        raise VerifyError("conferência das cores falhou")
+                except Exception:
+                    try:
+                        device.write_region(sp.REGION_CONFIG, address + lo, bytes(block[lo:hi]))
+                    except Exception:  # pragma: no cover - melhor esforço
+                        logger.exception("falha ao restaurar as cores")
+                    raise
+                return {"changed": len(changed), "committed": False}
+            finally:
+                device.close()
+
     @staticmethod
     def _original(snap: Snapshot, region: int, address: int, length: int) -> bytes:
         source = {sp.REGION_CONFIG: snap.config, sp.REGION_GLOBALS: snap.globals_raw, sp.REGION_CALIBRATION: snap.calibration}[region]

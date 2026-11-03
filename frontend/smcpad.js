@@ -8,7 +8,7 @@
 
   const state = { cfg: null, preset: null, section: "pads", group: 3, pad: 32, error: null, loading: false, msg: null };
   const SECTIONS = [
-    ["pads", "Pads"], ["buttons", "Botões"], ["knobs", "Knobs"], ["globals", "Globais"], ["calibration", "Calibração"],
+    ["pads", "Pads"], ["buttons", "Botões"], ["knobs", "Knobs"], ["globals", "Globais"], ["calibration", "Calibração"], ["scenes", "Cores por cena"],
   ];
 
   // ---------- utilidades ----------
@@ -242,6 +242,54 @@
       applyBar(() => collectEdits(fields, (pad, value) => ({ scope: "calibration", pad: Number(pad), field: "level", value: value + 1 })), state.cfg.write_enabled ? null : "Gravação desligada")));
   }
 
+  // Cores por cena: cada cena do DiakoPad guarda as 128 cores dos pads do preset ativo.
+  // Não exige "Gravação": aplicar pinta o aparelho ao vivo, sem gravar de vez.
+  function renderScenes(root) {
+    const card = el("section", { class: "smcp-card" },
+      el("h3", { text: "Cores por cena" }),
+      el("p", { class: "smcp-note", text: "Ao salvar uma cena, as cores atuais dos pads do SMC-PAD entram nela (se o aparelho estiver conectado). Ao carregar a cena, as cores são aplicadas ao vivo no aparelho, sem gravar de vez: ao desligá-lo, ele volta às cores gravadas. Falhas nunca impedem salvar ou trocar de cena." }));
+    root.append(card);
+    loadSceneColors(card);
+  }
+
+  async function loadSceneColors(card) {
+    const res = await request("/scene-colors");
+    if (!res.ok) { card.append(el("p", { class: "smcp-msg err", text: `Não foi possível carregar as cenas: ${detail(res)}` })); return; }
+    const toggle = el("input", { type: "checkbox", checked: res.data.enabled });
+    toggle.addEventListener("change", async () => {
+      const r = await post("/scene-colors/enabled", { enabled: toggle.checked });
+      setMessage(r.ok ? (toggle.checked ? "Cores por cena ligadas." : "Cores por cena desligadas (as cenas mantêm as cores já salvas).") : `Erro: ${detail(r)}`, r.ok ? "ok" : "err");
+    });
+    card.append(el("label", { class: "smcp-field smcp-toggle" }, toggle, el("span", { text: "Salvar e aplicar as cores ao salvar e trocar de cena" })));
+    if (!res.data.scenes.length) { card.append(el("p", { class: "smcp-note", text: "Nenhuma cena salva ainda. Salve uma na aba Performance." })); return; }
+    const list = el("div", { class: "smcp-scenes" });
+    for (const scene of res.data.scenes) list.append(sceneRow(scene));
+    card.append(list);
+  }
+
+  function sceneRow(scene) {
+    const swatches = el("div", { class: "smcp-swatches" });
+    if (scene.has_colors) {
+      request(`/scenes/${scene.id}/colors`).then((r) => {
+        if (r.ok) swatches.replaceChildren(...r.data.colors.map((c, i) => el("i", { style: `background:${c}`, title: `Pad ${i % 16 + 1} · grupo ${Math.floor(i / 16) + 1}` })));
+      });
+    }
+    const act = (label, handler, disabled) => el("button", { type: "button", class: "secondary-btn", text: label, disabled, onclick: handler });
+    const run = async (promise, okText) => {
+      const r = await promise;
+      setMessage(r.ok ? okText : `Erro: ${detail(r)}`, r.ok ? "ok" : "err");
+      if (r.ok) render();
+    };
+    return el("div", { class: "smcp-scene-row" },
+      el("strong", { text: scene.name }),
+      el("span", { class: "smcp-badge" + (scene.has_colors ? " on" : ""), text: scene.has_colors ? "com cores" : "sem cores" }),
+      swatches,
+      el("div", { class: "smcp-apply" },
+        act("Salvar cores atuais", () => run(request(`/scenes/${scene.id}/colors/capture`, { method: "POST" }), `Cores atuais do aparelho salvas na cena “${scene.name}”.`)),
+        act("Aplicar agora", () => run(request(`/scenes/${scene.id}/colors/apply`, { method: "POST" }), `Cores da cena “${scene.name}” aplicadas ao vivo.`), !scene.has_colors),
+        act("Remover", () => { if (window.confirm(`Remover as cores salvas da cena “${scene.name}”?`)) run(request(`/scenes/${scene.id}/colors`, { method: "DELETE" }), "Cores removidas da cena."); }, !scene.has_colors)));
+  }
+
   // ---------- estrutura da tela ----------
   function header() {
     const cfg = state.cfg;
@@ -302,7 +350,7 @@
     if (["pads", "buttons", "knobs"].includes(state.section) && state.preset !== state.cfg.current_preset) {
       body.append(el("p", { class: "smcp-warn", text: `O preset ${state.preset} não está ativo no aparelho (ativo: ${state.cfg.current_preset}). Você pode ver, mas só edita o preset ativo — ative em Globais.` }));
     }
-    ({ pads: renderPads, buttons: renderButtons, knobs: renderKnobs, globals: renderGlobals, calibration: renderCalibration })[state.section](body);
+    ({ pads: renderPads, buttons: renderButtons, knobs: renderKnobs, globals: renderGlobals, calibration: renderCalibration, scenes: renderScenes })[state.section](body);
     renderMessage();
   }
 

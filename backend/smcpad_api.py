@@ -22,6 +22,7 @@ import storage
 BACKUP_DIR = Path(os.environ.get("DIAKOPAD_SMCPAD_BACKUP_DIR", Path(__file__).parent / "smcpad_backups"))
 PORT_PATTERN = os.environ.get("DIAKOPAD_SMCPAD_PORT_PATTERN", dev.DEFAULT_PORT_PATTERN)
 WRITE_SETTING = "smcpad_write_enabled"
+SCENE_COLORS_SETTING = "smcpad_scene_colors"
 MAX_IMPORT_BYTES = sp.PRESET_SIZE
 
 router = APIRouter(prefix="/api/smcpad", tags=["smcpad"])
@@ -43,6 +44,22 @@ def set_service(service: Optional[dev.SmcPadService]) -> None:
     """Injeta um serviço (testes) ou restaura o padrão (None)."""
     global _service
     _service = service
+
+
+def scene_colors_enabled() -> bool:
+    return storage.get_settings().get(SCENE_COLORS_SETTING, "1") == "1"
+
+
+def capture_scene_colors(scene_id: int) -> bool:
+    """Lê as cores dos pads do aparelho e guarda na cena. Levanta DeviceError se o aparelho não responde
+    (nesse caso as cores antigas da cena ficam como estavam)."""
+    return storage.set_scene_smc_colors(scene_id, get_service().read_pad_colors())
+
+
+def apply_scene_colors(scene_id: int) -> Optional[dict[str, Any]]:
+    """Pinta o aparelho (ao vivo, sem gravar de vez) com as cores da cena; None se a cena não tem cores."""
+    colors = storage.get_scene_smc_colors(scene_id)
+    return None if colors is None else get_service().apply_pad_colors(colors)
 
 
 class EditsRequest(BaseModel):
@@ -137,3 +154,63 @@ def backups() -> list[dict[str, Any]]:
         return []
     files = sorted(BACKUP_DIR.glob("smcpad-*.bin"), reverse=True)
     return [{"name": f.name, "bytes": f.stat().st_size, "modified": f.stat().st_mtime} for f in files]
+
+
+# -- cores por cena -------------------------------------------------------------
+
+def _scene_or_404(scene_id: int) -> dict[str, Any]:
+    scene = storage.get_scene(scene_id)
+    if scene is None:
+        raise HTTPException(404, "scene not found")
+    return scene
+
+
+@router.get("/scene-colors")
+def scene_colors() -> dict[str, Any]:
+    return {
+        "enabled": scene_colors_enabled(),
+        "scenes": [{"id": s["id"], "name": s["name"], "has_colors": bool(s["has_smc_colors"])} for s in storage.list_scenes()],
+    }
+
+
+@router.post("/scene-colors/enabled")
+def scene_colors_enabled_setting(body: WriteModeRequest) -> dict[str, bool]:
+    storage.set_setting(SCENE_COLORS_SETTING, "1" if body.enabled else "0")
+    return {"enabled": body.enabled}
+
+
+@router.get("/scenes/{scene_id}/colors")
+def get_scene_colors(scene_id: int) -> dict[str, Any]:
+    scene = _scene_or_404(scene_id)
+    colors = storage.get_scene_smc_colors(scene_id)
+    if colors is None:
+        raise HTTPException(404, "esta cena não tem cores do SMC-PAD salvas")
+    return {"scene": {"id": scene["id"], "name": scene["name"]}, "colors": colors}
+
+
+@router.post("/scenes/{scene_id}/colors/capture")
+def capture_colors(scene_id: int) -> dict[str, Any]:
+    scene = _scene_or_404(scene_id)
+    try:
+        capture_scene_colors(scene_id)
+    except (dev.DeviceError, sp.ProtocolError) as exc:
+        raise _fail(exc) from exc
+    return {"ok": True, "scene": {"id": scene["id"], "name": scene["name"]}}
+
+
+@router.post("/scenes/{scene_id}/colors/apply")
+def apply_colors(scene_id: int) -> dict[str, Any]:
+    _scene_or_404(scene_id)
+    try:
+        result = apply_scene_colors(scene_id)
+    except (dev.DeviceError, sp.EditError, sp.ProtocolError) as exc:
+        raise _fail(exc) from exc
+    if result is None:
+        raise HTTPException(404, "esta cena não tem cores do SMC-PAD salvas")
+    return {"ok": True, **result}
+
+
+@router.delete("/scenes/{scene_id}/colors")
+def delete_colors(scene_id: int) -> dict[str, bool]:
+    _scene_or_404(scene_id)
+    return {"ok": storage.delete_scene_smc_colors(scene_id)}

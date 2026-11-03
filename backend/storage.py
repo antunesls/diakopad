@@ -160,6 +160,17 @@ CREATE TABLE IF NOT EXISTS scene_knobs (
     FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
 );
 
+-- SMC-PAD pad colors captured with the scene (128 "#rrggbb" values of the
+-- controller's active preset, as one JSON list), so switching scenes also
+-- repaints the controller. Kept apart from scene_pads: it belongs to the
+-- hardware, and saving a scene while the controller is unplugged must not
+-- erase the colors an earlier save captured.
+CREATE TABLE IF NOT EXISTS scene_smc_colors (
+    scene_id INTEGER PRIMARY KEY,
+    colors TEXT NOT NULL,
+    FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
+);
+
 -- Kits: curated sound sets, distinct from scenes above - just a name plus
 -- which sample goes on which pad (up to 16, fewer is fine - a kit that only
 -- fills pads 1-8 has an "octapad feel"). No effects/knobs/volume/tempo, no
@@ -288,6 +299,9 @@ DEFAULT_SETTINGS = {
     "master_comp_ratio": "2",
     "master_comp_makeup_db": "2",
     "velocity_sensitive": "0",
+    # SMC-PAD: save the controller's pad colors with each scene and repaint
+    # the controller (live, never committed to its flash) when a scene loads.
+    "smcpad_scene_colors": "1",
     "sequencer_bpm": "100",
     "metronome_style": "digital",
     "metronome_signature": "4_4",
@@ -1272,7 +1286,9 @@ def list_scenes() -> list[dict]:
     conn = get_connection()
     try:
         rows = conn.execute(
-            "SELECT id, name, created_at, active FROM scenes ORDER BY name"
+            "SELECT id, name, created_at, active, "
+            "EXISTS(SELECT 1 FROM scene_smc_colors c WHERE c.scene_id = scenes.id) AS has_smc_colors "
+            "FROM scenes ORDER BY name"
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
@@ -1490,6 +1506,56 @@ def delete_scene(scene_id: int) -> bool:
     conn = get_connection()
     try:
         cur = conn.execute("DELETE FROM scenes WHERE id = ?", (scene_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+SMC_COLOR_COUNT = 128
+_SMC_COLOR_RE = re.compile(r"^#[0-9a-f]{6}$")
+
+
+def set_scene_smc_colors(scene_id: int, colors: list[str]) -> bool:
+    """Stores the SMC-PAD pad colors for a scene (replacing any earlier ones).
+    Returns False when the scene doesn't exist. Raises ValueError for a list that
+    isn't exactly 128 lowercase "#rrggbb" values."""
+    if not isinstance(colors, list) or len(colors) != SMC_COLOR_COUNT:
+        raise ValueError(f"expected {SMC_COLOR_COUNT} colors")
+    normalized = []
+    for color in colors:
+        value = color.lower() if isinstance(color, str) else ""
+        if not _SMC_COLOR_RE.match(value):
+            raise ValueError(f"invalid color: {color!r}")
+        normalized.append(value)
+    conn = get_connection()
+    try:
+        if conn.execute("SELECT 1 FROM scenes WHERE id = ?", (scene_id,)).fetchone() is None:
+            return False
+        conn.execute(
+            "INSERT INTO scene_smc_colors (scene_id, colors) VALUES (?, ?) "
+            "ON CONFLICT(scene_id) DO UPDATE SET colors = excluded.colors",
+            (scene_id, json.dumps(normalized)),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def get_scene_smc_colors(scene_id: int) -> Optional[list[str]]:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT colors FROM scene_smc_colors WHERE scene_id = ?", (scene_id,)).fetchone()
+        return json.loads(row["colors"]) if row else None
+    finally:
+        conn.close()
+
+
+def delete_scene_smc_colors(scene_id: int) -> bool:
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM scene_smc_colors WHERE scene_id = ?", (scene_id,))
         conn.commit()
         return cur.rowcount > 0
     finally:

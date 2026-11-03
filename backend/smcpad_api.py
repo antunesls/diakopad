@@ -16,6 +16,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 import smcpad as sp
+import smcpad_colors
 import smcpad_device as dev
 import storage
 
@@ -54,6 +55,31 @@ def capture_scene_colors(scene_id: int) -> bool:
     """Lê as cores dos pads do aparelho e guarda na cena. Levanta DeviceError se o aparelho não responde
     (nesse caso as cores antigas da cena ficam como estavam)."""
     return storage.set_scene_smc_colors(scene_id, get_service().read_pad_colors())
+
+
+def generate_scene_colors(scene_id: int, *, apply: bool = False) -> Optional[dict[str, Any]]:
+    """Gera e guarda o kit de cores da cena pelo tipo de som de cada pad. Os 112 registros que o kit não
+    toca partem das cores já salvas na cena; sem elas, das cores atuais do aparelho (se responder); sem
+    aparelho, de um fundo escuro. Com apply=True pinta também o aparelho (ao vivo). None: cena inexistente."""
+    sounds = storage.scene_pad_sounds(scene_id)
+    if sounds is None:
+        return None
+    base = storage.get_scene_smc_colors(scene_id)
+    if base is None:
+        try:
+            base = get_service().read_pad_colors()
+        except Exception:  # aparelho ausente: o kit não depende dele
+            base = None
+    colors, detail = smcpad_colors.kit_colors(sounds, base)
+    storage.set_scene_smc_colors(scene_id, colors)
+    result: dict[str, Any] = {"ok": True, "pads": detail, "applied": False}
+    if apply:
+        try:
+            get_service().apply_pad_colors(colors)
+            result["applied"] = True
+        except Exception as exc:
+            result["apply_error"] = str(exc)
+    return result
 
 
 def apply_scene_colors(scene_id: int) -> Optional[dict[str, Any]]:
@@ -170,6 +196,7 @@ def scene_colors() -> dict[str, Any]:
     return {
         "enabled": scene_colors_enabled(),
         "scenes": [{"id": s["id"], "name": s["name"], "has_colors": bool(s["has_smc_colors"])} for s in storage.list_scenes()],
+        "legend": smcpad_colors.legend(),
     }
 
 
@@ -214,3 +241,26 @@ def apply_colors(scene_id: int) -> dict[str, Any]:
 def delete_colors(scene_id: int) -> dict[str, bool]:
     _scene_or_404(scene_id)
     return {"ok": storage.delete_scene_smc_colors(scene_id)}
+
+
+@router.post("/scenes/{scene_id}/colors/generate")
+def generate_colors(scene_id: int, apply: bool = False) -> dict[str, Any]:
+    """Kit de cores pelo tipo de som dos pads da cena (bumbo azul, caixa vermelha...)."""
+    _scene_or_404(scene_id)
+    result = generate_scene_colors(scene_id, apply=apply)
+    if result is None:  # pragma: no cover - a cena sumiu entre as duas consultas
+        raise HTTPException(404, "scene not found")
+    return result
+
+
+@router.post("/scene-colors/generate-all")
+def generate_all_colors(apply_current: Optional[int] = None) -> dict[str, Any]:
+    """Gera o kit de cores de TODAS as cenas. apply_current: id de uma cena para pintar também o aparelho."""
+    done = []
+    for scene in storage.list_scenes():
+        result = generate_scene_colors(scene["id"], apply=scene["id"] == apply_current)
+        counts: dict[str, int] = {}
+        for pad in (result or {}).get("pads", []):
+            counts[pad["label"]] = counts.get(pad["label"], 0) + 1
+        done.append({"id": scene["id"], "name": scene["name"], "types": counts, "applied": bool(result and result.get("applied"))})
+    return {"ok": True, "scenes": done}

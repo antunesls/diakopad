@@ -374,6 +374,18 @@ e não trava nada). A seção **Cores por cena** da aba lista as cenas e permite
 salvar as cores atuais, aplicar, remover e desligar o recurso
 (`smcpad_scene_colors` nas configurações).
 
+**Kit de cores pelos sons.** O botão *Gerar pelos sons* (por cena) e *Gerar cores
+de todas as cenas pelos sons* pintam cada pad conforme o tipo do som que ele toca
+na cena: bumbos em azul, caixas em vermelho, hi-hats em amarelo, pratos em ciano,
+tons em verde, percussão em roxo, sinos/metais em lavanda, palmas em rosa, rim em
+laranja e pads vazios quase apagados (a legenda aparece na própria seção). O tipo
+sai de palavras-chave no nome do som (em português e inglês) e, se o nome não
+ajudar, na pasta dele; as paletas e palavras ficam em `backend/smcpad_colors.py`.
+Cada pad vai para o registro do SMC-PAD cuja nota é a nota MIDI dele (36–51 de
+fábrica, o banco A). As demais cores da cena (outros bancos e grupos) são
+mantidas: partem das cores já salvas na cena ou, na primeira vez, das cores atuais
+do aparelho. Gerar não precisa do aparelho; só *aplicar* precisa.
+
 O protocolo, obtido por engenharia reversa e conferido no aparelho real, está em
 [`docs/smcpad-protocolo.md`](docs/smcpad-protocolo.md).
 

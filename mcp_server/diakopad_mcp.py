@@ -1035,6 +1035,20 @@ async def smcpad_scene_colors_apply(scene_id: int) -> dict:
     return await _post(f"/api/smcpad/scenes/{scene_id}/colors/apply")
 
 
+@mcp.tool(annotations=WRITE)
+async def smcpad_scene_colors_generate(
+    scene_id: Annotated[Optional[int], Field(description="Cena a colorir; sem valor, gera para TODAS as cenas")] = None,
+    apply: Annotated[bool, Field(description="Pintar também o SMC-PAD agora (ao vivo, sem gravar de vez)")] = False,
+) -> dict:
+    """Gera o kit de cores pelo TIPO DE SOM de cada pad da cena: bumbos azuis, caixas vermelhas, hi-hats amarelos,
+    pratos ciano, tons verdes, percussão roxa, sinos lavanda, palmas rosa, rim laranja, pads vazios apagados
+    (ver 'legend' em smcpad_scene_colors_list). Substitui só as cores dos pads dos sons; o resto da cena é mantido.
+    Não precisa do aparelho (apply=true precisa)."""
+    if scene_id is None:
+        return await _post("/api/smcpad/scene-colors/generate-all")
+    return await _post(f"/api/smcpad/scenes/{scene_id}/colors/generate", params={"apply": str(apply).lower()})
+
+
 @mcp.tool(annotations=DESTRUCTIVE)
 async def smcpad_scene_colors_clear(scene_id: int) -> dict:
     """Remove as cores do SMC-PAD salvas numa cena (o restante da cena não muda)."""

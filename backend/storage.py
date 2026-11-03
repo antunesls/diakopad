@@ -1552,6 +1552,26 @@ def get_scene_smc_colors(scene_id: int) -> Optional[list[str]]:
         conn.close()
 
 
+def scene_pad_sounds(scene_id: int) -> Optional[list[dict]]:
+    """The sound each pad plays in a scene (name + sample folder) plus the pad's live MIDI note,
+    for classifying pads by sound type. None when the scene doesn't exist."""
+    conn = get_connection()
+    try:
+        if conn.execute("SELECT 1 FROM scenes WHERE id = ?", (scene_id,)).fetchone() is None:
+            return None
+        rows = conn.execute(
+            "SELECT sp.pad_number, p.midi_note, s.display_name AS name, s.folder "
+            "FROM scene_pads sp "
+            "LEFT JOIN samples s ON s.id = sp.sample_id "
+            "LEFT JOIN pads p ON p.pad_number = sp.pad_number "
+            "WHERE sp.scene_id = ? ORDER BY sp.pad_number",
+            (scene_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def delete_scene_smc_colors(scene_id: int) -> bool:
     conn = get_connection()
     try:

@@ -261,6 +261,17 @@
       setMessage(r.ok ? (toggle.checked ? "Cores por cena ligadas." : "Cores por cena desligadas (as cenas mantêm as cores já salvas).") : `Erro: ${detail(r)}`, r.ok ? "ok" : "err");
     });
     card.append(el("label", { class: "smcp-field smcp-toggle" }, toggle, el("span", { text: "Salvar e aplicar as cores ao salvar e trocar de cena" })));
+    card.append(
+      el("div", { class: "smcp-legend" }, (res.data.legend || []).map((item) =>
+        el("span", { class: "smcp-legend-item" }, el("i", { style: `background:${item.color}` }), item.label))),
+      el("div", { class: "smcp-apply" },
+        el("button", { type: "button", class: "accent-btn", text: "Gerar cores de todas as cenas pelos sons", onclick: async () => {
+          if (!window.confirm("Gerar o kit de cores de TODAS as cenas pelo tipo de som de cada pad? Isso substitui as cores dos pads dos sons (as demais cores da cena são mantidas).")) return;
+          const r = await post("/scene-colors/generate-all", {});
+          setMessage(r.ok ? `Cores geradas para ${r.data.scenes.length} cena(s).` : `Erro: ${detail(r)}`, r.ok ? "ok" : "err");
+          if (r.ok) render();
+        } }),
+        el("small", { text: "Bumbos em azul, caixas em vermelho, hi-hats em amarelo, pratos em ciano… (legenda acima)" })));
     if (!res.data.scenes.length) { card.append(el("p", { class: "smcp-note", text: "Nenhuma cena salva ainda. Salve uma na aba Performance." })); return; }
     const list = el("div", { class: "smcp-scenes" });
     for (const scene of res.data.scenes) list.append(sceneRow(scene));
@@ -285,6 +296,7 @@
       el("span", { class: "smcp-badge" + (scene.has_colors ? " on" : ""), text: scene.has_colors ? "com cores" : "sem cores" }),
       swatches,
       el("div", { class: "smcp-apply" },
+        act("Gerar pelos sons", () => run(post(`/scenes/${scene.id}/colors/generate`, {}), `Cores da cena “${scene.name}” geradas pelos tipos de som.`)),
         act("Salvar cores atuais", () => run(request(`/scenes/${scene.id}/colors/capture`, { method: "POST" }), `Cores atuais do aparelho salvas na cena “${scene.name}”.`)),
         act("Aplicar agora", () => run(request(`/scenes/${scene.id}/colors/apply`, { method: "POST" }), `Cores da cena “${scene.name}” aplicadas ao vivo.`), !scene.has_colors),
         act("Remover", () => { if (window.confirm(`Remover as cores salvas da cena “${scene.name}”?`)) run(request(`/scenes/${scene.id}/colors`, { method: "DELETE" }), "Cores removidas da cena."); }, !scene.has_colors)));

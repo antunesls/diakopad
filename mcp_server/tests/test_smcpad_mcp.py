@@ -217,6 +217,35 @@ class SmcPadMcpTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ToolError, "503"):
             await self.call("smcpad_scene_colors_save", scene_id=scene_id)
 
+    async def test_scene_colors_generate_by_sound_type(self):
+        for pad, name in enumerate(["kick1", "snare1", "hihat", None], start=1):
+            sample = storage.add_sample(f"{name}.wav", name, "Kits") if name else None
+            storage.assign_sample(pad, sample)
+        scene_id = storage.save_scene("Louvor", storage.list_pads(), storage.list_pad_effects())
+        other_id = storage.save_scene("Outra", storage.list_pads(), storage.list_pad_effects())
+
+        listing = await self.call("smcpad_scene_colors_list")
+        self.assertIn("kick", [item["key"] for item in listing["legend"]])
+
+        result = await self.call("smcpad_scene_colors_generate", scene_id=scene_id)
+        self.assertEqual([p["label"] for p in result["pads"][:4]], ["Bumbo", "Caixa", "Hi-hat / chimbal", "Pad vazio"])
+        self.assertFalse(result["applied"])
+        self.assertEqual(self.fake.writes, [])
+        colors = storage.get_scene_smc_colors(scene_id)
+        self.assertEqual(colors[32:36], ["#0040f0", "#f00000", "#f0e000", "#141414"])
+
+        painted = await self.call("smcpad_scene_colors_generate", scene_id=scene_id, apply=True)
+        self.assertTrue(painted["applied"])
+        pads = (await self.call("smcpad_get_config", section="pads", group=3))["pads"]
+        self.assertEqual([p["color"] for p in pads[:3]], ["#0040f0", "#f00000", "#f0e000"])
+        self.assertEqual(self.fake.commits, [])  # só ao vivo
+
+        everything = await self.call("smcpad_scene_colors_generate")
+        self.assertEqual({s["name"] for s in everything["scenes"]}, {"Louvor", "Outra"})
+        self.assertIsNotNone(storage.get_scene_smc_colors(other_id))
+        with self.assertRaisesRegex(ToolError, "404"):
+            await self.call("smcpad_scene_colors_generate", scene_id=9999)
+
 
 if __name__ == "__main__":
     unittest.main()

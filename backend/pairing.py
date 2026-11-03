@@ -185,7 +185,9 @@ def qr_svg(text: str) -> str:
         import segno
     except ImportError as e:  # dependência nova; o deploy por git não roda pip
         raise PairingError(503, "QR indisponível: instale as dependências (pip install -r requirements.lock)") from e
-    return segno.make(text, error="m").svg_inline(scale=6, border=2, dark="#111111", light="#ffffff")
+    # omitsize: sai com viewBox e sem largura/altura fixas, então o CSS
+    # escala o QR inteiro (com tamanho fixo, encolher a caixa cortava o código).
+    return segno.make(text, error="m").svg_inline(omitsize=True, border=4, dark="#111111", light="#ffffff")
 
 
 class Advertiser:

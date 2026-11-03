@@ -161,6 +161,8 @@ class PairingApiTests(unittest.TestCase):
         self.assertIn("a=192.168.0.40%3A8080", offer["link"])
         self.assertIn(f"c={offer['code']}", offer["link"])
         self.assertIn("<svg", offer["svg"])
+        self.assertIn("viewBox=", offer["svg"])  # escala sem cortar
+        self.assertNotIn('width="', offer["svg"].split(">", 1)[0])
         self.client.cookies.clear()
         res = self.client.post(
             "/api/pair/confirm",

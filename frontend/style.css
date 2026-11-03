@@ -2301,7 +2301,7 @@ html, body {
   background: #1d1510;
   color: var(--text-dim);
 }
-.pair-qr-code svg { display: block; width: 220px; height: 220px; border-radius: 10px; }
+.pair-qr-code svg { display: block; width: 240px; height: 240px; border-radius: 10px; shape-rendering: crispEdges; }
 .pair-qr-text { display: flex; flex-direction: column; gap: 8px; max-width: 360px; }
 .pair-qr-text strong { color: var(--text); font-size: 18px; }
 .pair-qr-text code { color: var(--text); }

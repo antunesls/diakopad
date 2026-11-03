@@ -49,9 +49,22 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
+    // Link diakopad://pair aberto pela câmera do celular (QR do navegador).
+    private val incomingLink = androidx.compose.runtime.mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme(colorScheme = DiakoColors) { RemoteScreen() } }
+        incomingLink.value = intent?.dataString
+        setContent {
+            MaterialTheme(colorScheme = DiakoColors) {
+                RemoteScreen(incomingLink.value) { incomingLink.value = null }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        intent.dataString?.let { incomingLink.value = it }
     }
 }
 
@@ -72,7 +85,7 @@ private fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { get
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RemoteScreen() {
+private fun RemoteScreen(incomingLink: String?, onLinkHandled: () -> Unit) {
     val context = LocalContext.current
     val store = remember { SavedServerStore(context) }
     var saved by remember { mutableStateOf(store.load()) }
@@ -95,7 +108,9 @@ private fun RemoteScreen() {
     var signatures by remember { mutableStateOf(emptyList<JSONObject>()) }
     var tempo by remember { mutableStateOf("--") }
     var master by remember { mutableStateOf<JSONObject?>(null) }
-    var tab by remember { mutableStateOf("Pads") }
+    var section by remember { mutableStateOf(Section.PADS) }
+    var currentSceneId by remember { mutableStateOf("") }
+    var inspectorOpen by remember { mutableStateOf(false) }
     var sceneName by remember { mutableStateOf("") }
     var confirmPanic by remember { mutableStateOf(false) }
     var selectedPad by remember { mutableStateOf(1) }
@@ -186,7 +201,10 @@ private fun RemoteScreen() {
                             val msg = JSONObject(text)
                             when (msg.optString("type")) {
                                 "pads" -> pads = msg.getJSONArray("pads").objects()
-                                "scenes" -> scenes = msg.getJSONArray("scenes").objects()
+                                "scenes" -> {
+                                    scenes = msg.getJSONArray("scenes").objects()
+                                    currentSceneId = msg.optString("current_scene_id", "")
+                                }
                                 "sounds" -> sounds = msg.getJSONArray("sounds").objects()
                                 "tempo" -> tempo = msg.optString("bpm", "--")
                                 "master" -> master = msg
@@ -215,12 +233,21 @@ private fun RemoteScreen() {
         forget("Este celular foi removido no DiakoPad. Pareie de novo.")
     }
 
+    LaunchedEffect(incomingLink) {
+        if (incomingLink != null && api != null) {
+            api = null
+            status = "Desconectado"
+        }
+    }
+
     if (api == null) {
         Scaffold { insets ->
             Column(Modifier.fillMaxSize().padding(insets)) {
                 ConnectScreen(
                     saved = saved,
                     message = connectMessage,
+                    incomingLink = incomingLink,
+                    onLinkHandled = onLinkHandled,
                     onConnect = { server ->
                         try {
                             store.save(server)
@@ -237,29 +264,67 @@ private fun RemoteScreen() {
         return
     }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("$serverName · $status") }) }) { insets ->
-        Column(Modifier.fillMaxSize().padding(insets).padding(12.dp)) {
+    val selectedPadJson = pads.firstOrNull { it.optInt("pad_number") == selectedPad }
+    val stage = StageStatus(
+        serverName = serverName,
+        status = status,
+        sceneName = scenes.firstOrNull { it.optInt("id").toString() == currentSceneId }?.optString("name"),
+        bpm = tempo.substringBefore('.'),
+        sequencerRunning = sequencer?.optBoolean("running") == true,
+        looperState = looper?.optString("state", "stopped") ?: "stopped",
+        padsFilled = pads.count { PadModel.hasSample(it) },
+        padsTotal = pads.size,
+        activeScenes = scenes.count { it.optBoolean("active") },
+    )
+    ConsoleShell(
+        section = section,
+        onSection = { section = it; inspectorOpen = false },
+        stage = stage,
+        onToggleSequencer = {
+            command("POST", "/api/sequencer/transport", "{\"running\":${sequencer?.optBoolean("running") != true}}")
+        },
+        onPanic = { command("POST", "/api/panic") },
+        onSwitchServer = { api = null; status = "Desconectado"; connectMessage = null },
+        inspector = if (section == Section.PADS) {
+            {
+                PadInspector(
+                    pad = selectedPadJson,
+                    fx = fx,
+                    effects = PadModel.padEffects(effects, effectCatalog, selectedPad),
+                    onMix = { field, value ->
+                        val cmd = StageCommands.mix(selectedPad, field, value)
+                        command(cmd.method, cmd.path, cmd.json)
+                    },
+                    onSend = { bus, level ->
+                        val cmd = StageCommands.send(selectedPad, bus, level)
+                        command(cmd.method, cmd.path, cmd.json)
+                    },
+                    onChangeSound = { inspectorOpen = false; section = Section.SOUNDS },
+                    onPlay = { command("POST", StageCommands.trigger(selectedPad).path) },
+                    onOpenEffects = { inspectorOpen = false; section = Section.EFFECTS },
+                )
+            }
+        } else null,
+        inspectorOpen = inspectorOpen,
+        onCloseInspector = { inspectorOpen = false },
+    ) { inspectorDocked ->
+        Column(Modifier.fillMaxSize()) {
             run {
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    for (name in listOf("Pads", "Cenas", "Kits", "Sons", "Mix", "Efeitos", "Transporte", "Master")) {
-                        TextButton(onClick = { tab = name }) { Text(if (tab == name) "● $name" else name) }
+                when (section) {
+                    Section.PADS -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        PadGrid(
+                            pads = pads,
+                            selected = selectedPad,
+                            onTap = { number ->
+                                selectedPad = number
+                                command("POST", StageCommands.trigger(number).path)
+                            },
+                            onLongPress = { number -> selectedPad = number; inspectorOpen = true },
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (!inspectorDocked) SelectedPadBar(selectedPadJson) { inspectorOpen = true }
                     }
-                    TextButton(onClick = { api = null; status = "Desconectado"; connectMessage = null }) { Text("Trocar") }
-                }
-                when (tab) {
-                    "Pads" -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(pads.chunked(2)) { row ->
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                row.forEach { pad ->
-                                    val number = pad.optInt("pad_number")
-                                    Button(onClick = { command("POST", StageCommands.trigger(number).path) }, modifier = Modifier.weight(1f)) {
-                                        Text("$number · ${pad.optString("sample_name", "Pad")}")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    "Cenas" -> Column {
+                    Section.SCENES -> Column {
                         OutlinedTextField(sceneName, { sceneName = it }, label = { Text("Nome da cena") })
                         Button(onClick = { if (sceneName.isNotBlank()) command("POST", "/api/scenes", JSONObject().put("name", sceneName).toString()) }) {
                             Text("Salvar cena")
@@ -284,7 +349,7 @@ private fun RemoteScreen() {
                             }
                         }
                     }
-                    "Kits" -> KitScreen(kits, kitName, { kitName = it }, kitCategory, { kitCategory = it },
+                    Section.KITS -> KitScreen(kits, kitName, { kitName = it }, kitCategory, { kitCategory = it },
                         kitSamples, { kitSamples = it }, sounds, selectedPad, { selectedPad = it },
                         { kit ->
                             val cmd = StageCommands.loadKit(kit)
@@ -307,7 +372,7 @@ private fun RemoteScreen() {
                             }
                             deleteKit = null
                         })
-                    "Sons" -> Column {
+                    Section.SOUNDS -> Column {
                         Text("Selecione o pad que receberá o som: $selectedPad")
                         Row(Modifier.horizontalScroll(rememberScrollState())) {
                             for (number in 1..16) TextButton(onClick = { selectedPad = number }) { Text("$number") }
@@ -325,7 +390,7 @@ private fun RemoteScreen() {
                             }
                         } }
                     }
-                    "Mix" -> Column {
+                    Section.MIX -> Column {
                         Text("Pad selecionado: $selectedPad")
                         Row(Modifier.horizontalScroll(rememberScrollState())) {
                             for (number in 1..16) TextButton(onClick = { selectedPad = number }) { Text("$number") }
@@ -345,14 +410,14 @@ private fun RemoteScreen() {
                             }
                         }) { Text("Aplicar mix") }
                     }
-                    "Efeitos" -> EffectsScreen(selectedPad, { selectedPad = it }, fx, effects, effectCatalog,
+                    Section.EFFECTS -> EffectsScreen(selectedPad, { selectedPad = it }, fx, effects, effectCatalog,
                         { pad, bus, level ->
                             val cmd = StageCommands.send(pad, bus, level)
                             command(cmd.method, cmd.path, cmd.json)
                         }, { method, path, body -> command(method, path, body) })
-                    "Transporte" -> TransportScreen(tempo, sequencer, patterns, looper, metronome,
+                    Section.TRANSPORT -> TransportScreen(tempo, sequencer, patterns, looper, metronome,
                         styles, signatures, { method, path, body -> command(method, path, body) })
-                    "Master" -> Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Section.MASTER -> Column(Modifier.verticalScroll(rememberScrollState())) {
                         Text("Volume: ${master?.optString("volume", "--") ?: "--"}")
                         val volumeNow = master?.optDouble("volume", 100.0)?.toFloat() ?: 100f
                         var volumeSlider by remember(volumeNow) { mutableFloatStateOf(volumeNow) }

@@ -52,6 +52,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 
 private val Accent = Color(0xFFFF7A3D)
 private val Ok = Color(0xFF3FBF6F)
@@ -70,6 +73,8 @@ fun deviceDisplayName(): String {
 fun ConnectScreen(
     saved: SavedServer?,
     message: String?,
+    incomingLink: String?,
+    onLinkHandled: () -> Unit,
     onConnect: (SavedServer) -> Unit,
     onForget: () -> Unit,
 ) {
@@ -83,6 +88,7 @@ fun ConnectScreen(
     var manual by remember { mutableStateOf(false) }
     var host by remember { mutableStateOf("") }
     var token by remember { mutableStateOf("") }
+    var askLink by remember { mutableStateOf<PairingLink?>(null) }
 
     DisposableEffect(Unit) {
         val discovery = ServerDiscovery(context) { servers = it }
@@ -106,6 +112,47 @@ fun ConnectScreen(
                 busy = false
             }
         }
+    }
+
+    // QR do Config no navegador (ou link aberto pela câmera do celular):
+    // endereço, pedido e código já vêm prontos, nada para digitar.
+    fun pairWithLink(raw: String) {
+        busy = true
+        error = null
+        scope.launch {
+            try {
+                val link = PairingLink.parse(raw)
+                val paired = withContext(Dispatchers.IO) {
+                    PairingClient(ServerAddress.parse(link.address)).confirm(link.requestId, link.code, deviceDisplayName())
+                }
+                onConnect(SavedServer(paired.serverName, link.address, paired.token))
+            } catch (e: Exception) {
+                error = e.message ?: "Não consegui parear com este QR"
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    // Link vindo de fora do app (câmera comum, navegador): confirma antes de
+    // parear, para um link qualquer não ligar o tablet a outro servidor.
+    LaunchedEffect(incomingLink) {
+        val link = incomingLink ?: return@LaunchedEffect
+        onLinkHandled()
+        try {
+            askLink = PairingLink.parse(link)
+        } catch (e: IllegalArgumentException) {
+            error = e.message
+        }
+    }
+
+    fun scanQr() {
+        val options = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()
+        GmsBarcodeScanning.getClient(context, options).startScan()
+            .addOnSuccessListener { barcode -> barcode.rawValue?.let { pairWithLink(it) } }
+            .addOnFailureListener {
+                error = "Leitor de QR indisponível neste aparelho. Aponte a câmera do celular para o QR ou use o código."
+            }
     }
 
     fun confirm(state: PairingState, typed: String) {
@@ -148,7 +195,31 @@ fun ConnectScreen(
             }
         }
 
+        askLink?.let { link ->
+            Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(14.dp),
+                border = androidx.compose.foundation.BorderStroke(2.dp, Accent)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Parear com ${link.serverName}?", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Text(link.address, fontFamily = FontFamily.Monospace, fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { askLink = null; pairWithLink(link.toUri()) }) { Text("Parear") }
+                        OutlinedButton(onClick = { askLink = null }) { Text("Cancelar") }
+                    }
+                }
+            }
+        }
+
         val current = pairing
+        if (current == null) {
+            Button(onClick = { scanQr() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                Text(if (busy) "Pareando…" else "Escanear QR do laptop", fontSize = 16.sp, modifier = Modifier.padding(vertical = 6.dp))
+            }
+            Text(
+                "No navegador do DiakoPad: Config ▸ Celulares pareados ▸ Mostrar QR.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp,
+            )
+        }
         if (current != null) {
             PairingPanel(
                 state = current,
@@ -203,7 +274,7 @@ fun ConnectScreen(
             )
         }
         Text(
-            "Toque no DiakoPad e digite o código que vai aparecer na tela do laptop.",
+            "Sem QR: toque no DiakoPad e digite o código que vai aparecer na tela do laptop.",
             color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp,
         )
 

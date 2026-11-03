@@ -67,7 +67,7 @@ def _auth_token() -> str:
 # Rotas abertas para o app achar e parear sem token (ver pairing.py). Nenhuma
 # delas devolve o código: ele só aparece nas telas já autorizadas.
 PAIR_PUBLIC_PATHS = {"/api/pair/info", "/api/pair/request", "/api/pair/confirm"}
-APP_VERSION = "0.1.3"
+APP_VERSION = "0.1.4"
 
 _pairing = pairing.PairingManager()
 _advertiser = pairing.Advertiser()
@@ -2157,6 +2157,7 @@ class PairRequestBody(BaseModel):
 class PairConfirmBody(BaseModel):
     request_id: str
     code: str
+    device_name: Optional[str] = None  # usado no pareamento por QR
 
 
 def _pair_requests_payload() -> dict:
@@ -2202,10 +2203,38 @@ async def pair_confirm(body: PairConfirmBody):
         await manager.broadcast(_pair_requests_payload())
         raise HTTPException(e.status, str(e)) from e
     token = secrets.token_urlsafe(32)
-    device_id = storage.add_paired_device(pending.device_name, pairing.hash_token(token))
+    name = pairing.clean_device_name(body.device_name) if pending.via_qr and body.device_name else pending.device_name
+    device_id = storage.add_paired_device(name, pairing.hash_token(token))
     await manager.broadcast(_pair_requests_payload())
     await manager.broadcast(_paired_devices_payload())
     return {"token": token, "device_id": device_id, "server_name": pairing.server_name()}
+
+
+@app.post("/api/pair/offer")
+async def pair_offer():
+    """QR para parear (só telas autorizadas): leva endereço, pedido e código;
+    o celular lê e chama /api/pair/confirm sem digitar nada."""
+    try:
+        pending = _pairing.create("Celular (QR)", None, via_qr=True)
+    except pairing.PairingError as e:
+        raise HTTPException(e.status, str(e)) from e
+    address = pairing.lan_address()
+    link = pairing.pair_link(address, pending)
+    try:
+        svg = pairing.qr_svg(link)
+    except pairing.PairingError as e:
+        _pairing.reject(pending.request_id)
+        raise HTTPException(e.status, str(e)) from e
+    await manager.broadcast(_pair_requests_payload())
+    asyncio.create_task(_expire_pair_request_later(pending.request_id))
+    return {
+        "request_id": pending.request_id,
+        "code": pending.code,
+        "expires_in": pairing.CODE_TTL_S,
+        "address": address,
+        "link": link,
+        "svg": svg,
+    }
 
 
 @app.post("/api/pair/{request_id}/reject")

@@ -15,7 +15,18 @@
       <img class="brand-mark" src="assets/logo-mark-light.png" alt="Igreja Diakonia Tulipas">
       <h1>DiakoPad</h1>
     </div>
-    <output id="topbar-scene" class="topbar-scene" aria-live="polite">Sem cena</output>
+    <nav>
+      <button id="tab-pads" class="tab active" type="button">Pads</button>
+      <button id="tab-performance" class="tab" type="button">Performance</button>
+      <button id="tab-sounds" class="tab" type="button">Biblioteca</button>
+      <button id="tab-volumes" class="tab" type="button">Volumes</button>
+      <button id="tab-effects" class="tab" type="button">Efeitos</button>
+      <button id="tab-sequencer" class="tab" type="button">Sequencer</button>
+      <button id="tab-metronome" class="tab" type="button">Metrônomo</button>
+      <button id="tab-looper" class="tab" type="button">Looper</button>
+      <button id="tab-knobs" class="tab" type="button">Knobs</button>
+      <button id="tab-config" class="tab" type="button">Config</button>
+    </nav>
     <div class="live-controls">
       <output id="midi-note-indicator" class="midi-note-indicator" aria-live="polite">MIDI: --</output>
       <output id="kit-browse-banner" class="kit-browse-banner hidden" aria-live="polite"></output>
@@ -30,6 +41,7 @@
       <button id="master-mute-btn" class="master-mute-btn" type="button">Mute</button>
       <button id="engine-status" class="engine-status" type="button" aria-expanded="false">Motor</button>
       <output id="cpu-meter" class="cpu-meter" aria-live="polite">CPU --</output>
+      <button id="tab-master" class="tab" type="button">Master</button>
       <button id="panic-btn" class="panic-btn" type="button" aria-label="Segure para acionar o panic">Segure PANIC</button>
       <span id="conn-status" class="conn-status" title="Conexão">●</span>
     </div>
@@ -59,37 +71,8 @@
 
   <section id="pair-requests" class="pair-requests hidden" aria-live="assertive" aria-label="Pedidos de conexão de celular"></section>
 
-  <div class="app-shell">
-  <nav class="sidebar" aria-label="Seções">
-    <div class="nav-group">
-      <span class="nav-group-title">Tocar</span>
-      <button id="tab-pads" class="tab active" type="button">Pads <em id="nav-badge-pads" class="nav-badge"></em></button>
-      <button id="tab-performance" class="tab" type="button">Performance <em id="nav-badge-scenes" class="nav-badge"></em></button>
-    </div>
-    <div class="nav-group">
-      <span class="nav-group-title">Som</span>
-      <button id="tab-sounds" class="tab" type="button">Biblioteca</button>
-      <button id="tab-volumes" class="tab" type="button">Mix</button>
-      <button id="tab-effects" class="tab" type="button">Efeitos</button>
-    </div>
-    <div class="nav-group">
-      <span class="nav-group-title">Ritmo</span>
-      <button id="tab-sequencer" class="tab" type="button">Sequencer <em id="nav-badge-sequencer" class="nav-badge"></em></button>
-      <button id="tab-metronome" class="tab" type="button">Metrônomo <em id="nav-badge-metronome" class="nav-badge"></em></button>
-      <button id="tab-looper" class="tab" type="button">Looper <em id="nav-badge-looper" class="nav-badge"></em></button>
-    </div>
-    <div class="nav-group">
-      <span class="nav-group-title">Controle</span>
-      <button id="tab-knobs" class="tab" type="button">Knobs <em id="nav-badge-knobs" class="nav-badge"></em></button>
-      <button id="tab-midi" class="tab" type="button">Mapa MIDI</button>
-      <button id="tab-master" class="tab" type="button">Master</button>
-      <button id="tab-config" class="tab" type="button">Config</button>
-    </div>
-  </nav>
-
-  <div class="workspace">
   <main id="view-pads" class="view">
-    <p class="pad-live-hint">Toque para tocar e ajustar o pad no painel ao lado. Segure para trocar o som.</p>
+    <p class="pad-live-hint">Toque para tocar. Segure um pad para trocar o som.</p>
     <div id="pad-grid" class="pad-grid"></div>
   </main>
 
@@ -376,7 +359,16 @@
     </ul>
 
     <h2 class="tab-note">Celulares pareados</h2>
-    <p class="settings-desc paired-hint">No app DiakoPad do celular, toque neste DiakoPad na lista e digite o código que aparece aqui na tela.</p>
+    <ul class="settings-list">
+      <li class="settings-row">
+        <div class="settings-text">
+          <span class="settings-label">Parear um celular</span>
+          <span class="settings-desc">No app DiakoPad do celular, toque em “Escanear QR” e aponte para o código. Também dá para tocar neste DiakoPad na lista do app e digitar o código que aparece aqui.</span>
+        </div>
+        <button id="pair-qr-btn" class="secondary-btn" type="button">Mostrar QR</button>
+      </li>
+    </ul>
+    <div id="pair-qr" class="pair-qr hidden" aria-live="polite"></div>
     <ul id="paired-devices-list" class="settings-list paired-devices-list"></ul>
 
     <h2 class="tab-note">Recuperação do sistema</h2>
@@ -390,13 +382,7 @@
       </li>
     </ul>
 
-    <footer class="app-identification">
-      <span>Versão 0.1.0</span>
-      <span>Desenvolvido por Lucas Souza (AntunesLS)</span>
-    </footer>
-  </main>
-
-  <main id="view-midi" class="view hidden">
+    <h2 class="tab-note">Mapa MIDI</h2>
     <div class="midi-map">
       <div class="midi-map-toolbar">
         <input type="search" id="midi-map-filter" class="scene-search midi-map-search" placeholder="Filtrar: ação, pad, parâmetro, nota ou CC...">
@@ -408,11 +394,12 @@
       </div>
       <div id="midi-map-sections"></div>
     </div>
-  </main>
-  </div>
 
-  <aside id="pad-inspector" class="inspector" aria-label="Pad selecionado"></aside>
-  </div>
+    <footer class="app-identification">
+      <span>Versão 0.1.0</span>
+      <span>Desenvolvido por Lucas Souza (AntunesLS)</span>
+    </footer>
+  </main>
 
   <div id="assign-modal" class="modal hidden">
     <div class="modal-content">

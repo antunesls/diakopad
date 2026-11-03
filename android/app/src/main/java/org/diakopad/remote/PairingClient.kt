@@ -31,9 +31,11 @@ class PairingClient(private val address: ServerAddress, client: OkHttpClient = O
         )
     }
 
-    fun confirm(requestId: String, code: String): Paired {
+    fun confirm(requestId: String, code: String, deviceName: String? = null): Paired {
         require(isValidCode(code)) { "O código tem 6 números" }
-        val body = post("/api/pair/confirm", JSONObject().put("request_id", requestId).put("code", code))
+        val json = JSONObject().put("request_id", requestId).put("code", code)
+        if (deviceName != null) json.put("device_name", deviceName.take(60))
+        val body = post("/api/pair/confirm", json)
         return Paired(body.getString("token"), body.optString("server_name", "DiakoPad"))
     }
 

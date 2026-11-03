@@ -152,6 +152,28 @@ class PairingApiTests(unittest.TestCase):
         res = self.client.post("/api/pair/confirm", json={"request_id": request_id, "code": "123456"})
         self.assertEqual(res.status_code, 410)
 
+    def test_qr_offer_needs_auth_and_pairs_without_typing(self):
+        self.assertEqual(self.client.post("/api/pair/offer").status_code, 401)
+        self.client.cookies.set("diakopad_token", "segredo-mestre")
+        with patch.dict(os.environ, {"DIAKOPAD_PUBLIC_ADDRESS": "192.168.0.40:8080"}):
+            offer = self.client.post("/api/pair/offer").json()
+        self.assertTrue(offer["link"].startswith("diakopad://pair?"))
+        self.assertIn("a=192.168.0.40%3A8080", offer["link"])
+        self.assertIn(f"c={offer['code']}", offer["link"])
+        self.assertIn("<svg", offer["svg"])
+        self.client.cookies.clear()
+        res = self.client.post(
+            "/api/pair/confirm",
+            json={"request_id": offer["request_id"], "code": offer["code"], "device_name": "Galaxy A54"},
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual([d["name"] for d in storage.list_paired_devices()], ["Galaxy A54"])
+
+    def test_device_name_on_confirm_is_ignored_for_typed_code(self):
+        request_id, code = self._pair()
+        self.client.post("/api/pair/confirm", json={"request_id": request_id, "code": code, "device_name": "Outro"})
+        self.assertEqual([d["name"] for d in storage.list_paired_devices()], ["Moto G"])
+
     def test_non_ascii_cookie_does_not_crash(self):
         self.assertFalse(diakopad_app._is_authorized("192.168.0.20", "çã"))
 

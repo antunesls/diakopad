@@ -19,6 +19,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from typing import Optional
+from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class PendingRequest:
     client_host: Optional[str]
     expires_at: float
     attempts: int = 0
+    via_qr: bool = False
 
     def public(self) -> dict:
         """Formato enviado às telas autorizadas (inclui o código)."""
@@ -54,6 +56,7 @@ class PendingRequest:
             "device_name": self.device_name,
             "code": self.code,
             "expires_at": self.expires_at,
+            "via_qr": self.via_qr,
         }
 
 
@@ -81,7 +84,9 @@ class PairingManager:
         self._expire(time.time() if now is None else now)
         return [r.public() for r in sorted(self.requests.values(), key=lambda r: r.expires_at)]
 
-    def create(self, device_name: str, client_host: Optional[str], now: Optional[float] = None) -> PendingRequest:
+    def create(
+        self, device_name: str, client_host: Optional[str], now: Optional[float] = None, via_qr: bool = False
+    ) -> PendingRequest:
         now = time.time() if now is None else now
         self._expire(now)
         self.recent = [t for t in self.recent if now - t < 60]
@@ -100,6 +105,7 @@ class PairingManager:
             code=f"{secrets.randbelow(1_000_000):06d}",
             client_host=client_host,
             expires_at=now + CODE_TTL_S,
+            via_qr=via_qr,
         )
         self.requests[request.request_id] = request
         return request
@@ -147,6 +153,39 @@ def listen_host() -> str:
 
 def listen_port() -> str:
     return os.environ.get("DIAKOPAD_PORT") or _cli_option("--port") or "8080"
+
+
+def lan_address() -> str:
+    """IP:porta que o celular deve usar (vai no QR). DIAKOPAD_PUBLIC_ADDRESS
+    força um valor; senão usa o IP da interface da rota padrão (o connect em
+    UDP não envia nada)."""
+    forced = os.environ.get("DIAKOPAD_PUBLIC_ADDRESS")
+    if forced:
+        return forced
+    ip = None
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("10.255.255.255", 1))
+            ip = sock.getsockname()[0]
+    except OSError:
+        pass
+    if not ip or ip.startswith("127."):
+        ip = f"{socket.gethostname()}.local"
+    return f"{ip}:{listen_port()}"
+
+
+def pair_link(address: str, request: PendingRequest) -> str:
+    """Link lido pelo app (QR ou câmera do celular): diakopad://pair?..."""
+    query = urlencode({"a": address, "r": request.request_id, "c": request.code, "n": server_name()})
+    return f"diakopad://pair?{query}"
+
+
+def qr_svg(text: str) -> str:
+    try:
+        import segno
+    except ImportError as e:  # dependência nova; o deploy por git não roda pip
+        raise PairingError(503, "QR indisponível: instale as dependências (pip install -r requirements.lock)") from e
+    return segno.make(text, error="m").svg_inline(scale=6, border=2, dark="#111111", light="#ffffff")
 
 
 class Advertiser:

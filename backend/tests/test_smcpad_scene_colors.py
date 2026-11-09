@@ -81,7 +81,8 @@ class StorageTests(Base):
         self.assertIsNone(storage.get_scene_smc_colors(sid))
 
     async def test_list_scenes_flags_scenes_with_colors(self):
-        a, b = self.scene("A"), self.scene("B")
+        a = self.scene("A")
+        self.scene("B")
         storage.set_scene_smc_colors(a, PALETTE)
         flags = {s["name"]: bool(s["has_smc_colors"]) for s in storage.list_scenes()}
         self.assertEqual(flags, {"A": True, "B": False})

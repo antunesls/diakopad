@@ -388,14 +388,10 @@ private fun RemoteScreen(incomingLink: String?, onLinkHandled: () -> Unit) {
                             val cmd = StageCommands.assign(selectedPad, null)
                             command(cmd.method, cmd.path, cmd.json)
                         }) { Text("Remover som do pad") }
-                        LazyColumn(Modifier.weight(1f)) { items(sounds) { sound ->
-                            TextButton(onClick = {
-                                val cmd = StageCommands.assign(selectedPad, sound.getInt("id"))
-                                command(cmd.method, cmd.path, cmd.json)
-                            }, modifier = Modifier.fillMaxWidth()) {
-                                Text(sound.optString("display_name", "Som"))
-                            }
-                        } }
+                        SoundBrowser(sounds, onPick = { sound ->
+                            val cmd = StageCommands.assign(selectedPad, sound.getInt("id"))
+                            command(cmd.method, cmd.path, cmd.json)
+                        }, modifier = Modifier.weight(1f))
                     }
                     Section.MIX -> Column {
                         Text("Pad selecionado: $selectedPad")

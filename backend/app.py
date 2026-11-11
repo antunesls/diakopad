@@ -597,7 +597,18 @@ async def _kit_browse_nav(direction: str) -> None:
     kit = state["kits"][state["kit_idx"]]
     if kit_changed:
         state["candidate_pad_number"] = _kit_browse_default_candidate(kit, state["target_pad"])
-        await orchestrator.apply_preview_kit(kit)
+        # Show the new kit right away: respawning the preview sfizz takes a
+        # while, and the screen shouldn't wait for it.
+        await _broadcast_kit_browse()
+
+        def still_wanted() -> bool:
+            return _kit_browse_state is state and state["kits"][state["kit_idx"]] is kit
+
+        # Rapid presses queue up on the graph lock; only the last kit is
+        # worth loading, so stale ones are skipped inside the lock.
+        await orchestrator.apply_preview_kit(kit, still_wanted)
+        if not still_wanted():
+            return
     else:
         sounds = sorted(
             (p for p in kit.get("pads", []) if p.get("sample_id") is not None),

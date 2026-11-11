@@ -956,7 +956,7 @@ PREVIEW_CLIENT = "diakopad_preview"
 _last_preview_kit: dict | None = None
 
 
-async def apply_preview_kit(kit: dict) -> bool:
+async def apply_preview_kit(kit: dict, still_wanted=None) -> bool:
     """(Re)spawns the dedicated kit-browse preview sfizz instance with every
     populated pad-role of `kit` as its own fixed-note region (see
     sfz.write_preview_kit) and wires it into the graph - same pattern as the
@@ -966,6 +966,10 @@ async def apply_preview_kit(kit: dict) -> bool:
     global _last_preview_kit
     _last_preview_kit = kit
     async with _graph_lock:
+        # `still_wanted` lets a burst of navigation presses skip the kits the
+        # user already moved past instead of respawning sfizz for each one.
+        if still_wanted is not None and not still_wanted():
+            return False
         return await asyncio.to_thread(_apply_preview_kit_sync, kit)
 
 

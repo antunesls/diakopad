@@ -1926,34 +1926,55 @@
       </div>`;
     }).join("");
 
-    el.smcButtons.innerHTML = SMC_BUTTONS.map((b) => {
-      let text, meta = "";
+    // Mapa dos botões: fileiras na ordem do aparelho (sistema / transporte / modificadores).
+    const keyHtml = (b) => {
+      let text, cls = "";
       if (b.hw) {
-        text = b.note || "função do aparelho";
+        text = b.note || "aparelho";
+        cls = "hw";
       } else {
-        const action = smcActionFor(b.type, b.number);
-        text = action || "sem ligação";
-        meta = `CC ${b.number}`;
+        text = smcActionFor(b.type, b.number) || "livre";
+        if (text === "livre") cls = "free";
       }
-      return `<div class="smc-btn-row ${b.hw ? "hw" : ""} ${!b.hw && text === "sem ligação" ? "free" : ""}" ${b.type === "cc" ? `data-cc="${b.number}"` : ""}>
-        <span class="smc-btn ${b.rec ? "rec" : ""}">${b.sym}</span>
-        <span class="smc-btn-text">${text}${meta ? `<small>${meta}</small>` : ""}</span>
+      return `<div class="smc-key ${cls}" ${b.type === "cc" ? `data-cc="${b.number}"` : ""} title="${b.sym} — ${text}">
+        <span class="smc-key-sym ${b.rec ? "rec" : ""}">${b.sym}</span>
+        <span class="smc-key-label">${text}</span>
       </div>`;
-    }).join("");
+    };
+    const btnRow = (cols, items) => `<div class="smc-key-row" style="--cols:${cols}">${items.map(keyHtml).join("")}</div>`;
+    el.smcButtons.innerHTML =
+      btnRow(3, SMC_BUTTONS.slice(0, 3)) +
+      btnRow(5, SMC_BUTTONS.slice(3, 8)) +
+      btnRow(2, SMC_BUTTONS.slice(8));
 
+    // Mapa dos pads do banco B (notas 52-67): mesma posição física dos pads (13-16 em cima, 1-4 embaixo).
+    const BANK_B_BASE = 52;
     const bindings = (state.controllerActions && state.controllerActions.bindings) || {};
-    const notes = [];
+    const byNote = new Map();
     for (const [action, list] of Object.entries(bindings)) {
       for (const b of list) {
         if (b.midi_type !== "note") continue;
         const known = MIDI_ACTIONS.find((a) => a.action === action);
-        notes.push({ number: b.number, label: known ? known.label : action });
+        const label = known ? known.label : action;
+        byNote.set(b.number, byNote.has(b.number) ? `${byNote.get(b.number)} + ${label}` : label);
       }
     }
-    notes.sort((a, b) => a.number - b.number);
-    el.smcNotes.innerHTML = notes.length
-      ? notes.map((n) => `<div class="smc-note-row" data-note="${n.number}"><span class="smc-note-chip">N${n.number}</span>${n.label}</div>`).join("")
-      : `<div class="smc-note-row free">Nenhum comando em nota ligado.</div>`;
+    const cells = [];
+    for (let row = 3; row >= 0; row--) {
+      for (let col = 1; col <= 4; col++) {
+        const pad = row * 4 + col;
+        const note = BANK_B_BASE + pad - 1;
+        const label = byNote.get(note);
+        byNote.delete(note);
+        cells.push(`<div class="smc-cell ${label ? "" : "free"}" data-note="${note}" title="Pad ${pad} (banco B) · nota ${note}${label ? ` — ${label}` : ""}">
+          <span class="smc-cell-num">${pad}</span>
+          <span class="smc-cell-label">${label || "livre"}</span>
+        </div>`);
+      }
+    }
+    const others = [...byNote.entries()].sort((a, b) => a[0] - b[0])
+      .map(([n, label]) => `<div class="smc-note-row" data-note="${n}"><span class="smc-note-chip">N${n}</span>${label}</div>`).join("");
+    el.smcNotes.innerHTML = `<div class="smc-cells">${cells.join("")}</div>${others ? `<div class="smc-others">${others}</div>` : ""}`;
   }
 
   function scheduleSmcRender() {
@@ -1978,7 +1999,7 @@
     if (control >= SMC_KNOB_CC_BASE && control < SMC_KNOB_CC_BASE + 8) {
       scheduleSmcRender();
     } else if (value > 0) {
-      flashSmc(`.smc-btn-row[data-cc="${control}"]`);
+      flashSmc(`.smc-key[data-cc="${control}"]`);
     }
   }
 
@@ -2676,7 +2697,7 @@
         flashPadHit(msg.pad_number);
       } else if (msg.type === "midi_note") {
         showMidiNote(msg.note);
-        flashSmc(`.smc-note-row[data-note="${msg.note}"]`);
+        flashSmc(`.smc-cell[data-note="${msg.note}"], .smc-note-row[data-note="${msg.note}"]`);
       } else if (msg.type === "midi_cc") {
         onSmcCc(msg.control, msg.value);
       } else if (msg.type === "sounds") {

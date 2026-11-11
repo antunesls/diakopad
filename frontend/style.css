@@ -654,6 +654,33 @@ html, body {
 .smc-dial-needle { stroke: #fff; stroke-width: 2.5; stroke-linecap: round; }
 .smc-dial-needle.off { stroke: #555; }
 
+.smc-key-row { display: grid; grid-template-columns: repeat(var(--cols), 1fr); gap: 6px; margin-bottom: 6px; }
+.smc-key {
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+  gap: 3px; padding: 5px 2px; border-radius: 8px; background: var(--panel); min-width: 0; text-align: center;
+}
+.smc-key-sym {
+  width: 100%; max-width: 44px; height: 26px; border-radius: 6px; border: 1px solid #6b7480;
+  background: #aab4c4; color: #223; font-weight: 700; font-size: 10px;
+  display: flex; align-items: center; justify-content: center; white-space: nowrap;
+}
+.smc-key.hw .smc-key-sym { background: #5a6170; color: #dde; }
+.smc-key-label { font-size: 10px; line-height: 1.15; overflow-wrap: anywhere; }
+.smc-key.hw .smc-key-label, .smc-key.free .smc-key-label { color: var(--text-dim); font-style: italic; }
+.smc-key.hit { background: var(--accent-dim); }
+.smc-key.hit .smc-key-sym { background: var(--accent); color: #111; }
+.smc-cells { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.smc-cell {
+  position: relative; aspect-ratio: 1; min-width: 0; border-radius: 8px; background: var(--panel);
+  border: 1px solid var(--pad-empty); display: flex; align-items: center; justify-content: center;
+  padding: 12px 2px 2px; text-align: center;
+}
+.smc-cell-num { position: absolute; top: 3px; left: 5px; font-size: 9px; color: var(--text-dim); }
+.smc-cell-label { font-size: 10px; line-height: 1.15; overflow-wrap: anywhere; }
+.smc-cell.free { opacity: 0.5; }
+.smc-cell.free .smc-cell-label { color: var(--text-dim); font-style: italic; }
+.smc-cell.hit { background: var(--accent-dim); }
+.smc-others { display: grid; gap: 6px; margin-top: 8px; }
 .smc-btn-row {
   display: grid;
   grid-template-columns: 58px 1fr;
